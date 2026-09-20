@@ -1,20 +1,26 @@
 ---
 name: "GFL2 Pull Tracker"
-description: "A warm paper recruitment ledger with precise ink rules and restrained oxblood controls."
+description: "An Exilium-inspired recruitment ledger with charcoal chrome, cool white surfaces, and signal-orange actions."
 colors:
-  red: "#a33625"
-  red-hover: "#842c20"
-  primary-text: "#fffaf5"
-  ink: "#232a29"
-  muted: "#5b6058"
-  paper: "#f3f1e9"
-  line: "#c5c8bd"
-  olive: "#d4d8cc"
-  white: "#faf9f5"
-  track: "#e3e5da"
-  bar: "#8e9b80"
-  bar-deep: "#465241"
-  type-bar: "#7b896e"
+  accent: "#ff7a18"
+  surface: "#e3e7eb"
+  surface-hover: "#dce2e8"
+  control-line: "#7a8591"
+  success: "#386346"
+  danger: "#a62932"
+  accent-text: "#a64000"
+  accent-hover: "#ff963f"
+  primary-text: "#20252b"
+  ink: "#20252b"
+  muted: "#555e68"
+  paper: "#f0f2f4"
+  line: "#c3c9d0"
+  table-head: "#292f36"
+  white: "#fbfcfd"
+  track: "#d6dce2"
+  bar: "#707d8a"
+  bar-deep: "#424e5d"
+  type-bar: "#526273"
 typography:
   display:
     fontFamily: "Barlow Condensed, Barlow, sans-serif"
@@ -56,12 +62,12 @@ spacing:
   mobile-gutter: "20px"
 components:
   button-primary:
-    backgroundColor: "{colors.red}"
+    backgroundColor: "{colors.accent}"
     textColor: "{colors.primary-text}"
     rounded: "{rounded.control}"
     padding: "8px 16px"
   button-primary-hover:
-    backgroundColor: "{colors.red-hover}"
+    backgroundColor: "{colors.accent-hover}"
   button-secondary:
     backgroundColor: "transparent"
     textColor: "{colors.ink}"
@@ -83,9 +89,9 @@ components:
     rounded: "{rounded.square}"
     padding: "8px 0 12px"
   rarity-tag:
-    textColor: "{colors.red}"
+    textColor: "{colors.accent-text}"
   ledger-header:
-    backgroundColor: "{colors.olive}"
+    backgroundColor: "{colors.table-head}"
     padding: "10px 16px"
   import-panel:
     padding: "24px 28px 28px"
@@ -97,38 +103,16 @@ components:
 
 **Creative North Star: "The Armory Inspection Ledger"**
 
-Warm paper, condensed headings, olive table surfaces, and thin ink rules make records feel like an inspection register. Density comes from aligned information and compact controls; the red accent points to actions and selected evidence.
-
-This captures the implemented draft direction, not a user-confirmed style choice. It was extracted from web/src/app.css, web/src/routes/+layout.svelte, and the page component. Integrated screenshots at desktop (1440px) and mobile (390px) widths were inspected by the primary task and finish reviewer, with a final SHIP disposition and no material visual regressions. The parent task reports 17 passing browser checks covering real imports, filters, pagination, import progress, keyboard access, and mobile overflow. This documentation pass records that completed evidence; it did not independently run the browser checks.
-
-**Key Characteristics:**
-- Warm paper with ink and olive structure.
-- Condensed headings above a compact, tabular ledger.
-- Flat sections separated by rules and tonal changes.
-- Text labels accompany chart colors and record states.
+The existing ledger layout now uses an Exilium-inspired palette, following the user's request for stronger official color cues. The [official Haoplay website](https://gf2.haoplay.com/en/) provides the visual reference: orange branding against near-black and white. These are adapted interface colors, not an official brand specification.
 
 ## Colors
 
-The palette combines warm neutrals with restrained oxblood and desaturated olive. Frontmatter values are normative; the color names below describe their use.
-
-### Primary
-
-- **Oxblood** (`red`) marks the primary action, keyboard focus, active import method, and Elite rarity. `red-hover` deepens primary buttons; `primary-text` provides their light label.
-
-### Secondary
-
-- **Olive** (`olive`) identifies the table heading. `bar`, `bar-deep`, and `type-bar` distinguish chart series without adding decorative accents.
-
-### Neutral
-
-- **Ink** (`ink`) is the default text and strong section rule.
-- **Muted ink** (`muted`) supports labels, provenance, and secondary values.
-- **Warm paper** (`paper`) is the page canvas; **field white** (`white`) is the control surface.
-- **Ledger line** (`line`) divides regions; **chart track** (`track`) is the unfilled bar surface.
-
-**The Evidence Label Rule.** Color reinforces a written label; it never replaces one.
-
-The sidecar's tonal ramps are synthesized preview metadata, not an additional shipping color scale.
+- **Signal orange** (`accent`) identifies primary buttons, the masthead mark/rule, and the active navigation underline. Dark labels keep buttons readable.
+- **Burnt orange** (`accent-text`) supports readable active text, Elite labels/bars, and focus rings on light surfaces. Bright orange focus is used inside the dark masthead.
+- **Charcoal** (`ink`, `table-head`) anchors the masthead and table headings, with white text on both.
+- **Cool neutrals** (`paper`, `white`, `surface`, `surface-hover`) separate the canvas, fields, import/settings panels, and hovered rows. `control-line` defines visible control edges; `line` is a quiet separator.
+- **Slate chart series** (`bar`, `bar-deep`, `type-bar`) retain adjacent numeric labels and text categories.
+- **Semantic colors** (`success`, `danger`) keep status green and errors red separate from orange branding. Text always accompanies these meanings.
 
 ## Typography
 
@@ -162,25 +146,25 @@ Controls have slightly softened corners through `rounded.control`. Chart tracks,
 
 ### Buttons
 
-Primary and secondary buttons share centered inline content, an 8px icon gap, and a 40px minimum height. Primary buttons use oxblood; secondary buttons use a transparent surface and a fine gray-green outline. Hover darkens the primary surface or adds a pale olive tint to the secondary button. Text actions use an underline offset by 4px and no border. Disabled buttons reduce opacity to .45 and lose the pointer cursor.
+Primary and secondary buttons share centered inline content, an 8px icon gap, and a 40px minimum height. Primary buttons use signal orange with charcoal text; secondary buttons use a transparent surface and a slate outline. Hover brightens the primary surface or adds a cool gray tint to the secondary button. Text actions use an underline offset by 4px and no border. Disabled buttons reduce opacity to .45 and lose the pointer cursor.
 
-All keyboard-focusable controls receive an oxblood outline (3px) offset from the element (3px). File chooser labels use the same treatment through focus-within. There is no separate authored pressed-state visual.
+All keyboard-focusable controls receive a burnt-orange outline (3px) offset from the element (3px). File chooser labels use the same treatment through focus-within. The masthead uses bright orange focus against charcoal. Active navigation has a bottom orange marker; this indicates selection, not a decorative panel border.
 
 ### Fields
 
-Labels sit above white inputs with a 7px gap. Inputs, selects, and textareas use the control radius, gray-green border, and 40px minimum height. Search reserves space for an inline icon. Textareas resize vertically. Error feedback appears as explicit text in the import-result region, with a dark red tone; field-level error styling is not a separate system variant.
+Labels sit above white inputs with a 7px gap. Inputs, selects, and textareas use the control radius, slate border, and 40px minimum height. Search reserves space for an inline icon. Textareas resize vertically. Error feedback appears as explicit text in the import-result region, with a dark red tone; field-level error styling is not a separate system variant.
 
 ### Import navigation
 
-Import methods are adjacent text buttons over a shared bottom divider. The chosen method gains a 2px oxblood underline, oxblood text, and semibold weight. These are method selectors inside the import region, not a global navigation system.
+Import methods are adjacent text buttons over a shared bottom divider. The chosen method gains a 2px burnt-orange underline, burnt-orange text, and semibold weight. These are method selectors inside the import region, not a global navigation system.
 
 ### Rarity labels and charts
 
-Rarity is a compact text label without a pill background. Elite uses oxblood, while other labels retain ink. Chart tracks show a subdued olive remainder and numeric labels remain visible beside bars. Horizontal bars animate scaleX from the left edge; vertical columns animate scaleY from the bottom edge. Both use a transform transition over .5s with cubic-bezier(.16,1,.3,1). A zero count has zero visible fill.
+Rarity is a compact text label without a pill background. Elite uses burnt-orange, while other labels retain ink. Chart tracks show a cool gray remainder and numeric labels remain visible beside bars. Horizontal bars animate scaleX from the left edge; vertical columns animate scaleY from the bottom edge. Both use a transform transition over .5s with cubic-bezier(.16,1,.3,1). A zero count has zero visible fill.
 
 ### Ledger and details
 
-The ledger uses an olive header, compact rows, and horizontal dividers. Hover gives the row a subtle tonal change. Expanded details use a stronger olive surface and wrap their provenance fields. The disclosure SVG rotates over .2s. Unknown item names retain their textual identity and use lighter, italic treatment rather than disappearing.
+The ledger uses a charcoal header with white text, compact rows, and horizontal dividers. Hover gives the row a subtle tonal change. Expanded details use a cool gray surface and wrap their provenance fields. The disclosure SVG rotates over .2s. Unknown item names retain their textual identity and use lighter, italic treatment rather than disappearing.
 
 ### Import panel
 
@@ -203,6 +187,6 @@ The current system has no reusable elevated card component. The sidecar records 
 
 ## Public tracker extension
 
-Public mode adds a compact navigation row for My history, Profiles, Backup & sync, Community statistics, and Privacy. These surfaces reuse the existing paper, ink, oxblood, thin rules, Barlow typography, and visible focus treatments. Settings use aligned form groups and inline confirmations; consent and unavailable-provider messages appear beside the action they affect. Mobile settings stack, and history overflow stays within its table region.
+Public mode adds a compact navigation row for My history, Profiles, Backup & sync, Community statistics, and Privacy. These surfaces reuse the existing cool paper, charcoal, orange, thin rules, Barlow typography, and visible focus treatments. Settings use aligned form groups and inline confirmations; consent and unavailable-provider messages appear beside the action they affect. Mobile settings stack, and history overflow stays within its table region.
 
 Local storage and cloud synchronization have separate status messages. Empty community statistics show the minimum contribution threshold, not illustrative totals. Captures are never reflected in errors, and unavailable Google or provider configuration is explained before submission.

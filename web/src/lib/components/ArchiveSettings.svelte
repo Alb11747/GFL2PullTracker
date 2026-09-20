@@ -464,6 +464,12 @@
               >
             </div>
           {/if}
+          <h3>Import from another tracker</h3>
+          <p>
+            Bring older history into your selected game profile. External imports merge with your
+            saved pulls, preserving repeated records without counting the same history twice.
+          </p>
+          <p><a href="/guides/exilium" target="_blank" rel="noreferrer">Exilium migration guide (opens in a new tab)</a></p>
         </div>
       </div>
     </section>
@@ -669,7 +675,7 @@
     font-size: 1.15rem;
   }
   .profile-title span {
-    color: var(--red);
+    color: var(--accent-text);
     font-size: 0.85rem;
     font-weight: 600;
   }
@@ -700,18 +706,18 @@
     min-height: 17px;
     flex: 0 0 17px;
     margin-top: 3px;
-    accent-color: var(--red);
+    accent-color: var(--accent-text);
   }
   .confirmation {
     margin-top: 16px;
-    background: var(--olive);
+    background: var(--surface);
     padding: 18px;
   }
   .confirmation h3 {
     margin-top: 0;
   }
   fieldset {
-    border: 1px solid #91978b;
+    border: 1px solid var(--control-line);
     margin: 20px 0;
     padding: 12px;
     min-width: 0;
@@ -750,11 +756,11 @@
     border-top: 1px solid var(--line);
   }
   .error {
-    color: #842c20;
+    color: var(--danger);
   }
   .availability {
     padding: 16px;
-    background: var(--olive);
+    background: var(--surface);
   }
   .server-data {
     margin-top: 28px;

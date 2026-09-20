@@ -64,7 +64,7 @@
     min-height: 28px;
   }
   summary:focus-visible {
-    outline: 3px solid var(--red);
+    outline: 3px solid var(--accent-text);
     outline-offset: 3px;
   }
   p,

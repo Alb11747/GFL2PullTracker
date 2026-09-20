@@ -472,7 +472,7 @@
 
 {#if hosted}
   <nav class="archive-nav" aria-label="Tracker navigation">
-    {#each [['tracker', 'My history'], ['profiles', 'Profiles'], ['backup', 'Backup & sync'], ['statistics', 'Community statistics'], ['privacy', 'Privacy']] as [id, label]}
+    {#each [['tracker', 'My history'], ['backup', 'Backup & sync'], ['profiles', 'Profiles'], ['statistics', 'Community statistics'], ['privacy', 'Privacy']] as [id, label]}
       <button
         class:chosen={section === id}
         aria-current={section === id ? 'page' : undefined}
@@ -736,12 +736,14 @@
 
     <section class="overview" aria-labelledby="overview-title">
       <div class="title-row">
-        <h1 id="overview-title">Recruitment ledger<span class="title-rule"></span></h1>
+        <h1 id="overview-title">Recruitment ledger</h1>
         <span class="local-label"><span></span>Local archive</span>
       </div>
       <div class="summary-strip">
         <div class="summary-total">
-          <span>{active ? 'Matching pulls' : 'Recorded pulls'}</span><strong
+          <span title="One record = one pull. Item quantity is preserved separately."
+            >{active ? 'Matching pulls' : 'Recorded pulls'}</span
+          ><strong
             >{stats ? number(stats.total) : loading || error ? '—' : '0'}</strong
           >
         </div>
@@ -1050,7 +1052,6 @@
   {/if}
   <footer>
     <span>GFL2 Pull Tracker</span>
-    <p>One record = one pull. Item quantity is preserved separately.</p>
     <a href="/privacy">Privacy</a>
     <a
       href="https://github.com/Infernal-Crack-LED/gfl2-team-builder"

@@ -240,7 +240,7 @@
     margin-bottom: 28px;
   }
   .empty {
-    background: var(--olive);
+    background: var(--surface);
     padding: 24px;
   }
   .empty h3 {
@@ -250,7 +250,7 @@
     margin-bottom: 0;
   }
   .error {
-    color: #842c20;
+    color: var(--danger);
   }
   .totals {
     display: grid;
@@ -323,7 +323,7 @@
     text-align: left;
   }
   thead {
-    background: var(--olive);
+    background: var(--table-head);
   }
   tbody th {
     font-weight: 400;
@@ -335,7 +335,7 @@
     font-weight: 500;
   }
   summary:focus-visible {
-    outline: 3px solid var(--red);
+    outline: 3px solid var(--accent-text);
     outline-offset: 3px;
   }
   .item-table {

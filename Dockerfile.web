@@ -4,6 +4,7 @@ COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
 COPY backend/catalog.json /app/backend/catalog.json
+COPY docs/IMPORTING.md /app/docs/IMPORTING.md
 RUN npm run build && npm prune --omit=dev
 
 FROM node:24-bookworm-slim
