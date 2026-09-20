@@ -20,6 +20,10 @@ if (env.GFL2_MODE === 'public') {
 
 export const handle: Handle = async ({ event, resolve }) => {
   const response = await resolve(event);
+  // HTML contains runtime settings and CSP nonces; keep it out of shared and
+  // browser caches without changing the caching policy for immutable assets.
+  if (response.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase() === 'text/html')
+    response.headers.set('Cache-Control', 'no-store');
   response.headers.set('X-Content-Type-Options', 'nosniff');
   response.headers.set('Referrer-Policy', 'no-referrer');
   response.headers.set('X-Frame-Options', 'DENY');

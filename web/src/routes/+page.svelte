@@ -1051,6 +1051,7 @@
   <footer>
     <span>GFL2 Pull Tracker</span>
     <p>One record = one pull. Item quantity is preserved separately.</p>
+    <a href="/privacy">Privacy</a>
     <a
       href="https://github.com/Infernal-Crack-LED/gfl2-team-builder"
       target="_blank"

@@ -1,5 +1,13 @@
 # Google Drive setup
 
+The hosted site is `https://gfl2.alb11747.com`, with public support at
+`gfl2@alb11747.com`. Its privacy policy is available at
+`https://gfl2.alb11747.com/privacy` and discloses Canadian origin hosting.
+Configure a separate OAuth client for each installation using the instructions below.
+The live website opens Google's account chooser. Successful authorization,
+upload, and fresh-device restoration must still be verified separately.
+See [HOSTING.md](HOSTING.md) for deployment instructions.
+
 Create a Google Cloud project, enable the Google Drive API, configure its OAuth
 consent screen, and create an OAuth client of type **Web application**. Register
 the site's exact HTTPS origin as an authorized JavaScript origin. Register a
