@@ -1,0 +1,16 @@
+[project]
+name = "gfl2-pull-tracker"
+version = "0.1.0"
+description = "Local GFL2 collection and pull history service"
+requires-python = ">=3.11"
+dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.34,<1", "sqlalchemy>=2.0,<3"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8,<10",
+    "httpx2>=2.13.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

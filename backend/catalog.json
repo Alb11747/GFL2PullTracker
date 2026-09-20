@@ -1,0 +1,1799 @@
+{
+  "source": {
+    "name": "Refitting Room data compilation",
+    "url": "https://github.com/Infernal-Crack-LED/gfl2-team-builder/tree/240cd46587eca1187119c85c4aee97ec177c45df/data",
+    "revision": "240cd46587eca1187119c85c4aee97ec177c45df",
+    "synced_at": [
+      "2026-09-04T17:50:13.246Z"
+    ],
+    "notice": "Copyright Maxwell Sutton — Refitting Room (https://refittingroom.app)",
+    "scope": "Compilation reuse permitted by its maintainer; underlying game content belongs to its respective owners. See THIRD_PARTY_NOTICES.md."
+  },
+  "items": [
+    {
+      "id": 1001,
+      "name": "Krolik",
+      "kind": "doll",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 1008,
+      "name": "Nemesis",
+      "kind": "doll",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 1009,
+      "name": "Colphne",
+      "kind": "doll",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 1013,
+      "name": "Lenna",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1015,
+      "name": "Vepley",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1017,
+      "name": "Groza",
+      "kind": "doll",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 1021,
+      "name": "Peritya",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1022,
+      "name": "Sharkry",
+      "kind": "doll",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 1023,
+      "name": "Dushevnaya",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1024,
+      "name": "Cheeta",
+      "kind": "doll",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 1025,
+      "name": "Tololo",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1026,
+      "name": "Nagant",
+      "kind": "doll",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 1027,
+      "name": "Qiongjiu",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1028,
+      "name": "Centaureissi",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1029,
+      "name": "Sabrina",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1032,
+      "name": "Daiyan",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1033,
+      "name": "Mosin-Nagant",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1034,
+      "name": "Makiatto",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1035,
+      "name": "Jiangyu",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1036,
+      "name": "Ksenia",
+      "kind": "doll",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 1037,
+      "name": "Ullrid",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1038,
+      "name": "Littara",
+      "kind": "doll",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 1039,
+      "name": "Suomi",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1040,
+      "name": "Papasha",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1041,
+      "name": "Lotta",
+      "kind": "doll",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 1042,
+      "name": "Andoris",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1043,
+      "name": "Faye",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1044,
+      "name": "Vector",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1045,
+      "name": "Belka",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1047,
+      "name": "Springfield",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1048,
+      "name": "Qiuhua",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1049,
+      "name": "Harpsy",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1050,
+      "name": "Zhaohui",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1051,
+      "name": "Mechty",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1052,
+      "name": "Klukai",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1053,
+      "name": "Peri",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1054,
+      "name": "Yoohee",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1055,
+      "name": "Nikketa",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1056,
+      "name": "Leva",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1057,
+      "name": "Robella",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1058,
+      "name": "Lainie",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1059,
+      "name": "Lind",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1060,
+      "name": "Phaetusa",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1061,
+      "name": "Balthilde",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1062,
+      "name": "Lewis",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1063,
+      "name": "Welrod",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1064,
+      "name": "Florence",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1065,
+      "name": "Alva",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1066,
+      "name": "Voymastina",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1067,
+      "name": "Helen",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1068,
+      "name": "Sakura",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1069,
+      "name": "Loreley",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1070,
+      "name": "Cheyanne",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1071,
+      "name": "Basti",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1072,
+      "name": "Liushih",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1073,
+      "name": "Sextans",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1074,
+      "name": "OTs-14",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1075,
+      "name": "Nemesis: Gnosis",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 1076,
+      "name": "Soppo",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "cn"
+    },
+    {
+      "id": 1077,
+      "name": "Mityl",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "cn"
+    },
+    {
+      "id": 1078,
+      "name": "Faelynn",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "cn"
+    },
+    {
+      "id": 1079,
+      "name": "Koleda",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "cn"
+    },
+    {
+      "id": 1080,
+      "name": "Asteria",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "cn"
+    },
+    {
+      "id": 1081,
+      "name": "Eagletta",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "cn"
+    },
+    {
+      "id": 1082,
+      "name": "Cecilia",
+      "kind": "doll",
+      "rarity": "Elite",
+      "region": "cn"
+    },
+    {
+      "id": 10001,
+      "name": "Papa-Figo",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10002,
+      "name": "Classified Manuscript",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10003,
+      "name": "Arcana",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10004,
+      "name": "Guerno",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10005,
+      "name": "Crowned Jackalope",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10006,
+      "name": "Mjölnir",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10007,
+      "name": "Expeditionary Pigeon",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10131,
+      "name": "Retired UMP9",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10132,
+      "name": "UMP9",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10133,
+      "name": "Löwenjunges",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10231,
+      "name": "Retired KSVK",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10232,
+      "name": "KSVK",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10233,
+      "name": "Eulogistic Verse",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10331,
+      "name": "Retired Three-Line Rifle M1891",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10332,
+      "name": "Three-Line Rifle M1891",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10333,
+      "name": "Samosek",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10341,
+      "name": "Retired W 2000",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10342,
+      "name": "W 2000",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10343,
+      "name": "Bittersweet Caramel",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10351,
+      "name": "Retired Type 97",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10352,
+      "name": "Type 97",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10353,
+      "name": "Leaping Tiger",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10361,
+      "name": "Retired Stechkin",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10362,
+      "name": "Stechkin",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10371,
+      "name": "Retired Pluma Edge",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10372,
+      "name": "Pluma Edge",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10373,
+      "name": "Rectrix",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10381,
+      "name": "Retired Model ARM",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10382,
+      "name": "Model ARM",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10391,
+      "name": "Retired Suomi",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10392,
+      "name": "Suomi",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10393,
+      "name": "Unspoken Calling",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10401,
+      "name": "Retired PPSh-41",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10402,
+      "name": "PPSh-41",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10403,
+      "name": "Svarog",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10411,
+      "name": "Retired M1 Super 90",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10412,
+      "name": "M1 Super 90",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10421,
+      "name": "Retired G36K-KSK",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10422,
+      "name": "G36K-KSK",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10423,
+      "name": "Aglaea",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10431,
+      "name": "Retired CZ75",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10432,
+      "name": "CZ75",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10433,
+      "name": "Hestia",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10441,
+      "name": "Retired Ksvec .45 ACP",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10442,
+      "name": "Ksvec .45 ACP",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10443,
+      "name": "Banshee's Whisper",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10451,
+      "name": "Retired Sturmgewehr 28",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10452,
+      "name": "Sturmgewehr 28",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10453,
+      "name": "Sylvan Elf",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10471,
+      "name": "Retired M1903",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10472,
+      "name": "M1903",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10473,
+      "name": "Radiance",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10481,
+      "name": "Retired Type 97 Shotgun",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10482,
+      "name": "Type 97 Shotgun",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10483,
+      "name": "Trailblazer",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10491,
+      "name": "Retired TMP",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10492,
+      "name": "TMP",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10493,
+      "name": "Antinomy",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10501,
+      "name": "Retired CS/LS06",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10502,
+      "name": "CS/LS06",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10503,
+      "name": "Juggernaut",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10511,
+      "name": "Retired G11",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10512,
+      "name": "G11",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10513,
+      "name": "Daydream",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10521,
+      "name": "Retired 416",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10522,
+      "name": "416",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10523,
+      "name": "Skylla",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10531,
+      "name": "Retired MP5H1",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10532,
+      "name": "MP5H1",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10533,
+      "name": "Amanita",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10541,
+      "name": "Retired K2",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10542,
+      "name": "K2",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10543,
+      "name": "Sparkling Centerstage",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10551,
+      "name": "Retired VSK-94",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10552,
+      "name": "VSK-94",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10553,
+      "name": "Guardian Silverwing",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10561,
+      "name": "Retired UMP45",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10562,
+      "name": "UMP45",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10563,
+      "name": "Schlitzohr",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10571,
+      "name": "Retired RO635",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10572,
+      "name": "RO635",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10573,
+      "name": "Wanderer's Magnum",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10581,
+      "name": "Retired UMP40",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10582,
+      "name": "UMP40",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10583,
+      "name": "Perihelion",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10591,
+      "name": "Retired Auto-12",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10592,
+      "name": "Auto-12",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10593,
+      "name": "Thorn Criterion",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10601,
+      "name": "Retired Graythorn",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10602,
+      "name": "Graythorn",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10603,
+      "name": "Cause and Effect",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10611,
+      "name": "Retired Lahti-Saloranta M/26",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10612,
+      "name": "Lahti-Saloranta M/26",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10613,
+      "name": "Njörðr",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10621,
+      "name": "Retired Lewis Gun",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10622,
+      "name": "Lewis Gun",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10623,
+      "name": "Toysmith",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10631,
+      "name": "Retired Mark Two Manual Pistol",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10632,
+      "name": "Mark Two Manual Pistol",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10633,
+      "name": "Silent Sanction",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10641,
+      "name": "Retired Pistolet 15",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10642,
+      "name": "Pistolet 15",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10643,
+      "name": "Iaso",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10651,
+      "name": "Retired Nikonova 94",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10652,
+      "name": "Nikonova 94",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10653,
+      "name": "6P33",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10661,
+      "name": "Retired Kalashnikova-15",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10662,
+      "name": "Kalashnikova-15",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10663,
+      "name": "6P71",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10671,
+      "name": "Retired SG-12",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10672,
+      "name": "SG-12",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10673,
+      "name": "Dulcet Defender",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10681,
+      "name": "Retired Model 100",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10682,
+      "name": "Model 100",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10683,
+      "name": "Crimson Covenant",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10691,
+      "name": "Retired .50BMG Anti-Materiel Rifle",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10692,
+      "name": ".50BMG Anti-Materiel Rifle",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10693,
+      "name": "Nighttide Nocturne",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10701,
+      "name": "Retired .408 Sniper Rifle",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10702,
+      "name": ".408 Sniper Rifle",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10703,
+      "name": "Nightwalker Cardamom",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10711,
+      "name": "Retired .45 ACP Pistol",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10712,
+      "name": ".45 ACP Pistol",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10713,
+      "name": "Dona Eis Requiem",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10721,
+      "name": "Retired General Liu Rifle",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10722,
+      "name": "General Liu Rifle",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10723,
+      "name": "Transience",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10731,
+      "name": "Retired Nightsnake",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10732,
+      "name": "Nightsnake",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10733,
+      "name": "Twilight Rose",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10741,
+      "name": "Retired Groza-3",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 10742,
+      "name": "Groza-3",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 10743,
+      "name": "Capitoline",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10753,
+      "name": "Sibyl",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 10761,
+      "name": "Retired SOPMOD II",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "cn"
+    },
+    {
+      "id": 10762,
+      "name": "SOPMOD II",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "cn"
+    },
+    {
+      "id": 10763,
+      "name": "Sky-Shattering Howl",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "cn"
+    },
+    {
+      "id": 10771,
+      "name": "Retired Type 90 PDW",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "cn"
+    },
+    {
+      "id": 10772,
+      "name": "Type 90 PDW",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "cn"
+    },
+    {
+      "id": 10773,
+      "name": "Nova Chinchilla",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "cn"
+    },
+    {
+      "id": 10781,
+      "name": "Retired Sturmgewehr 41",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "cn"
+    },
+    {
+      "id": 10782,
+      "name": "Sturmgewehr 41",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "cn"
+    },
+    {
+      "id": 10783,
+      "name": "Feral Fang",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "cn"
+    },
+    {
+      "id": 10791,
+      "name": "Retired Model 12 Assault Rifle",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "cn"
+    },
+    {
+      "id": 10792,
+      "name": "Model 12 Assault Rifle",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "cn"
+    },
+    {
+      "id": 10793,
+      "name": "Chernobog",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "cn"
+    },
+    {
+      "id": 10801,
+      "name": "Retired ST AR-15",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "cn"
+    },
+    {
+      "id": 10802,
+      "name": "ST AR-15",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "cn"
+    },
+    {
+      "id": 10803,
+      "name": "Compass of Repentance",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "cn"
+    },
+    {
+      "id": 10811,
+      "name": "Retired Desert Eagle",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "cn"
+    },
+    {
+      "id": 10812,
+      "name": "Desert Eagle",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "cn"
+    },
+    {
+      "id": 10813,
+      "name": "Argent Wing Pisty",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "cn"
+    },
+    {
+      "id": 10821,
+      "name": "Retired G36C",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "cn"
+    },
+    {
+      "id": 10822,
+      "name": "G36C",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "cn"
+    },
+    {
+      "id": 10823,
+      "name": "Snotra",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "cn"
+    },
+    {
+      "id": 11007,
+      "name": "Hare",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 11008,
+      "name": "Retired .380 Curva",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 11009,
+      "name": "Retired .50 Nemesis",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 11010,
+      "name": "Retired OTs-14",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 11014,
+      "name": ".50 Nemesis",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 11015,
+      "name": ".380 Curva",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 11016,
+      "name": "Heart Seeker",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 11017,
+      "name": "Retired Vepr-12",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 11020,
+      "name": "Optical Illusion",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 11021,
+      "name": "Vepr-12",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 11022,
+      "name": "Retired Hare",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 11023,
+      "name": "OTs-14",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 11024,
+      "name": "Retired Pecheneg-SP",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 11026,
+      "name": "Pecheneg-SP",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 11030,
+      "name": "Retired Robinson Modular Rifle",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 11031,
+      "name": "Robinson Modular Rifle",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 11036,
+      "name": "Retired Model Alpha",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 11037,
+      "name": "Model Alpha",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 11038,
+      "name": "Planeta",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 11039,
+      "name": "Retired MP7H1",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 11040,
+      "name": "MP7H1",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 11042,
+      "name": "Retired QBZ-191",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 11043,
+      "name": "QBZ-191",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 11044,
+      "name": "Golden Melody",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 11045,
+      "name": "Retired Sportivo Calibro 12",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 11046,
+      "name": "Sportivo Calibro 12",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 11047,
+      "name": "Mezzaluna",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 11048,
+      "name": "Retired Nagant M1895",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 11049,
+      "name": "Nagant M1895",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 11051,
+      "name": "Retired Type 95",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 11052,
+      "name": "Type 95",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 11053,
+      "name": "Heavy Strings",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    },
+    {
+      "id": 11054,
+      "name": "Retired Sturmgewehr 36",
+      "kind": "weapon",
+      "rarity": "Retired",
+      "region": "en"
+    },
+    {
+      "id": 11055,
+      "name": "Sturmgewehr 36",
+      "kind": "weapon",
+      "rarity": "Standard",
+      "region": "en"
+    },
+    {
+      "id": 11056,
+      "name": "Maid's Rules",
+      "kind": "weapon",
+      "rarity": "Elite",
+      "region": "en"
+    }
+  ]
+}
