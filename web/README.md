@@ -1,4 +1,10 @@
-# Local tracker interface
+# Tracker interface
+
+The public deployment uses IndexedDB and workers for personal archives, and the protected `/api/public/*` API for optional server features. Set `GFL2_MODE=public`, the exact HTTPS `PUBLIC_ORIGIN`, `GFL2_API_URL`, and `GFL2_API_ALLOWED_ORIGINS` on the Node server. `PUBLIC_GOOGLE_CLIENT_ID` configures browser-only Google authorization at runtime. See [hosting](../docs/HOSTING.md) for Docker configuration and release gates.
+
+The local archive and sync engines share synthetic parity fixtures with Python. Run `npm test`, `npm run check`, and `npm run build`. Browser tests must also check worker loading, IndexedDB persistence, and file serialization.
+
+## Windows local mode
 
 Run the two services with the repository's `Start-Tracker.ps1` launcher. The SvelteKit Node server forwards `/api/*` to the loopback Python service configured by `GFL2_API_URL` (default `http://127.0.0.1:8000`). Browsers use only the frontend origin. Development uses port 5173; the production launcher uses port 3000.
 
@@ -19,6 +25,6 @@ Imports preserve raw page text and require one collector export folder; selectin
 
 ## Dependency notes
 
-SvelteKit 2.70.3 still requests cookie 0.6.x, affected by GHSA-pxg6-pf52-xh8x. A scoped override supplies cookie 0.7.2 to SvelteKit, preserving its parse/serialize APIs while rejecting invalid cookie names, paths, and domains. Remove the override when SvelteKit's dependency includes the fix. The tracker itself does not use cookies or authentication.
+SvelteKit 2.70.3 still requests cookie 0.6.x, affected by GHSA-pxg6-pf52-xh8x. A scoped override supplies cookie 0.7.2 to SvelteKit, preserving its parse/serialize APIs while rejecting invalid cookie names, paths, and domains. Remove the override when SvelteKit's dependency includes the fix. Public mode uses secure, HttpOnly session cookies with CSRF protection; local mode does not.
 
 Barlow and Barlow Condensed are self-hosted through Fontsource; their original OFL notices are included at `/fonts-license.txt`. The synthetic design mock remains outside this repository and is not included in the shipped application.

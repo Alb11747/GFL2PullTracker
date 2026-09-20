@@ -402,12 +402,22 @@ class GachaClient:
         retries: int = DEFAULT_RETRIES,
         request_once: Callable[[str, dict[str, str], bytes, float], HttpResponse] | None = None,
         sleep_fn: Callable[[float], None] = time.sleep,
+        max_response_bytes: int = 8 * 1024 * 1024,
+        max_total_bytes: int = 64 * 1024 * 1024,
+        max_requests: int = 2000,
+        max_seconds: float = 600,
     ) -> None:
         self.prepared = prepared
         self.timeout = timeout
         self.retries = retries
         self._request_once_override = request_once
         self._sleep = sleep_fn
+        self.max_response_bytes = max_response_bytes
+        self.max_total_bytes = max_total_bytes
+        self.max_requests = max_requests
+        self.deadline = time.monotonic() + max_seconds
+        self.total_bytes = 0
+        self.request_count = 0
 
     def _target_for(self, type_id: int, next_cursor: str | None) -> str:
         pairs = [
@@ -438,7 +448,21 @@ class GachaClient:
         try:
             connection.request("POST", target, body=body, headers=headers)
             response = connection.getresponse()
-            response_body = response.read()
+            # Bound upstream data even without Content-Length. A slow stream
+            # cannot reserve a public worker forever by trickling bytes.
+            chunks = []
+            length = 0
+            while True:
+                if time.monotonic() >= self.deadline:
+                    raise FetchError("Collection time limit reached")
+                chunk = response.read1(min(65536, self.max_response_bytes + 1 - length))
+                if not chunk:
+                    break
+                length += len(chunk)
+                if length > self.max_response_bytes:
+                    raise FetchError("Upstream response exceeds the size limit")
+                chunks.append(chunk)
+            response_body = b"".join(chunks)
             response_headers = {name.lower(): value for name, value in response.getheaders()}
             return HttpResponse(
                 status=response.status,
@@ -463,14 +487,20 @@ class GachaClient:
         target = self._target_for(type_id, next_cursor)
         last_problem = "request failed"
         for attempt in range(self.retries + 1):
+            if time.monotonic() >= self.deadline or self.request_count >= self.max_requests:
+                raise FetchError("Collection request or time limit reached")
+            self.request_count += 1
             response: HttpResponse | None = None
             try:
                 response = self._request_once(
                     target,
                     dict(self.prepared.forwarded_headers),
                     self.prepared.body,
-                    self.timeout,
+                    min(self.timeout, max(0.1, self.deadline - time.monotonic())),
                 )
+                self.total_bytes += len(response.body)
+                if len(response.body) > self.max_response_bytes or self.total_bytes > self.max_total_bytes:
+                    raise FetchError("Collection response size limit reached")
             except (TimeoutError, socket.timeout, OSError, http.client.HTTPException) as exc:
                 last_problem = f"network error: {type(exc).__name__}"
             else:

@@ -1,17 +1,22 @@
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
 const MAX_BODY = 64 * 1024 * 1024;
-export function backendUrl(configured: string): URL {
+export interface ProxyOptions {
+  mode?: 'local' | 'public';
+  publicOrigin?: string;
+  allowedBackends?: string[];
+}
+export function backendUrl(configured: string, allowedBackends?: string[]): URL {
   const url = new URL(configured);
   if (
     url.protocol !== 'http:' ||
-    !LOOPBACK_HOSTS.has(url.hostname) ||
+    !(allowedBackends ? allowedBackends.includes(url.origin) : LOOPBACK_HOSTS.has(url.hostname)) ||
     url.username ||
     url.password ||
     url.pathname !== '/' ||
     url.search ||
     url.hash
   )
-    throw new Error('GFL2_API_URL must be an HTTP loopback origin.');
+    throw new Error('GFL2_API_URL must be an explicitly allowed bare HTTP backend origin.');
   return url;
 }
 function failure(detail: string, status: number) {
@@ -20,29 +25,67 @@ function failure(detail: string, status: number) {
 export async function forward(
   request: Request,
   configured: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = fetch,
+  options: ProxyOptions = {}
 ): Promise<Response> {
   const incoming = new URL(request.url);
-  if (!LOOPBACK_HOSTS.has(incoming.hostname) || request.headers.get('host') !== incoming.host)
+  const hosted = options.mode === 'public';
+  if (hosted && (!options.publicOrigin || incoming.origin !== options.publicOrigin))
+    return failure('Use the configured tracker address.', 403);
+  if (
+    (!hosted && !LOOPBACK_HOSTS.has(incoming.hostname)) ||
+    request.headers.get('host') !== incoming.host
+  )
     return failure('Use the local tracker address.', 403);
   const method = request.method;
   const path = incoming.pathname;
-  const readable =
-    /^\/api\/(health|profiles|history|statistics|filters|imports|jobs\/[a-zA-Z0-9-]+)$/.test(path);
-  const writable = /^\/api\/(profiles|imports|fetch)$/.test(path);
-  if ((method !== 'GET' || !readable) && (method !== 'POST' || !writable))
+  const bodyLimit = hosted
+    ? /\/public\/(fetch|verify)$/.test(path)
+      ? 300 * 1024
+      : 16 * 1024 * 1024
+    : MAX_BODY;
+  const readable = hosted
+    ? /^\/api\/(health|public\/(config|statistics|backup|jobs\/[a-zA-Z0-9-]+(?:\/result)?))$/.test(
+        path
+      )
+    : /^\/api\/(health|profiles|history|statistics|filters|imports|jobs\/[a-zA-Z0-9-]+)$/.test(
+        path
+      );
+  const writable = hosted
+    ? /^\/api\/public\/(verify|fetch|backup|contribution)$/.test(path)
+    : /^\/api\/(profiles|imports|fetch)$/.test(path);
+  const writeMethod = hosted ? ['POST', 'PUT', 'DELETE'].includes(method) : method === 'POST';
+  if ((method !== 'GET' || !readable) && (!writeMethod || !writable))
     return failure('API route not found.', 404);
   if (request.headers.get('sec-fetch-site') === 'cross-site')
     return failure('Cross-site requests are not allowed.', 403);
   const origin = request.headers.get('origin');
+  if (hosted && writeMethod && origin !== options.publicOrigin)
+    return failure('A same-origin request is required.', 403);
   if (origin && origin !== incoming.origin)
     return failure('Use the tracker from the same local origin.', 403);
   const headers = new Headers();
+  if (hosted) {
+    // Only the tracker session crosses this trust boundary; game and Google
+    // credentials must never be forwarded from ambient browser headers.
+    const cookie = request.headers
+      .get('cookie')
+      ?.split(';')
+      .map((part) => part.trim())
+      .filter((part) => /^gfl2_session=[A-Za-z0-9_-]+$/.test(part))
+      .join('; ');
+    if (cookie) headers.set('cookie', cookie);
+    const csrf = request.headers.get('x-csrf-token');
+    if (csrf && /^[A-Za-z0-9_-]{16,256}$/.test(csrf)) headers.set('x-csrf-token', csrf);
+  }
   let body: string | undefined;
-  if (method === 'POST') {
-    if (request.headers.get('content-type')?.split(';')[0] !== 'application/json')
+  if (writeMethod) {
+    if (
+      method !== 'DELETE' &&
+      request.headers.get('content-type')?.split(';')[0] !== 'application/json'
+    )
       return failure('Use application/json.', 415);
-    if (Number(request.headers.get('content-length') || 0) > MAX_BODY)
+    if (Number(request.headers.get('content-length') || 0) > bodyLimit)
       return failure('Import exceeds the 64 MiB limit.', 413);
     const reader = request.body?.getReader();
     const chunks: Uint8Array[] = [];
@@ -52,7 +95,7 @@ export async function forward(
         const chunk = await reader.read();
         if (chunk.done) break;
         length += chunk.value.byteLength;
-        if (length > MAX_BODY) {
+        if (length > bodyLimit) {
           await reader.cancel();
           return failure('Import exceeds the 64 MiB limit.', 413);
         }
@@ -72,13 +115,30 @@ export async function forward(
     if (site) headers.set('sec-fetch-site', site);
   }
   try {
-    const target = backendUrl(configured);
+    const target = backendUrl(configured, hosted ? (options.allowedBackends ?? []) : undefined);
     target.pathname = path;
     target.search = incoming.search;
-    const response = await fetcher(target, { method, headers, body, redirect: 'error' });
+    const response = await fetcher(target, {
+      method,
+      headers,
+      body,
+      redirect: 'error',
+      signal: AbortSignal.timeout(30_000)
+    });
+    const responseHeaders = new Headers({
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-store'
+    });
+    if (hosted) {
+      for (const cookie of response.headers.getSetCookie()) {
+        if (cookie.startsWith('gfl2_session=')) responseHeaders.append('set-cookie', cookie);
+      }
+      if (response.headers.has('retry-after'))
+        responseHeaders.set('retry-after', response.headers.get('retry-after')!);
+    }
     return new Response(response.body, {
       status: response.status,
-      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
+      headers: responseHeaders
     });
   } catch {
     return failure(

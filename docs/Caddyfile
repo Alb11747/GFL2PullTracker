@@ -1,0 +1,12 @@
+{$PUBLIC_ORIGIN} {
+	encode zstd gzip
+	request_body {
+		max_size 16MiB
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+	}
+	reverse_proxy web:3000
+}

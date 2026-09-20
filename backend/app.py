@@ -155,6 +155,11 @@ def filters(profile_id: str, q: str | None = Query(None, max_length=200), rarity
 
 
 def create_app(data_dir=None, *, catalog_path=None, client_factory=None):
+    if os.environ.get("GFL2_MODE", "local") == "public":
+        from backend.public_app import create_public_app
+        return create_public_app(data_dir, client_factory=client_factory)
+    if os.environ.get("GFL2_MODE", "local") != "local":
+        raise RuntimeError("GFL2_MODE must be local or public")
     data_dir = Path(data_dir or os.environ.get("GFL2_DATA_DIR", Path(__file__).resolve().parents[1] / "data"))
 
     @asynccontextmanager

@@ -154,7 +154,7 @@ def validate_document(document, manifest, raw_pages):
             expected.setdefault((entry["source_type_id"], entry["source_page"]), []).append(entry["record"])
         actual = {}
         for name, contents in raw_pages.items():
-            match = re.fullmatch(r"raw/type_(\d+)/page_(\d+)\.json", name)
+            match = re.fullmatch(r"(?:raw|responses)/type_(\d+)/page_(\d+)\.json", name)
             if not match:
                 raise HTTPException(422, "Invalid raw page archive name")
             try:
@@ -165,6 +165,11 @@ def validate_document(document, manifest, raw_pages):
                     raise ValueError()
             except (json.JSONDecodeError, KeyError, TypeError, ValueError):
                 raise HTTPException(422, "Raw pages must contain valid collector response JSON") from None
+            # Incremental exports retain original responses, including overlap
+            # omitted from normalized raw pages. Preserve these as provenance;
+            # only normalized raw pages establish snapshot coverage.
+            if name.startswith("responses/"):
+                continue
             pair = tuple(int(value) for value in match.groups())
             if pair in actual or page_records != expected.get(pair, []):
                 raise HTTPException(422, "Raw page records do not match snapshot provenance")

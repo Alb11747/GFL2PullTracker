@@ -1,6 +1,18 @@
 # GFL2 Pull Tracker
 
-A local Girls' Frontline 2 pull-history viewer. Import saved collector exports or paste a captured HTTP request, then review totals and detailed history on the same page.
+A Girls' Frontline 2 pull-history tracker with a Windows local mode and a Docker-hosted website. Import collector exports, Exilium backups, or captured requests, then review totals and detailed history on the same page.
+
+## Public website
+
+Public mode stores personal histories in IndexedDB and processes archives in a Web Worker. It supports multiple game profiles, compressed downloads and restores, and optional two-way Google Drive sync. No website account is required. The interface includes profile management, import guidance, backup controls, privacy information, and community statistics.
+
+Use [the Docker hosting guide](docs/HOSTING.md) and [.env.example](.env.example). Configure a real HTTPS origin and keep the API private. [Google Drive setup](docs/GOOGLE_DRIVE.md) requires your own OAuth client. Original source is MIT licensed; game data and fonts retain their [third-party notices](THIRD_PARTY_NOTICES.md).
+
+**Release gates:** This release has no enabled production game-account ownership verifier. Server backup, recovery, and verified contributions fail closed until an audited provider adapter establishes credential-to-account binding. The bounded server relay works without those features. Decoding token metadata or accepting a supplied UID is insufficient proof. Google OAuth and authenticated upstream imports require testing on the configured deployment origin before public launch.
+
+Browser-only imports contact the official game API directly. Choosing server features or the explicit relay fallback sends the capture through server memory; captures are never retained. Server-backup and contribution choices are independent and initially on, with unavailable features identified before submission. See [data and privacy](docs/PRIVACY.md), [import formats](docs/IMPORTING.md), and [preparing a publication copy](docs/PUBLICATION.md).
+
+Drive merges immutable snapshots and asks about conflicting names, identities, or deletions. Sync runs while the page is open, and expired authorization requires reconnection. Current-state deletion does not erase historical Drive revisions. Keep downloadable backups and read the documented recovery limits.
 
 ## Start on Windows
 
@@ -75,8 +87,8 @@ npm run check
 npm run build
 ```
 
-SvelteKit forwards same-origin `/api` requests to FastAPI. `GFL2_API_URL` selects the backend URL; `GFL2_FRONTEND_ORIGIN` configures the permitted browser origin. The launcher supplies both. FastAPI owns collection and storage; the browser never contacts the game's history API directly. API documentation is available at `http://127.0.0.1:8000/docs` while running.
+In Windows local mode, SvelteKit forwards same-origin `/api` requests to FastAPI. `GFL2_API_URL` selects the backend URL; `GFL2_FRONTEND_ORIGIN` configures the permitted browser origin. The launcher supplies both. FastAPI owns local collection and storage. API documentation is available at `http://127.0.0.1:8000/docs` in local mode.
 
-The current service has a local owner and profile-scoped storage. Public hosting needs authentication, owner authorization, deployment configuration, and a review of credential handling before exposure. Login, sharing, and hosted deployment are outside this version.
+Public mode uses separate routes, session-scoped relay jobs, and an isolated `public.sqlite3` database. It never exposes the desktop owner's API or database. The single-process public API includes rate/resource limits, account-scoped backup operations, and separately stored server-verified contributions. See the release gates above before enabling ownership-dependent features.
 
 Launch-date references: [Sunborn launch announcement](https://www.biggamesmachine.com/client-news/girls-frontline-2-global/) and [Haoplay release announcement](https://gamebiz.jp/news/397022).

@@ -1,0 +1,59 @@
+name: gfl2-tracker
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    environment:
+      GFL2_MODE: public
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?Set PUBLIC_ORIGIN to the public HTTPS origin}
+      GFL2_FRONTEND_ORIGIN: ${PUBLIC_ORIGIN}
+      GFL2_DATA_DIR: /app/data
+    volumes:
+      - tracker-data:/app/data
+    networks: [backend]
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 25s
+    mem_limit: 768m
+    pids_limit: 128
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    environment:
+      GFL2_MODE: public
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN}
+      ORIGIN: ${PUBLIC_ORIGIN}
+      GFL2_FRONTEND_ORIGIN: ${PUBLIC_ORIGIN}
+      GFL2_API_URL: http://api:8000
+      GFL2_API_ALLOWED_ORIGINS: http://api:8000
+      PUBLIC_GOOGLE_CLIENT_ID: ${PUBLIC_GOOGLE_CLIENT_ID:-}
+      BODY_SIZE_LIMIT: 16777216
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - 127.0.0.1:${WEB_PORT:-3000}:3000
+    networks: [backend, frontend]
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 25s
+    mem_limit: 512m
+    pids_limit: 128
+volumes:
+  tracker-data:
+networks:
+  # Private addressing: no API host port. Outbound access is needed for game APIs.
+  backend:
+  frontend:

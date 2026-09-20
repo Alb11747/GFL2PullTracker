@@ -200,3 +200,9 @@ The current system has no reusable elevated card component. The sidecar records 
 - Don't communicate rarity or import problems through color alone.
 - Don't hide unresolved records to produce a visually complete ledger.
 - Don't turn the observed panel and chart transitions into continuous animation.
+
+## Public tracker extension
+
+Public mode adds a compact navigation row for My history, Profiles, Backup & sync, Community statistics, and Privacy. These surfaces reuse the existing paper, ink, oxblood, thin rules, Barlow typography, and visible focus treatments. Settings use aligned form groups and inline confirmations; consent and unavailable-provider messages appear beside the action they affect. Mobile settings stack, and history overflow stays within its table region.
+
+Local storage and cloud synchronization have separate status messages. Empty community statistics show the minimum contribution threshold, not illustrative totals. Captures are never reflected in errors, and unavailable Google or provider configuration is explained before submission.

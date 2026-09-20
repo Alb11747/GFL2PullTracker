@@ -87,6 +87,22 @@ def test_exilium_oldest_first_normalization_keeps_occurrences(client):
     assert client.get("/api/history", params={"profile_id": p}).json()["items"] == rows
 
 
+def test_incremental_response_provenance_retains_overlap_without_importing_it(client):
+    p = profile(client)
+    doc = document([record()])
+    pages = {
+        "raw/type_3/page_1.json": json.dumps({"data": {"list": [record()["record"]]}}),
+        "responses/type_3/page_1.json": json.dumps({"data": {"list": [record()["record"], record(11008)["record"]]}}),
+    }
+    assert load(client, p, doc, raw_pages=pages).json()["added_count"] == 1
+    assert client.get("/api/history", params={"profile_id": p}).json()["total"] == 1
+    pages["responses/type_3/page_1.json"] = json.dumps({"data": {"list": [], "token": "synthetic-secret"}})
+    assert load(client, p, doc, raw_pages=pages).status_code == 422
+    del pages["responses/type_3/page_1.json"]
+    pages["responses/../page_1.json"] = json.dumps({"data": {"list": []}})
+    assert load(client, p, doc, raw_pages=pages).status_code == 422
+
+
 def test_v1_migration_recovers_source_order_and_is_repeatable(tmp_path, monkeypatch):
     with TestClient(create_app(tmp_path), base_url="http://127.0.0.1:8000") as client:
         p = profile(client)

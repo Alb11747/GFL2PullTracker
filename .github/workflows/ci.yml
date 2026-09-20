@@ -1,0 +1,64 @@
+name: Validate
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.10.12'
+          python-version: '3.13'
+      - run: uv sync --frozen
+      - run: uv run --frozen pytest
+      - name: Audit Python runtime dependencies
+        run: |
+          uv export --frozen --no-dev --no-emit-project --format requirements-txt > "$RUNNER_TEMP/gfl2-requirements.txt"
+          uvx pip-audit -r "$RUNNER_TEMP/gfl2-requirements.txt" --require-hashes --disable-pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - run: npm run check && npm test && npm run build
+        working-directory: web
+      - run: npm audit --audit-level=high
+        working-directory: web
+      - name: Scan complete Git history
+        env:
+          GITLEAKS_VERSION: 8.30.1
+        run: |
+          cd "$RUNNER_TEMP"
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          curl --fail --location --silent --show-error "$base/$archive" -o "$archive"
+          curl --fail --location --silent --show-error "$base/gitleaks_${GITLEAKS_VERSION}_checksums.txt" -o checksums.txt
+          grep "  $archive\$" checksums.txt | sha256sum --check --strict
+          tar -xzf "$archive" gitleaks
+          ./gitleaks git --redact --no-banner --log-opts=--all "$GITHUB_WORKSPACE"
+      - name: Build production containers
+        env:
+          PUBLIC_ORIGIN: https://tracker.example.com
+        run: docker compose -f compose.yaml -f compose.https.yaml build
+      - name: Smoke test isolated public-mode containers
+        env:
+          PUBLIC_ORIGIN: https://tracker.example.com
+        run: |
+          docker compose up -d --wait --wait-timeout 90
+          curl --fail --silent --show-error -H 'Host: tracker.example.com' -H 'Origin: https://tracker.example.com' http://127.0.0.1:3000/api/health
+          docker compose -f compose.yaml -f compose.https.yaml run --rm --no-deps proxy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+      - name: Stop test containers
+        if: always()
+        env:
+          PUBLIC_ORIGIN: https://tracker.example.com
+        run: docker compose -f compose.yaml -f compose.https.yaml down -v

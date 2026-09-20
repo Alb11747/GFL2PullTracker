@@ -1,0 +1,58 @@
+[
+  {
+    "name": "occurrence overlap and source type isolation",
+    "snapshots": [
+      [{"item":11007},{"item":11007},{"item":11008}],
+      [{"item":11007},{"item":11007},{"item":11007},{"item":11009},{"item":11007,"type":6}],
+      [{"item":11007}]
+    ],
+    "expected_items": [11007,11007,11007,11008,11007,11009],
+    "expected_total": 6,
+    "expected_pity": [5,1,4,3,2,1],
+    "expected_uncertain": [true,true,true,true,true,true],
+    "expected_gaps": [false,false,true,true,false,false]
+  },
+  {
+    "name": "stable equal timestamp partial anchors",
+    "snapshots": [
+      [{"item":11007},{"item":11008},{"item":11009}],
+      [{"item":11008}],
+      [{"item":11006},{"item":11007},{"item":11008}],
+      [{"item":11008},{"item":11010},{"item":11009}],
+      [{"item":11009},{"item":11007}]
+    ],
+    "expected_items": [11006,11007,11008,11010,11009],
+    "expected_total": 5
+  },
+  {
+    "name": "new indistinguishable occurrence",
+    "snapshots": [
+      [{"item":11007},{"item":11008},{"item":11007}],
+      [{"item":11007},{"item":11007},{"item":11008},{"item":11007}]
+    ],
+    "expected_items": [11007,11007,11008,11007],
+    "expected_total": 4
+  },
+  {
+    "name": "healed coverage and elite reset",
+    "snapshots": [
+      [{"item":11007,"time":1700000002},{"item":1013,"time":1700000001}],
+      [{"item":1015,"time":1700000004},{"item":11007,"time":1700000003}],
+      [{"item":11007,"time":1700000003},{"item":11007,"time":1700000002}]
+    ],
+    "expected_items": [1015,11007,11007,1013],
+    "expected_total": 4,
+    "expected_pity": [3,2,1,1],
+    "expected_uncertain": [false,false,false,true],
+    "expected_gaps": [false,false,false,false]
+  },
+  {
+    "name": "unknown rewards and separated page windows",
+    "snapshots": [[{"item":1015,"time":1700000005,"page":1},{"item":999999,"time":1700000004,"page":1},{"item":11007,"time":1700000002,"page":3},{"item":1013,"time":1700000001,"page":3}]],
+    "expected_items": [1015,999999,11007,1013],
+    "expected_total": 4,
+    "expected_pity": [3,2,1,1],
+    "expected_uncertain": [true,true,false,true],
+    "expected_gaps": [false,true,false,false]
+  }
+]

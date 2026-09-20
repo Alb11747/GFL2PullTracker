@@ -1,0 +1,27 @@
+services:
+  proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile.proxy
+    environment:
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN}
+    ports:
+      - 80:80
+      - 443:443
+      - 443:443/udp
+    volumes:
+      - ./docs/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [frontend]
+    depends_on:
+      web:
+        condition: service_healthy
+    restart: unless-stopped
+    cap_drop: [ALL]
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: 0
+    security_opt: [no-new-privileges:true]
+volumes:
+  caddy-data:
+  caddy-config:

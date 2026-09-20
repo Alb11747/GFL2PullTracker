@@ -1,0 +1,27 @@
+# Build contexts must never contain player data, credentials, or repository history.
+.git
+.env
+.env.*
+!.env.example
+.venv
+**/node_modules
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.svelte-kit
+**/build
+**/dist
+data
+exports
+captures
+capture*
+**/*.har
+**/*.sqlite*
+**/*.db
+**/*.db-*
+**/*.log
+.impeccable
+output
+test-results
+playwright-report
+.playwright-cli
