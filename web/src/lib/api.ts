@@ -17,6 +17,10 @@ export interface Pull {
   type_id: number;
   pool_id: number;
   timestamp: string;
+  timestamp_order: number;
+  pity: number;
+  pity_uncertain: boolean;
+  gap_before: boolean;
   quantity: number;
   source_page: number;
   estimated_group_size: number;

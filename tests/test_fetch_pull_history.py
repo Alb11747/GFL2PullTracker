@@ -6,6 +6,8 @@ import json
 import sys
 import tempfile
 import unittest
+from io import StringIO
+from unittest.mock import patch
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -142,6 +144,37 @@ def make_writer(
         timeout=1.0,
         retries=retries,
     )
+
+
+class CaptureInputTests(unittest.TestCase):
+    def test_interactive_paste_uses_dialog(self) -> None:
+        pasted = make_capture(line_ending="\n")
+        with (
+            patch.object(sys.stdin, "isatty", return_value=True),
+            patch.object(collector_module, "prompt_capture", return_value=pasted),
+        ):
+            text = collector_module.read_capture(None)
+        self.assertEqual(text, pasted)
+        prepared = collector_module.prepare_request(collector_module.parse_capture(text))
+        self.assertEqual(prepared.body, b"server=10")
+
+    def test_redirected_input_and_explicit_stdin_read_to_eof(self) -> None:
+        pasted = make_capture()
+        for path in (None, "-"):
+            with self.subTest(path=path), patch.object(sys, "stdin", StringIO(pasted)):
+                self.assertEqual(collector_module.read_capture(path), pasted)
+
+    def test_cancel_does_not_start_fetching(self) -> None:
+        with (
+            patch.object(sys.stdin, "isatty", return_value=True),
+            patch.object(collector_module, "prompt_capture", side_effect=InputError("Paste cancelled.")),
+            patch.object(sys, "stderr", new_callable=StringIO),
+            patch.object(collector_module, "GachaClient") as client,
+            patch.object(collector_module, "ExportWriter") as writer,
+        ):
+            self.assertEqual(collector_module.main([]), collector_module.EXIT_INPUT)
+            client.assert_not_called()
+            writer.assert_not_called()
 
 
 class CaptureParsingTests(unittest.TestCase):

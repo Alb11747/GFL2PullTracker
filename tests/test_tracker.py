@@ -1,5 +1,6 @@
 import base64
 import json
+import sqlite3
 from threading import Event
 
 from fastapi.testclient import TestClient
@@ -7,7 +8,8 @@ import pytest
 from sqlalchemy import event, select, text
 
 from backend.app import create_app
-from backend.database import Job, Profile, Pull, Snapshot
+from backend import database
+from backend.database import Job, Profile, Pull, Snapshot, open_database
 from backend.tracker import now
 from scripts import fetch_pull_history as collector
 
@@ -57,6 +59,64 @@ def test_occurrence_merge_overlap_idempotence_and_type_isolation(client):
     assert merged["total"] == 6 and merged["added_count"] == 3
     assert load(client, p, document([record()])).json()["total"] == 6
     assert client.get("/api/history", params={"profile_id": p, "type_id": 6}).json()["total"] == 1
+
+
+def test_stable_timestamp_order_survives_partial_imports_and_overlap(client):
+    p = profile(client)
+    assert load(client, p, document([record(11007), record(11008), record(11009)])).json()["added_count"] == 3
+    # Interior subsets must not move their records to the front of a full group.
+    load(client, p, document([record(11008)]))
+    load(client, p, document([record(11006), record(11007), record(11008)]))
+    load(client, p, document([record(11008), record(11010), record(11009)]))
+    rows = client.get("/api/history", params={"profile_id": p}).json()["items"]
+    assert [r["item_id"] for r in rows] == [11006, 11007, 11008, 11010, 11009]
+    assert [r["timestamp_order"] for r in rows] == list(range(5))
+    # Even contradictory source subsets cannot reverse the established order.
+    load(client, p, document([record(11009), record(11007)]))
+    assert client.get("/api/history", params={"profile_id": p}).json()["items"] == rows
+
+
+def test_exilium_oldest_first_normalization_keeps_occurrences(client):
+    p = profile(client)
+    doc = document([record(11007), record(11008), record(11007), record(11009)],
+                   external_source={"source": "https://exilium.xyz"})
+    assert load(client, p, doc).json()["added_count"] == 4
+    rows = client.get("/api/history", params={"profile_id": p}).json()["items"]
+    assert [r["item_id"] for r in rows] == [11009, 11007, 11008, 11007]
+    assert load(client, p, document([record(11009), record(11007), record(11008), record(11007)])).json()["added_count"] == 0
+    assert client.get("/api/history", params={"profile_id": p}).json()["items"] == rows
+
+
+def test_v1_migration_recovers_source_order_and_is_repeatable(tmp_path, monkeypatch):
+    with TestClient(create_app(tmp_path), base_url="http://127.0.0.1:8000") as client:
+        p = profile(client)
+        load(client, p, document([record(11007), record(11008), record(11007)],
+                               external_source={"source": "https://exilium.xyz"}))
+        load(client, p, document([record(11009), record(11007), record(11008), record(11007)]))
+        engine = client.app.state.tracker.sessions.kw["bind"]
+        path = engine.url.database
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE pulls DROP COLUMN timestamp_order"))
+            connection.execute(text("PRAGMA user_version=1"))
+    engine.dispose()
+    def fail_backfill(connection):
+        raise RuntimeError("Simulated backfill failure")
+    with monkeypatch.context() as patch:
+        patch.setattr(database, "backfill_timestamp_order", fail_backfill)
+        with pytest.raises(RuntimeError, match="Simulated backfill failure"):
+            open_database(path)
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert "timestamp_order" not in {row[1] for row in connection.execute("PRAGMA table_info(pulls)")}
+    for _ in range(2):
+        migrated, sessions = open_database(path)
+        with sessions() as session:
+            assert session.execute(text("PRAGMA user_version")).scalar_one() == 2
+            pulls = list(session.scalars(select(Pull).order_by(Pull.timestamp_order)))
+            assert [pull.item_id for pull in pulls] == [11009, 11007, 11008, 11007]
+            assert [pull.timestamp_order for pull in pulls] == list(range(4))
+            assert len(list(session.scalars(select(Snapshot)))) == 2
+        migrated.dispose()
 
 
 def test_validation_rolls_back_identity_and_records(client):
@@ -250,3 +310,32 @@ def test_raw_bom_response_preserves_original_bytes(client):
     assert result.status_code == 201
     with client.app.state.tracker.sessions() as session:
         assert json.loads(session.get(Snapshot, result.json()["id"]).raw_pages) == raw
+
+
+def test_new_identical_tied_pull_preserves_complete_source_order(client):
+    p = profile(client)
+    assert load(client, p, document([record(11007), record(11008), record(11007)])).status_code == 201
+    latest = document([record(11007), record(11007), record(11008), record(11007)])
+    assert load(client, p, latest).json()["added_count"] == 1
+    rows = client.get("/api/history", params={"profile_id": p}).json()["items"]
+    assert [r["item_id"] for r in rows] == [11007, 11007, 11008, 11007]
+    assert load(client, p, latest).json()["added_count"] == 0
+
+
+def test_pity_gap_bridge_survives_filters_and_restart(client):
+    p = profile(client)
+    older = [record(11007, time=1700000002), record(1013, time=1700000001)]
+    newer = [record(1015, time=1700000004), record(11007, time=1700000003)]
+    for rows in (older, newer):
+        assert load(client, p, document(rows)).status_code == 201
+    params = {"profile_id": p, "rarity": "Elite", "page_size": 1}
+    first = client.get("/api/history", params=params).json()["items"][0]
+    assert first["pity"] == 3 and first["pity_uncertain"]
+    bridge = document([newer[1], older[0]])
+    assert load(client, p, bridge).json()["added_count"] == 0
+    healed = client.get("/api/history", params=params).json()["items"][0]
+    assert healed["pity"] == 3 and not healed["pity_uncertain"]
+    # A new Tracker reconstructs coverage from persistent snapshots, not memory.
+    from backend.tracker import Tracker
+    tracker = Tracker(client.app.state.tracker.sessions)
+    assert not tracker.history(p, {"rarity": "Elite"})[0]["pity_uncertain"]

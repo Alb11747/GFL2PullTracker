@@ -1,5 +1,5 @@
 """Validated snapshots, occurrence merging, and a shared filtered history view."""
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import UTC, datetime
 import hashlib
 import json
@@ -11,7 +11,8 @@ from uuid import uuid4
 from fastapi import HTTPException
 from sqlalchemy import select
 
-from backend.database import Profile, Pull, Snapshot
+from backend.coverage import annotate_history
+from backend.database import Profile, Pull, Snapshot, merge_source_order, source_records_newest_first
 from scripts.fetch_pull_history import OFFICIAL_HOSTS
 
 
@@ -109,7 +110,7 @@ def validate_document(document, manifest, raw_pages):
             if manifest.get(key) is not None and manifest[key] != identity.get(key):
                 raise HTTPException(422, "Manifest identity does not match the records")
     normalized = []
-    for entry in records:
+    for entry in source_records_newest_first(document):
         if not isinstance(entry, dict) or not isinstance(entry.get("record"), dict):
             raise HTTPException(422, "Each export record needs its raw record and source provenance")
         raw = entry["record"]
@@ -203,16 +204,27 @@ class Tracker:
                                 record_count=len(rows), added_count=0, complete=manifest.get("complete") if manifest else None, imported_at=now())
             session.add(snapshot)
             session.flush()
-            previous = Counter()
-            for type_id, key in session.execute(select(Pull.type_id, Pull.record_key).where(Pull.profile_id == profile_id)):
-                previous[(type_id, key)] += 1
+            saved = list(session.scalars(select(Pull).where(Pull.profile_id == profile_id).order_by(Pull.timestamp_order, Pull.id)))
+            previous = Counter((pull.type_id, pull.record_key) for pull in saved)
+            by_identity = {(pull.type_id, pull.record_key, pull.occurrence): pull for pull in saved}
+            groups = defaultdict(list)
+            for pull in saved:
+                groups[(pull.type_id, pull.timestamp)].append((pull.type_id, pull.record_key, pull.occurrence))
+            incoming = defaultdict(list)
             observed = Counter()
             for row in rows:
                 key = (row["type_id"], row["record_key"])
                 observed[key] += 1
+                identity = (*key, observed[key])
+                incoming[(row["type_id"], row["timestamp"])].append(identity)
                 if observed[key] > previous[key]:
-                    session.add(Pull(profile_id=profile_id, snapshot_id=snapshot.id, occurrence=observed[key], **row))
+                    pull = Pull(profile_id=profile_id, snapshot_id=snapshot.id, occurrence=observed[key], **row)
+                    session.add(pull)
+                    by_identity[identity] = pull
                     snapshot.added_count += 1
+            for group, ordered in incoming.items():
+                for position, identity in enumerate(merge_source_order(groups[group], ordered)):
+                    by_identity[identity].timestamp_order = position
             result = self.snapshot_public(snapshot)
             result.update(duplicate=False, total=sum(previous.values()) + snapshot.added_count)
             return result
@@ -223,23 +235,43 @@ class Tracker:
 
     def history(self, profile_id, filters):
         with self.sessions() as session:
-            require_profile(session, profile_id)
-            pulls = list(session.scalars(select(Pull).where(Pull.profile_id == profile_id).order_by(Pull.timestamp.desc(), Pull.id.desc())))
+            profile = require_profile(session, profile_id)
+            endpoint_host = profile.endpoint_host
+            documents = []
+            for snapshot in session.scalars(select(Snapshot).where(Snapshot.profile_id == profile_id)):
+                document = json.loads(snapshot.document)
+                # Incremental archives retain empty overlap pages; these prove
+                # that page-number jumps do not necessarily omit any pulls.
+                empty_pages = defaultdict(list)
+                for path, contents in json.loads(snapshot.raw_pages or "{}").items():
+                    match = re.fullmatch(r"raw/type_(\d+)/page_(\d+)\.json", path)
+                    payload = json.loads(contents.lstrip("\ufeff")) if isinstance(contents, str) else contents
+                    if match and payload["data"]["list"] == []:
+                        empty_pages[str(int(match[1]))].append(int(match[2]))
+                document["_coverage_empty_pages"] = empty_pages
+                documents.append(document)
+            pulls = list(session.scalars(select(Pull).where(Pull.profile_id == profile_id).order_by(Pull.timestamp.desc(), Pull.timestamp_order, Pull.type_id, Pull.id)))
         groups = Counter((p.type_id, p.pool_id, p.timestamp) for p in pulls)
-        result = []
+        all_rows = []
         for pull in pulls:
             item = self.catalog.get(pull.item_id, {})
             row = dict(id=pull.id, item_id=pull.item_id, name=item.get("name", f"Unknown item #{pull.item_id}"),
                        kind=item.get("kind", "unknown"), rarity=item.get("rarity", "Unknown"), region=item.get("region"),
-                       type_id=pull.type_id, pool_id=pull.pool_id, timestamp=pull.timestamp, quantity=pull.quantity,
-                       source_page=pull.source_page, estimated_group_size=groups[(pull.type_id, pull.pool_id, pull.timestamp)])
-            if filters.get("q") and filters["q"].casefold() not in f'{row["name"]} {pull.item_id}'.casefold():
+                       type_id=pull.type_id, pool_id=pull.pool_id, timestamp=pull.timestamp, timestamp_order=pull.timestamp_order, quantity=pull.quantity,
+                       source_page=pull.source_page, record_key=pull.record_key, occurrence=pull.occurrence, estimated_group_size=groups[(pull.type_id, pull.pool_id, pull.timestamp)])
+            all_rows.append(row)
+        annotate_history(all_rows, documents, endpoint_host)
+        result = []
+        for row in all_rows:
+            row.pop("record_key")
+            row.pop("occurrence")
+            if filters.get("q") and filters["q"].casefold() not in f'{row["name"]} {row["item_id"]}'.casefold():
                 continue
             if any(filters.get(key) is not None and row[key] != filters[key] for key in ("rarity", "kind", "type_id", "pool_id")):
                 continue
-            if filters.get("date_from") and pull.timestamp[:10] < filters["date_from"]:
+            if filters.get("date_from") and row["timestamp"][:10] < filters["date_from"]:
                 continue
-            if filters.get("date_to") and pull.timestamp[:10] > filters["date_to"]:
+            if filters.get("date_to") and row["timestamp"][:10] > filters["date_to"]:
                 continue
             result.append(row)
         return result

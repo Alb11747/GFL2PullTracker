@@ -95,6 +95,10 @@ class HistoryItem(BaseModel):
     type_id: int
     pool_id: int
     timestamp: str
+    timestamp_order: int
+    pity: int
+    pity_uncertain: bool
+    gap_before: bool
     quantity: int
     source_page: int
     estimated_group_size: int
