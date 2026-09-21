@@ -1,7 +1,14 @@
 import { env } from '$env/dynamic/private';
 import { env as publicEnv } from '$env/dynamic/public';
-import type { Handle } from '@sveltejs/kit';
+import type { Handle, HandleServerError } from '@sveltejs/kit';
 import { backendUrl } from '$lib/proxy';
+import { reportServerError } from '$lib/telemetry/server';
+import { requestTelemetryAllowed } from '$lib/telemetry/server-policy';
+
+export const handleError: HandleServerError = ({ error, event }) => {
+  reportServerError(error, 'request', requestTelemetryAllowed(event.request.headers));
+  return { message: 'The tracker could not complete this request.' };
+};
 
 if (env.GFL2_MODE === 'public') {
   const origin = new URL(publicEnv.PUBLIC_ORIGIN || env.GFL2_FRONTEND_ORIGIN || '');

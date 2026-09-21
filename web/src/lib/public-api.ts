@@ -1,5 +1,6 @@
 import type { ImportInput } from './api.ts';
 import type { Identity } from './local/types.ts';
+import { telemetryEnabled } from './telemetry/browser.ts';
 
 export interface VerifiedAccount {
   account_id: string;
@@ -72,6 +73,7 @@ export function createPublicClient(fetcher: typeof fetch = fetch) {
         cache: 'no-store',
         redirect: 'error',
         headers: {
+          'X-GFL2-Telemetry': telemetryEnabled() ? '1' : '0',
           ...(mutation ? { 'X-CSRF-Token': csrfToken } : {}),
           ...(body === undefined ? {} : { 'Content-Type': 'application/json' })
         },

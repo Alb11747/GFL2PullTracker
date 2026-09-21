@@ -56,7 +56,29 @@ different actions. Drive changes do not automatically change server backup or
 contribution consent. Device conflicts require explicit resolution where an
 automatic merge would discard an edit.
 
-Operators can receive ordinary connection metadata such as IP addresses. They
-must publish their contact details, retention policy, hosting jurisdiction, and
-any additional telemetry before offering a public service. The default project
-does not add advertising or third-party analytics.
+## Analytics and diagnostics
+
+Configured public deployments use PostHog's US service for pageviews, fixed
+import/backup/restore/Drive-sync outcome codes and durations, sanitized exceptions,
+and masked session replay. Collection is on by default. Local mode and unconfigured
+deployments do not collect telemetry. Browser identity is random and is not linked
+to game or Google accounts. Events include the service and deployed revision.
+
+The first-visit notice offers a disable action. **Analytics & diagnostics** in
+Privacy controls the same device-local preference, synchronized across tabs and
+excluded from backups and Drive. Disabling stops browser collection and recording
+and excludes subsequent server requests and newly submitted jobs. Running jobs keep
+the permission recorded at submission. Opt-out does not delete already submitted
+telemetry; clearing site data resets the device preference.
+
+Replay masks inputs and text and blocks private archive content and profile
+controls. Navigation remains recordable. Console and network payload recording
+are disabled. Never send captures, tokens, game account IDs, filenames, histories,
+request bodies or headers, or Python local variables. Page URLs omit query strings
+and fragments; errors use fixed messages and safe stack locations. General
+interaction autocapture and account identification are disabled.
+
+Operators and PostHog can receive ordinary connection metadata such as IP
+addresses. Operators must publish contact details, retention policy, and hosting
+jurisdiction before offering a public service. This project does not add
+advertising. See [PostHog's privacy policy](https://posthog.com/privacy).

@@ -1,11 +1,22 @@
+# syntax=docker/dockerfile:1
 FROM node:24-bookworm-slim AS build
+ARG POSTHOG_PROJECT_ID=
+ARG GFL2_RELEASE=
 WORKDIR /app/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
 COPY backend/catalog.json /app/backend/catalog.json
 COPY docs/IMPORTING.md /app/docs/IMPORTING.md
-RUN npm run build && npm prune --omit=dev
+RUN --mount=type=secret,id=posthog_cli \
+    if [ -n "$POSTHOG_PROJECT_ID" ]; then \
+      test -s /run/secrets/posthog_cli && test -n "$GFL2_RELEASE" \
+      && POSTHOG_SOURCEMAPS=1 npm run build \
+      && POSTHOG_CLI_PROJECT_ID="$POSTHOG_PROJECT_ID" npx --no-install posthog-cli --dotenv-file /run/secrets/posthog_cli sourcemap inject --directory build --release-name GFL2PullTracker --release-version "$GFL2_RELEASE" --release-mode symbol-set \
+      && POSTHOG_CLI_PROJECT_ID="$POSTHOG_PROJECT_ID" npx --no-install posthog-cli --dotenv-file /run/secrets/posthog_cli sourcemap upload --directory build --release-name GFL2PullTracker --release-version "$GFL2_RELEASE" --release-mode symbol-set --delete-after; \
+    else npm run build; fi \
+    && find build -name '*.map' -type f -delete \
+    && npm prune --omit=dev
 
 FROM node:24-bookworm-slim
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000

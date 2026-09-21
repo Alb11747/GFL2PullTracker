@@ -28,6 +28,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from backend.public_jobs import PublicJobs, prepare, prepared_identity
 from backend.public_store import PublicStore, digest
 from backend.tracker import IDENTITY
+from backend.telemetry import Telemetry, permitted
 
 COOKIE = 'gfl2_session'
 SESSION_SECONDS = 7200
@@ -114,7 +115,7 @@ def public_origin(value):
     return value.rstrip('/')
 
 
-def create_public_app(data_dir=None, *, origin=None, client_factory=None, identity_verifier=None):
+def create_public_app(data_dir=None, *, origin=None, client_factory=None, identity_verifier=None, telemetry=None):
     origin = public_origin(origin or os.environ.get('GFL2_FRONTEND_ORIGIN') or os.environ.get('PUBLIC_ORIGIN'))
     directory = Path(data_dir or os.environ.get('GFL2_DATA_DIR', Path(__file__).resolve().parents[1] / 'data'))
     limiter = RateLimit()
@@ -125,9 +126,13 @@ def create_public_app(data_dir=None, *, origin=None, client_factory=None, identi
         store = PublicStore(directory / 'public.sqlite3')
         store.cleanup()
         application.state.store = store
-        application.state.jobs = PublicJobs(store, client_factory)
-        yield
-        application.state.jobs.close()
+        application.state.telemetry = telemetry if telemetry is not None else Telemetry.from_environment()
+        application.state.jobs = PublicJobs(store, client_factory, telemetry=application.state.telemetry)
+        try:
+            yield
+        finally:
+            application.state.jobs.close()
+            application.state.telemetry.close()
 
     application = FastAPI(title='GFL2 public tracker', version='0.2.0', lifespan=lifespan,
                           docs_url=None, redoc_url=None, openapi_url=None)
@@ -169,6 +174,9 @@ def create_public_app(data_dir=None, *, origin=None, client_factory=None, identi
             response = await call_next(request)
         except HTTPException as exc:
             response = JSONResponse({'detail': exc.detail}, status_code=exc.status_code)
+        except Exception as exc:
+            request.app.state.telemetry.report(exc, allowed=permitted(request))
+            response = JSONResponse({'detail': 'The public service could not complete the request.'}, status_code=500)
         response.headers['Cache-Control'] = 'no-store'
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['Referrer-Policy'] = 'no-referrer'
@@ -249,7 +257,8 @@ def create_public_app(data_dir=None, *, origin=None, client_factory=None, identi
             # verifier may reserve a quota shared across independent sessions.
             limiter.take('account-fetch:' + account_id, 10, 3600)
             request.app.state.store.preference(account_id, body.contribute)
-        return request.app.state.jobs.start(token, prepared, account_id, body.save_backup, body.contribute)
+        return request.app.state.jobs.start(token, prepared, account_id, body.save_backup, body.contribute,
+                                            telemetry_allowed=permitted(request))
 
     @application.get('/api/public/jobs/{identifier}')
     def job(identifier: str, request: Request):

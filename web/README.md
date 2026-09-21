@@ -53,6 +53,29 @@ Browser-only collection is the default for new users; saved server choices apply
 
 Progress remains visible outside the import panel, distinguishes collection, stopping, and saving, and reports records read, added, and total on completion. **View history** focuses the ledger. See [importing](../docs/IMPORTING.md) for supported files and capture instructions.
 
+## Analytics and diagnostics
+
+Runtime configuration enables PostHog only with `GFL2_MODE=public` and
+`PUBLIC_POSTHOG_KEY`. Set `PUBLIC_POSTHOG_HOST=https://us.i.posthog.com` and
+`PUBLIC_APP_RELEASE` to the deployed revision. The project ingestion token is
+public; administrative and source-map upload credentials must remain outside
+browser bundles, images, and Git. See [hosting](../docs/HOSTING.md) for deployment
+configuration and private source-map uploads.
+
+The root layout initializes telemetry before child requests and tracks one
+pageview per navigation. Explicit operation events contain only a fixed operation,
+outcome, and duration. The Privacy switch and first-visit notice control a
+device-local preference, excluded from portable settings and synchronized across
+tabs. Public API calls send `X-GFL2-Telemetry: 0|1`; existing jobs retain submission
+permission. Local mode and deployments without a token remain disabled.
+
+Replay masks all text and inputs and blocks tracker content and header profile
+controls with `ph-no-capture`. Keep new private surfaces inside those boundaries;
+never interpolate identifiers, filenames, captures, or history data into telemetry.
+Console and network payload recording and general interaction autocapture are
+disabled. Only the navigation shell is recordable. Verify outgoing events and
+decoded replay payloads with synthetic secrets when changing those boundaries.
+
 ## Dependency notes
 
 SvelteKit 2.70.3 still requests cookie 0.6.x, affected by GHSA-pxg6-pf52-xh8x. A scoped override supplies cookie 0.7.2 to SvelteKit, preserving its parse/serialize APIs while rejecting invalid cookie names, paths, and domains. Remove the override when SvelteKit's dependency includes the fix. Public mode uses secure, HttpOnly session cookies with CSRF protection; local mode does not.

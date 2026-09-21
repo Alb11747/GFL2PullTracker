@@ -2,6 +2,7 @@
 .git
 .env
 .env.*
+posthog-cli.env
 !.env.example
 .venv
 **/node_modules

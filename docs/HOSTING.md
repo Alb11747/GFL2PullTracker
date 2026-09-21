@@ -66,6 +66,40 @@ consume collection capacity. An interrupted capture job needs a new capture.
 
 ## Verify a running release
 
+### Optional PostHog diagnostics
+
+Set `PUBLIC_POSTHOG_KEY` to the project's public ingestion token and
+`PUBLIC_POSTHOG_HOST=https://us.i.posthog.com`. Leave the token blank to disable
+browser and server telemetry. Local-server mode never enables telemetry. Set
+`POSTHOG_PROJECT_ID` for source-map uploads and set `GFL2_RELEASE` to the
+exact Git revision for both services.
+
+Authenticate `web/node_modules/.bin/posthog-cli login` separately. Keep a private
+dotenv file at `/absolute/private/posthog-cli.env`, readable only by
+the deploying account, containing `POSTHOG_CLI_API_KEY`, `POSTHOG_CLI_PROJECT_ID`,
+and `POSTHOG_CLI_HOST=https://us.posthog.com`. The personal API key requires only
+the source-map upload scopes (error tracking write and organization read).
+Never commit this file, include it in the Docker context, or place its values in
+public environment variables. Set `POSTHOG_CLI_ENV_FILE` to its path so
+`compose.posthog.yaml` supplies it as a BuildKit secret. Failed authentication/upload stops the
+build before services change. Source maps are injected into the actual shipped
+build, uploaded with the revision, and removed from the runtime image.
+
+Use both Compose files and set
+`POSTHOG_CLI_ENV_FILE` to the private dotenv path. Ordinary `npm run build` does
+not generate browser source maps. The opt-out cookie is device-local; requests
+carry only a normalized boolean through the proxy. Background jobs retain the
+preference from submission, so disabling collection affects subsequent jobs.
+
+In PostHog, disable interaction autocapture, automatic exception capture,
+console/network recording, heatmaps and surveys. Enable replay at 100% with IP
+anonymization. The application applies text/input masking and blocks private
+content independently of remote settings. Verify ingestion, safe error frames,
+replay masking and opt-out with synthetic data after rollout. SDK or collector
+failure must not interfere with imports, archives or sync.
+
+### Health and functional checks
+
 ```sh
 docker compose ps
 docker compose logs --since 5m api web

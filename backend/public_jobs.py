@@ -12,6 +12,7 @@ from fastapi import HTTPException
 
 from backend.public_store import digest, validate_portable
 from backend.tracker import canonical, validate_document
+from backend.telemetry import Telemetry
 from scripts import fetch_pull_history as collector
 
 MAX_RESULT_BYTES = 16 * 1024 * 1024
@@ -43,9 +44,10 @@ def prepared_identity(prepared):
 
 
 class PublicJobs:
-    def __init__(self, store, client_factory=None):
+    def __init__(self, store, client_factory=None, *, telemetry=None):
         self.store = store
         self.client_factory = client_factory or collector.GachaClient
+        self.telemetry = telemetry if telemetry is not None else Telemetry()
         self.lock = RLock()
         self.slots = BoundedSemaphore(2)
         self.jobs = {}
@@ -89,7 +91,7 @@ class PublicJobs:
     def public(self, job):
         return {key: job[key] for key in ('id', 'status', 'message', 'records', 'pages')}
 
-    def start(self, token, prepared, account_id=None, save_backup=False, contribute=False):
+    def start(self, token, prepared, account_id=None, save_backup=False, contribute=False, *, telemetry_allowed=False):
         self.cleanup()
         with self.lock:
             owner = digest(token)
@@ -112,14 +114,16 @@ class PublicJobs:
             thread = None
             try:
                 backup_version = self.store.backup_version(account_id) if account_id and save_backup else None
-                thread = Thread(target=self.run, args=(identifier, prepared, account_id, save_backup, contribute, backup_version), daemon=True)
+                thread = Thread(target=self.run, args=(identifier, prepared, account_id, save_backup, contribute, backup_version,
+                                                       telemetry_allowed is True), daemon=True)
                 self.threads.append(thread)
                 thread.start()
-            except Exception:
+            except Exception as exc:
                 self.jobs.pop(identifier)
                 if thread in self.threads:
                     self.threads.remove(thread)
                 self.slots.release()
+                self.telemetry.report(exc, allowed=telemetry_allowed is True, operation='relay_start')
                 raise HTTPException(503, 'Worker could not start. Submit a fresh capture to retry.') from None
             return self.public(job)
 
@@ -156,10 +160,11 @@ class PublicJobs:
                 if self.jobs[identifier]['status'] not in ACTIVE_STATUSES:
                     self._prune_jobs()
 
-    def run(self, identifier, prepared, account_id, save_backup, contribute, backup_version):
+    def run(self, identifier, prepared, account_id, save_backup, contribute, backup_version, telemetry_allowed=False):
         manager = self
         deadline = time.monotonic() + JOB_SECONDS
         writer = None
+        reported = False
         event = self.jobs[identifier]['cancel_event']
 
         def budget():
@@ -217,8 +222,10 @@ class PublicJobs:
                                                    max_type=1000, baseline={}).run()
                 except collector.CancelledError:
                     pass
-                except Exception:
+                except Exception as exc:
                     failed = True
+                    self.telemetry.report(exc, allowed=telemetry_allowed, operation='relay_collect')
+                    reported = True
                     writer.fail_run('collection', 'Collection stopped; submit a fresh capture to retry.')
                 # Close the cancellation window before snapshot validation and
                 # persistence. A stop accepted first must force incomplete coverage.
@@ -256,7 +263,9 @@ class PublicJobs:
                     message += ' Server storage failed; download this result to preserve it.'
                 self.update(identifier, result=result if status != 'failed' else None, status=status,
                             message=message, expires=time.time()+RESULT_TTL)
-        except Exception:
+        except Exception as exc:
+            if not reported and not isinstance(exc, collector.CancelledError):
+                self.telemetry.report(exc, allowed=telemetry_allowed, operation='relay_finalize')
             self.update(identifier, status='failed', message='Collection could not complete safely. Submit a fresh capture to retry.',
                         expires=time.time()+RESULT_TTL)
         finally:

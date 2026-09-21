@@ -2,6 +2,7 @@
   import { onMount, tick, untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
+  import { trackOperation } from '$lib/telemetry/browser';
   import { trackerPages, type TrackerSection } from '$lib/tracker-routes';
   import MultiSelect from '$lib/components/MultiSelect.svelte';
   import EliteHistory from '$lib/components/EliteHistory.svelte';
@@ -159,7 +160,12 @@
     contribute = $state(false),
     recovery = $state(false);
   const capabilities = $derived(serverCapabilities(publicConfig));
-  type Operation = Readonly<{ id: number; profileId: string }>;
+  type Operation = Readonly<{
+    id: number;
+    profileId: string;
+    started: number;
+    kind: 'import' | 'restore';
+  }>;
   let operation = $state<Operation | null>(null);
   let operationSequence = 0;
   const importBusy = $derived(operation !== null);
@@ -172,8 +178,13 @@
   let restoreRequest = $state(0);
   let relayFallback = $state(false);
   const owns = (op: Operation) => !disposed && operation?.id === op.id;
-  function beginOperation(profileId: string): Operation {
-    const op = Object.freeze({ id: ++operationSequence, profileId });
+  function beginOperation(profileId: string, kind: 'import' | 'restore' = 'import'): Operation {
+    const op = Object.freeze({
+      id: ++operationSequence,
+      profileId,
+      started: performance.now(),
+      kind
+    });
     operation = op;
     stopping = false;
     saving = false;
@@ -183,6 +194,16 @@
   function finishOperation(op: Operation) {
     importLeases.release(op.id);
     if (!owns(op)) return;
+    // Only terminal operations report; polling and preflight validation do not.
+    if (!preflight && ['complete', 'partial', 'error', 'cancelled'].includes(importState)) {
+      const outcome =
+        importState === 'complete' ? 'success' : importState === 'error' ? 'failed' : importState;
+      trackOperation(
+        op.kind,
+        outcome as 'success' | 'failed' | 'partial' | 'cancelled',
+        performance.now() - op.started
+      );
+    }
     operation = null;
     preflight = false;
     stopping = false;
@@ -227,6 +248,7 @@
   }
   let abortCapture = $state<AbortController>();
   let unsubscribeArchive: (() => void) | undefined;
+  let unsubscribeDriveTelemetry: (() => void) | undefined;
   let archiveRevision = $state(0);
   let lastNotifiedRevision = -1;
   let archiveRefresh: Promise<void> | undefined;
@@ -524,8 +546,22 @@
         void configureServices();
         driveReady = import('$lib/sync/controller')
           .then(({ createDriveSync }) => {
-            if (!disposed && local)
+            if (!disposed && local) {
               drive = createDriveSync({ clientId: data.googleClientId, store: local });
+              let started: number | null = null;
+              // Observe the controller in the shared shell, including automatic syncs.
+              unsubscribeDriveTelemetry = drive.subscribe((status) => {
+                if (status.phase === 'syncing' && started === null) started = performance.now();
+                if (started === null || status.phase === 'syncing') return;
+                const elapsed = performance.now() - started;
+                started = null;
+                if (status.phase === 'synced') trackOperation('drive_sync', 'success', elapsed);
+                else if (status.phase === 'error' || status.phase === 'reconnect')
+                  trackOperation('drive_sync', 'failed', elapsed);
+                else if (status.phase === 'conflict')
+                  trackOperation('drive_sync', 'partial', elapsed);
+              });
+            }
           })
           .catch((cause) => {
             if (!disposed) error = failure(cause);
@@ -576,6 +612,7 @@
       capture = '';
       abortCapture?.abort();
       window.removeEventListener('beforeunload', protectCollected);
+      unsubscribeDriveTelemetry?.();
       drive?.destroy();
       importLeases.releaseAll();
       unsubscribeArchive?.();
@@ -782,7 +819,7 @@
     const contribution = contribute;
     let submittedCapture = capture;
     // Acquire ownership before loading optional code, including capture validation.
-    const op = beginOperation(profileId);
+    const op = beginOperation(profileId, hosted && recover ? 'restore' : 'import');
     // Previous terminal jobs cannot be stopped or polled on behalf of this import.
     job = null;
     preflight = true;
@@ -1041,7 +1078,7 @@
       ><span class="wordmark-sub">PULL TRACKER</span></span
     ></a
   >
-  <div class="header-controls">
+  <div class="header-controls ph-no-capture">
     <label class="profile-select"
       ><span>Profile</span><select
         bind:value={filters.profile_id}
@@ -1078,7 +1115,7 @@
   {/if}
 </header>
 
-<main>
+<main class="ph-no-capture">
   {#if !importOpen || section !== 'history'}{@render importStatus()}{/if}
   <LoadingRegion busy={panelLoading} message={`Loading ${currentPage.label.toLowerCase()}…`}>
     {#if hosted && section !== 'history' && initializing}

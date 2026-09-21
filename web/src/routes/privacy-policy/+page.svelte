@@ -20,7 +20,7 @@
       Your pull history stays in your browser unless you choose to send it elsewhere. You do not
       need a website account or Google connection to use the tracker.
     </p>
-    <p class="updated">Last updated September 20, 2026</p>
+    <p class="updated">Last updated September 21, 2026</p>
   </header>
 
   <section aria-labelledby="browser-data">
@@ -102,12 +102,43 @@
     </p>
   </section>
 
+  <section aria-labelledby="analytics-data">
+    <h2 id="analytics-data">Analytics, diagnostics, and session replay</h2>
+    <p>
+      Configured public deployments use PostHog’s US service for page visits, import, backup,
+      restore, and Drive-sync outcomes, sanitized error reports, and masked session replay.
+      Collection is on by default. Turn off <a href="/privacy"
+        >Analytics &amp; diagnostics in Privacy</a
+      >
+      to stop new collection on this device. Local-server mode does not collect this telemetry.
+    </p>
+    <p>
+      Analytics use a random browser identifier, not your game or Google account. Operation reports
+      contain a fixed operation name, outcome, and duration. Error reports retain error types and
+      safe stack locations with fixed messages. Deployment revision and service identify where a
+      problem occurred. Page URLs exclude query strings and fragments.
+    </p>
+    <p>
+      Replay records the navigation shell with text and inputs masked. Private archive content,
+      profile selectors, capture forms, histories, and file details are blocked from recording.
+      Captures, credentials, account IDs, histories, filenames, request bodies, headers, console
+      logs, and network payloads are not sent to PostHog.
+    </p>
+    <p>
+      Your analytics preference stays on this device, applies across open tabs, and is excluded from
+      backups and Drive sync. Opting out stops browser recording and excludes subsequent server
+      requests and newly submitted background jobs. It does not erase previously submitted telemetry
+      or change the permission of a job already running. Clearing site data resets this preference.
+      PostHog processes connection metadata when receiving requests; see its
+      <a href="https://posthog.com/privacy">privacy policy</a>.
+    </p>
+  </section>
+
   <section aria-labelledby="site-operation">
     <h2 id="site-operation">Site operation and contact</h2>
     <p>
-      This tracker has no advertising or third-party analytics. The hosting service can receive
-      connection metadata, including IP addresses, as part of serving requests and protecting the
-      service.
+      This tracker has no advertising. The hosting service can receive connection metadata,
+      including IP addresses, as part of serving requests and protecting the service.
     </p>
     <p>
       <strong>Hosting:</strong>

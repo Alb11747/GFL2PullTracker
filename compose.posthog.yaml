@@ -1,0 +1,9 @@
+# Build-time only: the personal CLI credential is never copied into an image.
+services:
+  web:
+    build:
+      secrets:
+        - posthog_cli
+secrets:
+  posthog_cli:
+    file: ${POSTHOG_CLI_ENV_FILE:?Set POSTHOG_CLI_ENV_FILE to the private CLI dotenv file}

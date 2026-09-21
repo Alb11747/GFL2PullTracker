@@ -2,6 +2,8 @@
   import { onDestroy, tick, untrack } from 'svelte';
   import DriveIcon from './DriveIcon.svelte';
   import LoadingRegion from './LoadingRegion.svelte';
+  import TelemetrySettings from './TelemetrySettings.svelte';
+  import { trackOperation } from '$lib/telemetry/browser';
   import type { BackupPreview } from '$lib/local/restore';
   import type { Resolutions, SyncConflict } from '$lib/sync/reconcile';
   import type { Profile } from '$lib/api';
@@ -159,16 +161,25 @@
     }
   }
 
-  async function run(action: () => Promise<void>) {
+  let operationReported = false;
+  function completed(operation: 'backup' | 'restore', started: number) {
+    operationReported = true;
+    trackOperation(operation, 'success', performance.now() - started);
+  }
+  async function run(action: () => Promise<void>, operation?: 'backup' | 'restore') {
     if (busy || importBusy) return;
     busy = true;
     const notifyBusy = onbusychange;
     notifyBusy?.(true);
     error = '';
     notice = '';
+    operationReported = false;
+    const started = performance.now();
     try {
       await action();
     } catch (cause) {
+      if (operation && !operationReported)
+        trackOperation(operation, 'failed', performance.now() - started);
       error =
         cause instanceof Error
           ? cause.message
@@ -191,6 +202,7 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
   async function exportArchive(current = false) {
+    const started = performance.now();
     if (current && !activeProfileId) throw new Error('Select a profile to export.');
     const state = await local.exportState();
     if (current) {
@@ -202,9 +214,11 @@
       await local.encodeBackup(state),
       `gfl2-${current ? 'profile' : 'archive'}-${new Date().toISOString().slice(0, 10)}.json.gz`
     );
+    completed('backup', started);
     notice = 'Compressed archive downloaded. Keep a copy somewhere you can recover it.';
   }
   async function restore() {
+    const started = performance.now();
     if (!restoreFile) throw new Error('Choose a compressed tracker archive first.');
     if (restoreFile.size > MAX_COMPRESSED_BYTES)
       throw new Error('This archive exceeds the 16 MiB compressed limit.');
@@ -233,6 +247,7 @@
       committingRestore = true;
       try {
         await local.commitBackup(previewId);
+        completed('restore', started);
       } catch (cause) {
         if (cause instanceof Error && cause.name === 'StaleBackupPreviewError') {
           resetRestorePreview();
@@ -258,16 +273,19 @@
     }
   }
   async function recoverServer() {
+    const started = performance.now();
     if (!publicApi || !verifiedAccount) throw new Error('Choose a verified account first.');
     const backup = await publicApi.backup(verifiedAccount.account_id);
     const profile = matchingProfile ?? (await local.createProfile(backup.name));
     for (const snapshot of backup.snapshots)
       await local.importRecords({ ...snapshot, profile_id: profile.id });
+    completed('restore', started);
     await onchanged();
     onselect?.(profile.id);
     notice = 'Private server backup merged into this device.';
   }
   async function saveServer() {
+    const started = performance.now();
     if (!publicApi || !verifiedAccount || !matchingProfile)
       throw new Error('Import this verified account’s history before saving a server backup.');
     const state = await local.exportState();
@@ -282,6 +300,7 @@
         ...(snapshot.raw_pages ? { raw_pages: snapshot.raw_pages } : {})
       }))
     });
+    completed('backup', started);
     notice =
       'Private server backup saved. Uploaded records do not contribute to community statistics.';
   }
@@ -293,7 +312,8 @@
   </div>
 {/if}
 
-<fieldset class="settings" disabled={importBusy || busy} aria-busy={busy}>
+{#if section === 'privacy' || section === 'all'}<TelemetrySettings />{/if}
+<fieldset class="settings ph-no-capture" disabled={importBusy || busy} aria-busy={busy}>
   {#if importBusy}<p class="availability" role="status">
       Profile and archive changes are unavailable while an import is collecting or saving history.
     </p>{/if}
@@ -440,9 +460,12 @@
             access tokens are excluded.
           </p>
           <div class="actions">
-            <button disabled={busy || !profiles.length} onclick={() => run(() => exportArchive())}
-              >Export all profiles</button
-            ><button disabled={busy || !active} onclick={() => run(() => exportArchive(true))}
+            <button
+              disabled={busy || !profiles.length}
+              onclick={() => run(() => exportArchive(), 'backup')}>Export all profiles</button
+            ><button
+              disabled={busy || !active}
+              onclick={() => run(() => exportArchive(true), 'backup')}
               >Export selected profile</button
             >
           </div>
@@ -518,7 +541,7 @@
                 !restoreFile ||
                 (replace && !confirmReplace) ||
                 restorePreview?.conflicts.some((conflict) => !restoreDecisions[conflict.id])}
-              onclick={() => run(restore)}
+              onclick={() => run(restore, 'restore')}
               >{restorePreview?.conflicts.length
                 ? 'Apply backup choices'
                 : replace
@@ -752,10 +775,10 @@
           <div class="actions">
             <button
               disabled={busy || !verifiedAccount || !publicConfig.features.server_backup}
-              onclick={() => run(recoverServer)}>Recover server backup</button
+              onclick={() => run(recoverServer, 'restore')}>Recover server backup</button
             ><button
               disabled={busy || !matchingProfile || !publicConfig.features.server_backup}
-              onclick={() => run(saveServer)}>Save profile to server</button
+              onclick={() => run(saveServer, 'backup')}>Save profile to server</button
             ><button
               disabled={busy || !verifiedAccount || !publicConfig.features.server_backup}
               onclick={() => (serverAction = 'backup')}>Delete server backup…</button

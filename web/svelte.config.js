@@ -6,10 +6,12 @@ export default {
       mode: 'auto',
       directives: {
         'default-src': ['self'],
-        'script-src': ['self', 'https://accounts.google.com'],
+        'script-src': ['self', 'https://accounts.google.com', 'https://us-assets.i.posthog.com'],
         'style-src': ['self', 'unsafe-inline', 'https://accounts.google.com'],
         'connect-src': [
           'self',
+          'https://us.i.posthog.com',
+          'https://us-assets.i.posthog.com',
           'https://www.googleapis.com',
           'https://accounts.google.com',
           'https://gf2-gacha-record-us.sunborngame.com',
@@ -21,7 +23,7 @@ export default {
         ],
         'frame-src': ['https://accounts.google.com'],
         'img-src': ['self', 'data:'],
-        'worker-src': ['self'],
+        'worker-src': ['self', 'blob:'],
         'object-src': ['none'],
         'base-uri': ['self'],
         'form-action': ['self'],

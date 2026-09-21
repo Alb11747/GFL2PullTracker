@@ -16,9 +16,12 @@
   },
   "dependencies": {
     "@fontsource/barlow": "^5.2.8",
-    "@fontsource/barlow-condensed": "^5.2.8"
+    "@fontsource/barlow-condensed": "^5.2.8",
+    "posthog-js": "^1.434.2",
+    "posthog-node": "^5.52.5"
   },
   "devDependencies": {
+    "@posthog/cli": "^0.18.3",
     "@sveltejs/adapter-node": "5.5.7",
     "@sveltejs/kit": "2.70.3",
     "@sveltejs/vite-plugin-svelte": "^7.0.0",

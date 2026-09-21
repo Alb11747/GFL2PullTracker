@@ -2,6 +2,7 @@ import { env } from '$env/dynamic/private';
 import { env as publicEnv } from '$env/dynamic/public';
 import type { RequestHandler } from './$types';
 import { forward } from '$lib/proxy';
+import { reportServerError } from '$lib/telemetry/server';
 const handle: RequestHandler = ({ request, getClientAddress }) => {
   let clientAddress: string | undefined;
   if (env.GFL2_MODE === 'public') {
@@ -21,7 +22,8 @@ const handle: RequestHandler = ({ request, getClientAddress }) => {
     mode: env.GFL2_MODE === 'public' ? 'public' : 'local',
     publicOrigin: publicEnv.PUBLIC_ORIGIN || env.GFL2_FRONTEND_ORIGIN,
     allowedBackends: (env.GFL2_API_ALLOWED_ORIGINS || '').split(',').filter(Boolean),
-    clientAddress
+    clientAddress,
+    reportError: (error) => reportServerError(error, 'proxy', true)
   });
 };
 export const GET = handle;

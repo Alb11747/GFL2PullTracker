@@ -17,6 +17,7 @@ build/
 dist/
 .env
 .env.*
+posthog-cli.env
 !.env.example
 .impeccable/mocks/
 .impeccable/review/

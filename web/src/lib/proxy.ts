@@ -1,4 +1,5 @@
 import { isIP } from 'node:net';
+import { requestTelemetryAllowed } from './telemetry/server-policy.ts';
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
 const MAX_BODY = 64 * 1024 * 1024;
@@ -8,6 +9,7 @@ export interface ProxyOptions {
   allowedBackends?: string[];
   /** Adapter-provided address from the trusted, overwriting ingress. */
   clientAddress?: string;
+  reportError?: (error: unknown) => void;
 }
 export function backendUrl(configured: string, allowedBackends?: string[]): URL {
   const url = new URL(configured);
@@ -81,6 +83,7 @@ export async function forward(
     // Never copy this internal header from the browser. The private API trusts
     // the frontend, whose adapter uses an ingress-overwritten address header.
     headers.set('x-gfl2-client-ip', address);
+    headers.set('x-gfl2-telemetry', requestTelemetryAllowed(request.headers) ? '1' : '0');
     // Game and Google credentials must never cross in ambient browser headers.
     const cookie = request.headers
       .get('cookie')
@@ -154,7 +157,14 @@ export async function forward(
       status: response.status,
       headers: responseHeaders
     });
-  } catch {
+  } catch (error) {
+    if (hosted && requestTelemetryAllowed(request.headers)) {
+      try {
+        options.reportError?.(error);
+      } catch {
+        /* Reporting cannot break the proxy. */
+      }
+    }
     return failure(
       'The Python service is unavailable. Start both tracker services and check the archive before retrying an import.',
       503
