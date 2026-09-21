@@ -28,10 +28,10 @@ export interface Pull {
 export interface Filters {
   profile_id: string;
   q: string;
-  rarity: string;
-  kind: string;
-  type_id: string;
-  pool_id: string;
+  rarity: string | string[];
+  kind: string | string[];
+  type_id: string | string[];
+  pool_id: string | string[];
   date_from: string;
   date_to: string;
   page: number;
@@ -111,11 +111,14 @@ export class ApiError extends Error {
   }
 }
 
-/** Empty numeric/date filters must be omitted rather than sent as invalid empty values. */
+/** Scalar empty filters mean all; empty selections mean none. Repeated keys mean OR. */
 export function queryString(filters: Partial<Filters>): string {
   const query = new URLSearchParams();
-  for (const [key, value] of Object.entries(filters))
-    if (value !== '' && value !== undefined) query.set(key, String(value));
+  for (const [key, value] of Object.entries(filters)) {
+    if (Array.isArray(value)) {
+      for (const option of value.length ? value : ['__none__']) query.append(key, option);
+    } else if (value !== '' && value !== undefined) query.set(key, String(value));
+  }
   return query.toString();
 }
 export function createClient(fetcher: typeof fetch = fetch) {
@@ -162,6 +165,9 @@ export function createClient(fetcher: typeof fetch = fetch) {
     },
     history(filters: Filters) {
       return request<History>(`history?${queryString(filters)}`);
+    },
+    overview(profile_id: string) {
+      return request<Pull[]>(`overview?${queryString({ profile_id })}`);
     },
     statistics(filters: Filters) {
       const { page: _page, page_size: _size, ...selection } = filters;

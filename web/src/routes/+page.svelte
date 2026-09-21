@@ -1,5 +1,10 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
+  import MultiSelect from '$lib/components/MultiSelect.svelte';
+  import EliteHistory from '$lib/components/EliteHistory.svelte';
+  import { capturePaginationAnchor } from '$lib/pagination-anchor';
+  import { recruitmentName } from '$lib/recruitment';
+  import { createProfileHistoryLoader, profileFilters } from '$lib/profile-history';
   import { client as serverClient, ApiError } from '$lib/api';
   import { createLocalClient } from '$lib/local/client';
   import { createDriveSync } from '$lib/sync/controller';
@@ -12,6 +17,7 @@
   import { classifyImportFiles } from '$lib/import-selection';
   import { serverCapabilities, savedServerChoices } from '$lib/import-policy';
   import type {
+    Pull,
     ImportResult,
     Filters,
     Profile,
@@ -25,7 +31,13 @@
   let local = $state<ReturnType<typeof createLocalClient>>();
   let client = serverClient as Pick<
     typeof serverClient,
-    'profiles' | 'createProfile' | 'history' | 'statistics' | 'filterOptions' | 'importRecords'
+    | 'profiles'
+    | 'createProfile'
+    | 'history'
+    | 'overview'
+    | 'statistics'
+    | 'filterOptions'
+    | 'importRecords'
   >;
   const publicApi = createPublicClient();
   let drive = $state<ReturnType<typeof createDriveSync>>();
@@ -98,6 +110,8 @@
   let abortCapture = $state<AbortController>();
   let unsubscribeArchive: (() => void) | undefined;
   async function archiveChanged() {
+    loadProfileHistory.invalidate();
+    overviewKey = '';
     profiles = await client.profiles();
     if (!importBusy && !profiles.some((p) => p.id === filters.profile_id))
       filters.profile_id = profiles[0]?.id || '';
@@ -105,6 +119,11 @@
   }
   let profiles = $state<Profile[]>([]),
     history = $state<History>({ items: [], total: 0, page: 1, page_size: 20, pages: 1 });
+  let overviewRows = $state<Pull[]>([]);
+  let overviewLoading = $state(true);
+  let overviewError = $state('');
+  let overviewKey = '';
+  const loadProfileHistory = createProfileHistoryLoader((profileId) => client.overview(profileId));
   let stats = $state<Statistics | null>(null),
     options = $state<FilterOptions>({ rarities: [], kinds: [], types: [], pools: [] });
   let filters = $state<Filters>({
@@ -172,8 +191,16 @@
     profileError = $state(''),
     creating = $state(false);
   let request = 0;
+  let overviewRequest = 0;
   let optionsProfile = '';
   let tableScroll = $state<HTMLElement>();
+  let nextPageButton = $state<HTMLButtonElement>();
+  let pageError = $state('');
+  let requestedPage = $state<number | null>(null);
+  let pageNumber = $state<number | undefined>(1);
+  $effect(() => {
+    pageNumber = history.page;
+  });
   let pollTimer: ReturnType<typeof setTimeout> | undefined;
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
@@ -197,18 +224,16 @@
   const number = (v: number) => v.toLocaleString('en-US');
   const date = (v: string | null | undefined) =>
     v
-      ? new Date(v).toLocaleDateString('en-GB', {
+      ? new Date(v).toLocaleDateString(undefined, {
           day: '2-digit',
           month: 'short',
-          year: 'numeric',
-          timeZone: 'UTC'
+          year: 'numeric'
         })
       : '—';
   const time = (v: string) =>
-    new Date(v).toLocaleTimeString('en-GB', {
+    new Date(v).toLocaleTimeString(undefined, {
       hour: '2-digit',
-      minute: '2-digit',
-      timeZone: 'UTC'
+      minute: '2-digit'
     });
   function failure(e: unknown) {
     return e instanceof Error
@@ -221,13 +246,55 @@
     const id = ++request;
     loading = true;
     error = '';
-    stats = null;
+    pageError = '';
+    requestedPage = null;
     history = { items: [], total: 0, page: filters.page, page_size: filters.page_size, pages: 1 };
     expanded = null;
     if (optionsProfile !== filters.profile_id) {
+      overviewRequest++;
+      stats = null;
+      overviewRows = [];
+      overviewKey = '';
+      overviewError = '';
+      overviewLoading = true;
       options = { rarities: [], kinds: [], types: [], pools: [] };
     }
     return id;
+  }
+  async function changePage(page: number) {
+    if (
+      loading ||
+      !Number.isInteger(page) ||
+      page < 1 ||
+      page > history.pages ||
+      page === history.page
+    )
+      return;
+    const id = ++request;
+    loading = true;
+    pageError = '';
+    requestedPage = page;
+    try {
+      // Retain this page and its expanded details until its replacement arrives.
+      // Filter/profile changes still invalidate immediately through refresh().
+      const next = await client.history({ ...filters, page });
+      if (id !== request || disposed) return;
+      const restorePosition = capturePaginationAnchor(nextPageButton);
+      history = next;
+      filters.page = next.page;
+      expanded = null;
+      loading = false;
+      requestedPage = null;
+      await tick();
+      if (id === request && !disposed) restorePosition();
+    } catch (cause) {
+      if (id === request && !disposed) {
+        pageError = failure(cause);
+        pageNumber = history.page;
+      }
+    } finally {
+      if (id === request && !disposed) loading = false;
+    }
   }
   async function refresh(reset = false) {
     if (reset) filters.page = 1;
@@ -235,6 +302,8 @@
     if (!filters.profile_id) {
       history = { items: [], total: 0, page: 1, page_size: filters.page_size, pages: 1 };
       stats = null;
+      overviewRows = [];
+      overviewLoading = false;
       loading = false;
       return;
     }
@@ -242,17 +311,44 @@
     try {
       const [h, s, o] = await Promise.all([
         client.history({ ...filters }),
-        client.statistics({ ...filters }),
+        client.statistics(profileFilters(filters.profile_id)),
         client.filterOptions(filters.profile_id)
       ]);
       if (id === request && !disposed) {
         history = h;
+        loading = false;
         stats = s;
         options = o;
         optionsProfile = filters.profile_id;
+        const profileId = filters.profile_id;
+        const revision = `${s.total}:${s.last_import_at ?? ''}`;
+        const key = `${profileId}:${revision}`;
+        if (overviewKey !== key || overviewError) {
+          // The overview belongs to the profile, so paging must not cancel its pending load.
+          const overviewId = ++overviewRequest;
+          overviewLoading = true;
+          overviewError = '';
+          try {
+            const rows = await loadProfileHistory(profileId, revision);
+            if (overviewId === overviewRequest && profileId === filters.profile_id && !disposed) {
+              overviewRows = rows;
+              overviewKey = key;
+            }
+          } catch (cause) {
+            if (overviewId === overviewRequest && profileId === filters.profile_id && !disposed)
+              overviewError = failure(cause);
+          } finally {
+            if (overviewId === overviewRequest && profileId === filters.profile_id && !disposed)
+              overviewLoading = false;
+          }
+        }
       }
     } catch (e) {
-      if (id === request) error = failure(e);
+      if (id === request) {
+        error = failure(e);
+        overviewLoading = false;
+        if (!overviewRows.length) overviewError = failure(e);
+      }
     } finally {
       if (id === request) loading = false;
     }
@@ -703,10 +799,14 @@
 >
 
 <header class="masthead">
-  <a class="wordmark" href="/" aria-label="GFL2 Pull Tracker home"
+  <a class="wordmark" href="/" aria-label="Girls’ Frontline 2: Exilium Pull Tracker home"
     ><svg viewBox="0 0 32 32" aria-hidden="true"
       ><path d="M4 4h24v24H4zM10 4v24M4 11h24M16 17h7M16 22h7" /></svg
-    ><span>GFL2<span class="wordmark-sub">PULL TRACKER</span></span></a
+    ><span aria-hidden="true"
+      ><span class="wordmark-full">GIRLS’ FRONTLINE 2: EXILIUM</span><span class="wordmark-short"
+        >GFL2</span
+      ><span class="wordmark-sub">PULL TRACKER</span></span
+    ></a
   >
   <div class="header-controls">
     <label class="profile-select"
@@ -1011,98 +1111,26 @@
       <div class="summary-strip">
         <div class="summary-total">
           <span title="One record = one pull. Item quantity is preserved separately."
-            >{active ? 'Matching pulls' : 'Recorded pulls'}</span
+            >Recorded pulls</span
           ><strong>{stats ? number(stats.total) : loading || error ? '—' : '0'}</strong>
         </div>
         <div>
-          <span>Recorded range <small>UTC</small></span><strong class="date-range"
+          <span>Recorded range</span><strong class="date-range"
             >{date(stats?.date_from)}<span> — </span>{date(stats?.date_to)}</strong
           >
         </div>
         <div>
-          <span>Last import <small>UTC</small></span><strong
+          <span>Last import</span><strong
             >{date(stats?.last_import_at)}<small
               >{stats?.last_import_at ? time(stats.last_import_at) : ''}</small
             ></strong
           >
         </div>
       </div>
-      <div class="distribution-grid">
-        <div class="rarity-chart">
-          <div class="chart-title">
-            <h2>Rarity breakdown</h2>
-            <span>Dolls & weapons</span>
-          </div>
-          <div class="rarity-bars">
-            {#each ['Elite', 'Standard', 'Retired'] as rarity}{@const count =
-                stats?.rarities.find((x) => x.label === rarity)?.count ?? 0}
-              <div class="rarity-row">
-                <span class="rarity-name">{rarity}</span>
-                <div class="bar-track">
-                  <div
-                    class="bar-fill"
-                    class:ssr={rarity === 'Elite'}
-                    class:sr={rarity === 'Standard'}
-                    style:transform={`scaleX(${stats?.known_total ? count / stats.known_total : 0})`}
-                  ></div>
-                </div>
-                <strong>{stats ? number(count) : '—'}</strong><span
-                  >{stats
-                    ? `${stats.known_total ? ((count / stats.known_total) * 100).toFixed(1) : '0.0'}%`
-                    : '—'}</span
-                >
-              </div>{/each}
-          </div>
-          <p class="chart-note" role="status">
-            {#if stats}
-              {number(stats.unknown_total)} unresolved records retained · {number(
-                stats.estimated_multi_groups
-              )} estimated timestamp groups.
-            {:else if loading}
-              Loading overview for the selected profile and filters…
-            {:else if error}
-              Overview unavailable for the selected profile and filters.
-            {:else}
-              Import history to see rarity and timestamp group counts.
-            {/if}
-          </p>
-        </div>
-        <div class="type-chart">
-          <div class="chart-title">
-            <h2>What you recruited</h2>
-            <span>All retained records</span>
-          </div>
-          <div class="type-bars">
-            {#each ['doll', 'weapon', 'unknown'] as kind}
-              {@const count = stats?.kinds.find((entry) => entry.label === kind)?.count ?? 0}
-              <div class="type-column">
-                <strong>{stats ? number(count) : '—'}</strong>
-                <div class="column-track">
-                  <div style:transform={`scaleY(${stats?.total ? count / stats.total : 0})`}></div>
-                </div>
-                <span>{kind === 'doll' ? 'Dolls' : kind === 'weapon' ? 'Weapons' : 'Unknown'}</span>
-              </div>
-            {/each}
-          </div>
-          <details class="source-details">
-            <summary>Source details</summary>
-            <p class="small">
-              Recruitment category names are unverified. Original source IDs remain available here
-              and in record details.
-            </p>
-            <dl class="source-distribution">
-              {#each stats?.types ?? [] as type}<div>
-                  <dt>Source type {type.id}</dt>
-                  <dd>{number(type.count)}</dd>
-                </div>{/each}
-              {#each stats?.pools ?? [] as pool}<div>
-                  <dt>Pool {pool.id}</dt>
-                  <dd>{number(pool.count)}</dd>
-                </div>{/each}
-            </dl>
-          </details>
-        </div>
-      </div>
+      <EliteHistory rows={overviewRows} loading={overviewLoading} error={overviewError} />
+      {#if overviewError}<button class="text-button" onclick={() => refresh()}
+          >Refresh overview</button
+        >{/if}
       <div class="coverage">
         <svg viewBox="0 0 20 20" aria-hidden="true"
           ><circle cx="10" cy="10" r="7" /><path d="M10 9v5M10 6v1" /></svg
@@ -1134,6 +1162,7 @@
           >Reset filters{active ? ` (${active})` : ''}</button
         >
       </div>
+      <p class="small">Times use your browser's time zone. Date filters use UTC.</p>
       <form
         class="filters"
         onsubmit={(e) => {
@@ -1154,69 +1183,86 @@
             />
           </div></label
         >
+        <MultiSelect
+          id="filter-rarity"
+          label="Rarity"
+          allLabel="All rarities"
+          options={options.rarities.map((value) => ({
+            value,
+            label:
+              value === 'Elite'
+                ? '5★ Elite'
+                : value === 'Standard'
+                  ? '4★ Standard'
+                  : value === 'Retired'
+                    ? '3★ Retired'
+                    : 'Unknown'
+          }))}
+          value={filters.rarity}
+          onchange={(value) => {
+            filters.rarity = value;
+            void refresh(true);
+          }}
+        />
+        <MultiSelect
+          id="filter-kind"
+          label="Item kind"
+          allLabel="All kinds"
+          options={options.kinds.map((value) => ({
+            value,
+            label: value === 'doll' ? 'Dolls' : value === 'weapon' ? 'Weapons' : 'Unclassified'
+          }))}
+          value={filters.kind}
+          onchange={(value) => {
+            filters.kind = value;
+            void refresh(true);
+          }}
+        />
+        <MultiSelect
+          id="filter-type"
+          label="Recruitment type"
+          allLabel="All types"
+          options={options.types.map((value) => ({
+            value: String(value),
+            label: recruitmentName(value)
+          }))}
+          value={filters.type_id}
+          onchange={(value) => {
+            filters.type_id = value;
+            void refresh(true);
+          }}
+        />
+        <MultiSelect
+          id="filter-pool"
+          label="Pool ID"
+          allLabel="All pools"
+          options={options.pools.map((value) => ({ value: String(value), label: String(value) }))}
+          value={filters.pool_id}
+          onchange={(value) => {
+            filters.pool_id = value;
+            void refresh(true);
+          }}
+        />
         <label
-          >Rarity<select bind:value={filters.rarity} onchange={() => refresh(true)}
-            ><option value="">All rarities</option>{#each options.rarities as rarity}<option
-                value={rarity}>{rarity === 'unknown' ? 'Unknown' : rarity}</option
-              >{/each}</select
-          ></label
+          >From (UTC)<input
+            type="date"
+            bind:value={filters.date_from}
+            onchange={() => refresh(true)}
+          /></label
         >
-        <details class="more-filters">
-          <summary
-            >More filters{[
-              filters.kind,
-              filters.type_id,
-              filters.pool_id,
-              filters.date_from,
-              filters.date_to
-            ].filter(Boolean).length
-              ? ` (${[filters.kind, filters.type_id, filters.pool_id, filters.date_from, filters.date_to].filter(Boolean).length} active)`
-              : ''}</summary
-          >
-          <div class="advanced-filters">
-            <label
-              >Item kind<select bind:value={filters.kind} onchange={() => refresh(true)}
-                ><option value="">All kinds</option>{#each options.kinds as kind}<option
-                    value={kind}
-                    >{kind === 'unknown' ? 'Unknown' : kind === 'doll' ? 'Doll' : 'Weapon'}</option
-                  >{/each}</select
-              ></label
-            >
-            <label
-              >Source type<select bind:value={filters.type_id} onchange={() => refresh(true)}
-                ><option value="">All types</option>{#each options.types as type}<option
-                    value={String(type)}>Type {type}</option
-                  >{/each}</select
-              ></label
-            >
-            <label
-              >Pool ID<select bind:value={filters.pool_id} onchange={() => refresh(true)}
-                ><option value="">All pools</option>{#each options.pools as pool}<option
-                    value={String(pool)}>{pool}</option
-                  >{/each}</select
-              ></label
-            >
-            <label
-              >From (UTC)<input
-                type="date"
-                bind:value={filters.date_from}
-                onchange={() => refresh(true)}
-              /></label
-            ><label
-              >To (UTC)<input
-                type="date"
-                bind:value={filters.date_to}
-                onchange={() => refresh(true)}
-              /></label
-            >
-          </div>
-        </details>
+        <label
+          >To (UTC)<input
+            type="date"
+            bind:value={filters.date_to}
+            onchange={() => refresh(true)}
+          /></label
+        >
       </form>
       {#if error}<div class="empty-state" role="alert">
           <h3>History could not load</h3>
           <p>{error}</p>
           <button onclick={() => (profiles.length ? refresh() : initialize())}>Try again</button>
-        </div>{:else if loading && !stats}<div class="empty-state" role="status">
+        </div>{:else if loading && !history.items.length}<div class="empty-state" role="status">
           Loading your archive…
         </div>{:else if !history.items.length}<div class="empty-state">
           <h3>{active ? 'No pulls match these filters' : 'Your ledger is ready'}</h3>
@@ -1229,6 +1275,10 @@
             >{active ? 'Reset filters' : 'Import history'}</button
           >
         </div>{:else}
+        <p id="history-pity-help" class="history-pity-help">
+          Pity is counted separately for each recruitment. A 5★ resets its counter; filters can hide
+          that reward.
+        </p>
         <div class="table-navigation">
           <span>Scroll table</span><button
             aria-label="Scroll table left"
@@ -1247,10 +1297,10 @@
           aria-label="Pull history table"
           aria-busy={loading}
         >
-          <table>
+          <table aria-describedby="history-pity-help">
             <thead
               ><tr
-                ><th>Item</th><th>Rarity / kind</th><th>Recorded <small>UTC</small></th><th
+                ><th>Item</th><th>Rarity / kind</th><th>Pity</th><th>Recorded</th><th
                   class="quantity">Qty.</th
                 ><th><span class="sr-only">Record details</span></th></tr
               ></thead
@@ -1270,6 +1320,17 @@
                           ? 'Doll'
                           : 'Weapon'}</span
                     ></td
+                  ><td class="history-pity"
+                    ><span class="pity-count"
+                      >{row.pity}{#if row.pity_uncertain}<sup
+                          title="History may be missing; pity is uncertain"
+                          aria-label="uncertain">?</sup
+                        >{/if}
+                      <span class="pity-unit">{row.pity === 1 ? 'pull' : 'pulls'}</span></span
+                    >
+                    {#if row.rarity === 'Elite'}<span class="pity-reset">5★ · resets pity</span
+                      >{/if}
+                    <span class="pity-recruitment">{recruitmentName(row.type_id)}</span></td
                   ><td
                     ><span>{date(row.timestamp)}</span><span class="cell-secondary"
                       >{time(row.timestamp)}</span
@@ -1277,6 +1338,7 @@
                   ><td class="quantity">{row.quantity}</td><td
                     ><button
                       class="details-button"
+                      disabled={loading}
                       aria-label={`Details for ${row.name ?? row.item_id}`}
                       aria-expanded={expanded === row.id}
                       onclick={() => (expanded = expanded === row.id ? null : row.id)}
@@ -1288,15 +1350,20 @@
                     ></td
                   ></tr
                 >{#if expanded === row.id}<tr class="detail-row"
-                    ><td colspan="5"
+                    ><td colspan="6"
                       ><div>
-                        <span><strong>Original item ID</strong>{row.item_id}</span><span
-                          ><strong>Source type</strong>{row.type_id}</span
+                        <span><strong>Original item ID</strong>{row.item_id}</span>
+                        <span><strong>Item quantity</strong>{row.quantity}</span><span
+                          ><strong>Recruitment</strong>{recruitmentName(row.type_id)} (type {row.type_id})</span
                         ><span><strong>Pool ID</strong>{row.pool_id}</span><span
                           ><strong>Source page</strong>{row.source_page}</span
                         ><span><strong>Catalog region</strong>{row.region ?? 'Unknown'}</span><span
-                          ><strong>Estimated timestamp group</strong>{row.estimated_group_size} records
-                          · not a confirmed multi-pull</span
+                          ><strong>Pull group</strong>{row.estimated_group_size > 1
+                            ? '10-pull (assumed from matching timestamps)'
+                            : 'Single pull'}
+                          {#if row.estimated_group_size > 1}<small
+                              >{row.estimated_group_size} saved records in this group</small
+                            >{/if}</span
                         >
                       </div></td
                     ></tr
@@ -1305,15 +1372,19 @@
           </table>
         </section>
         <div class="pagination">
+          <span class="sr-only" role="status"
+            >{loading ? `Loading page ${requestedPage}…` : ''}</span
+          >
           <p>
             Showing {number((history.page - 1) * history.page_size + 1)}–{number(
               Math.min(history.page * history.page_size, history.total)
-            )} of {number(history.total)}<span> · Newest first</span>
+            )} of {number(history.total)}<span>&nbsp;·&nbsp;Newest first</span>
           </p>
           <div>
             <label class="page-size"
               ><span>Rows</span><select
                 bind:value={filters.page_size}
+                disabled={loading}
                 onchange={() => refresh(true)}
                 ><option value={20}>20</option><option value={50}>50</option><option value={100}
                   >100</option
@@ -1321,21 +1392,59 @@
               ></label
             ><button
               aria-label="Previous page"
-              disabled={filters.page <= 1}
-              onclick={() => {
-                filters.page--;
-                void refresh();
-              }}>Previous</button
-            ><span class="page-count">{history.page} / {history.pages}</span><button
+              disabled={loading || history.page <= 1}
+              onclick={() => changePage(history.page - 1)}>Previous</button
+            >
+            <form
+              class="page-jump"
+              onsubmit={(event) => {
+                event.preventDefault();
+                if (pageNumber !== undefined) void changePage(pageNumber);
+              }}
+            >
+              <input
+                type="number"
+                aria-label="Page number"
+                aria-describedby="page-total"
+                title="Enter a page number and press Enter"
+                min="1"
+                max={history.pages}
+                step="1"
+                required
+                inputmode="numeric"
+                enterkeyhint="go"
+                bind:value={pageNumber}
+                disabled={loading}
+                onfocus={(event) => event.currentTarget.select()}
+                onblur={() => (pageNumber = history.page)}
+                onkeydown={(event) => {
+                  if (event.key === 'Escape') {
+                    event.preventDefault();
+                    pageNumber = history.page;
+                  }
+                }}
+              />
+              <span id="page-total" aria-label={`of ${history.pages} pages`}>/ {history.pages}</span
+              >
+            </form>
+            <button
               aria-label="Next page"
-              disabled={filters.page >= history.pages}
-              onclick={() => {
-                filters.page++;
-                void refresh();
-              }}>Next</button
+              bind:this={nextPageButton}
+              disabled={loading || history.page >= history.pages}
+              onclick={() => changePage(history.page + 1)}>Next</button
             >
           </div>
         </div>
+        {#if pageError}
+          <div class="pagination-error" role="alert">
+            <p>
+              Could not load page {requestedPage}. Still showing page {history.page}. {pageError}
+            </p>
+            <button onclick={() => requestedPage !== null && changePage(requestedPage)}
+              >Try again</button
+            >
+          </div>
+        {/if}
       {/if}
     </section>
   {/if}

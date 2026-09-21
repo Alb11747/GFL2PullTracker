@@ -530,10 +530,19 @@ export class LocalEngine {
         !`${row.name} ${row.item_id}`.toLocaleLowerCase().includes(filters.q.toLocaleLowerCase())
       )
         return false;
-      for (const key of ['rarity', 'kind'] as const)
-        if (filters[key] && row[key] !== filters[key]) return false;
-      for (const key of ['type_id', 'pool_id'] as const)
-        if (filters[key] && row[key] !== Number(filters[key])) return false;
+      for (const key of ['rarity', 'kind', 'type_id', 'pool_id'] as const) {
+        const selected = filters[key];
+        if (selected === undefined || selected === '') continue;
+        const values = Array.isArray(selected) ? selected : [selected];
+        if (
+          !values.some((value) =>
+            key === 'type_id' || key === 'pool_id'
+              ? value !== '' && Number(value) === row[key]
+              : value === row[key]
+          )
+        )
+          return false;
+      }
       return !(
         (filters.date_from && row.timestamp.slice(0, 10) < filters.date_from) ||
         (filters.date_to && row.timestamp.slice(0, 10) > filters.date_to)
@@ -553,6 +562,11 @@ export class LocalEngine {
       page_size: size,
       pages: Math.max(1, Math.ceil(rows.length / size))
     };
+  }
+  overview(id: string): Pull[] {
+    return this.rows(id).map(
+      ({ key: _key, occurrence: _occurrence, token: _token, ...row }) => row
+    );
   }
   filterOptions(id: string): FilterOptions {
     const rows = this.rows(id);

@@ -146,12 +146,32 @@ class FiltersOutput(BaseModel):
     pools: list[int]
 
 
-def filters(profile_id: str, q: str | None = Query(None, max_length=200), rarity: str | None = None,
-            kind: str | None = None, type_id: int | None = Query(None, ge=1), pool_id: int | None = Query(None, ge=0),
+def selection(values: list[str] | None, *, minimum: int | None = None):
+    """Repeated query values are OR; omitted filters mean all and __none__ means none."""
+    if values is None or values == [""]:
+        return None
+    if "__none__" in values:
+        if values != ["__none__"]:
+            raise HTTPException(422, "An empty selection cannot include other values")
+        return []
+    if minimum is None:
+        return values
+    try:
+        numbers = [int(value) for value in values]
+        if any(number < minimum for number in numbers):
+            raise ValueError()
+        return numbers
+    except ValueError:
+        raise HTTPException(422, "Invalid numeric filter selection") from None
+
+
+def filters(profile_id: str, q: str | None = Query(None, max_length=200), rarity: list[str] | None = Query(None),
+            kind: list[str] | None = Query(None), type_id: list[str] | None = Query(None), pool_id: list[str] | None = Query(None),
             date_from: date | None = None, date_to: date | None = None):
     if date_from and date_to and date_from > date_to:
         raise HTTPException(422, "Start date must be on or before end date")
-    return dict(profile_id=profile_id, q=q, rarity=rarity, kind=kind, type_id=type_id, pool_id=pool_id,
+    return dict(profile_id=profile_id, q=q, rarity=selection(rarity), kind=selection(kind),
+                type_id=selection(type_id, minimum=1), pool_id=selection(pool_id, minimum=0),
                 date_from=date_from.isoformat() if date_from else None, date_to=date_to.isoformat() if date_to else None)
 
 
@@ -251,6 +271,11 @@ def create_app(data_dir=None, *, catalog_path=None, client_factory=None):
     def history(selected: dict = Depends(filters), page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200), store: Tracker = Depends(tracker)):
         rows = store.history(selected["profile_id"], selected)
         return dict(items=rows[(page-1)*page_size:page*page_size], total=len(rows), page=page, page_size=page_size, pages=max(1, math.ceil(len(rows)/page_size)))
+
+    @application.get("/api/overview", response_model=list[HistoryItem])
+    def overview(profile_id: str, store: Tracker = Depends(tracker)):
+        # The overview needs every annotated pull; paginate only the separate log.
+        return store.history(profile_id, {})
 
     @application.get("/api/statistics", response_model=StatisticsOutput)
     def statistics(selected: dict = Depends(filters), store: Tracker = Depends(tracker)):

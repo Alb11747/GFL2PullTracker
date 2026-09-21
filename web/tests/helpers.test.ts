@@ -5,6 +5,50 @@ import { createPublicClient, PublicApiError } from '../src/lib/public-api.ts';
 import { readExport, MAX_IMPORT_BYTES, type ExportFile } from '../src/lib/import-files.ts';
 import { backendUrl, forward } from '../src/lib/proxy.ts';
 
+test('multi-select query values preserve OR selections and explicit none', () => {
+  const query = new URLSearchParams(
+    queryString({
+      rarity: ['Elite', 'Standard'],
+      kind: [],
+      type_id: ['3', '6'],
+      pool_id: ''
+    })
+  );
+  assert.deepEqual(query.getAll('rarity'), ['Elite', 'Standard']);
+  assert.deepEqual(query.getAll('kind'), ['__none__']);
+  assert.deepEqual(query.getAll('type_id'), ['3', '6']);
+  assert.equal(query.has('pool_id'), false);
+});
+
+test('overview uses the local read-only proxy and cannot expose hosted archives', async () => {
+  const calls: string[] = [];
+  const fetcher = fakeFetch(async (input) => {
+    calls.push(String(input));
+    return Response.json([]);
+  });
+  await createClient(fetcher).overview('profile one');
+  assert.deepEqual(calls, ['/api/overview?profile_id=profile+one']);
+  calls.length = 0;
+  const local = new Request('http://127.0.0.1:3000/api/overview?profile_id=p', {
+    headers: { host: '127.0.0.1:3000' }
+  });
+  assert.equal((await forward(local, 'http://127.0.0.1:8000', fetcher)).status, 200);
+  const hosted = new Request('https://tracker.example/api/overview?profile_id=p', {
+    headers: { host: 'tracker.example' }
+  });
+  assert.equal(
+    (
+      await forward(hosted, 'http://backend:8000', fetcher, {
+        mode: 'public',
+        publicOrigin: 'https://tracker.example',
+        allowedBackends: ['http://backend:8000']
+      })
+    ).status,
+    404
+  );
+  assert.deepEqual(calls, ['http://127.0.0.1:8000/api/overview?profile_id=p']);
+});
+
 function file(path: string, text = '{}', size = new TextEncoder().encode(text).length): ExportFile {
   return {
     name: path.split('/').at(-1)!,

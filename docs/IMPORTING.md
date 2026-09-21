@@ -31,6 +31,14 @@ Use the same Chrome profile in which [Exilium](https://exilium.xyz/settings) sho
 your old recruitment history. This procedure reads that browser's saved history;
 it cannot recover records Exilium no longer has.
 
+The importer accepts readable data-store v1 and the supported compressed v2
+envelope with `compressed: true`. These are distinct from Exilium's encrypted
+v2 export. The live **Export Backup** file checked on September 20, 2026 contained
+`timestamp`, `version: 2`, and encrypted `data`, without `compressed: true`, and
+was rejected. A version number alone does not establish a supported format.
+Keep an unsupported file unchanged; adding a compression flag or renaming fields
+cannot convert it. Use a readable export through the procedure below.
+
 1. In Exilium, open **Settings → Backups → Export Backup** and keep the downloaded
    backup as a safety copy. The encrypted export envelope with `timestamp`,
    `version: 2`, and `data` is not supported by this tracker's history importer.
@@ -82,6 +90,16 @@ it cannot recover records Exilium no longer has.
 4. If prompted, select the matching Exilium source profile, then choose
    **Validate and import**. Review the resulting history in the destination
    profile. Import merges records into that profile rather than replacing it.
+   **0 added** is a successful result when those records are already present;
+   compare the records read and final profile total rather than expecting every
+   reimport to increase the count.
+5. If Drive is connected, open **Backup & sync** and check the updated
+   **Last synced** time and successful cloud status. Otherwise, connect the
+   intended Google account as described in [Google Drive setup](GOOGLE_DRIVE.md#connect-and-check-a-backup).
+
+The September 20, 2026 live migration test used an earlier readable export,
+not the freshly downloaded encrypted file. It confirmed duplicate-free merging
+and automatic Drive sync; it did not validate encrypted-backup import.
 
 Keep both backup files private: the readable file contains saved profiles
 and recruitment records. If the snippet reports a missing file, check that this

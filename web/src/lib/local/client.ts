@@ -5,11 +5,23 @@ import type {
   ImportInput,
   ImportResult,
   Profile,
+  Pull,
   Statistics
 } from '../api.ts';
 import type { PortableState } from './types.ts';
 import type { ExiliumProfile } from '../exilium-import.ts';
 export type { PortableState, PortableProfile, SourceSnapshot } from './types.ts';
+
+function transferableFilters(filters: Filters): Filters {
+  // Svelte state uses deep proxies; spreading the object alone leaves selection
+  // arrays uncloneable by postMessage. Copy their primitive values at this boundary.
+  const copy = { ...filters };
+  for (const key of ['rarity', 'kind', 'type_id', 'pool_id'] as const) {
+    const value = filters[key];
+    copy[key] = Array.isArray(value) ? [...value] : value;
+  }
+  return copy;
+}
 
 /** Lazy worker creation keeps SSR free of browser globals. All personal data stays in this origin's IndexedDB. */
 export function createLocalClient() {
@@ -67,8 +79,9 @@ export function createLocalClient() {
     renameProfile: (id: string, name: string) => call<Profile>('renameProfile', id, name),
     deleteProfile: (id: string, acrossDevices = true) =>
       call<void>('deleteProfile', id, acrossDevices),
-    history: (filters: Filters) => call<History>('history', filters),
-    statistics: (filters: Filters) => call<Statistics>('statistics', filters),
+    history: (filters: Filters) => call<History>('history', transferableFilters(filters)),
+    overview: (profileId: string) => call<Pull[]>('overview', profileId),
+    statistics: (filters: Filters) => call<Statistics>('statistics', transferableFilters(filters)),
     filterOptions: (id: string) => call<FilterOptions>('filterOptions', id),
     importRecords: (input: ImportInput) => call<ImportResult>('importRecords', input),
     readExport: (files: File[], profileId: string, exiliumProfileId?: string) =>

@@ -272,7 +272,10 @@ class Tracker:
             row.pop("occurrence")
             if filters.get("q") and filters["q"].casefold() not in f'{row["name"]} {row["item_id"]}'.casefold():
                 continue
-            if any(filters.get(key) is not None and row[key] != filters[key] for key in ("rarity", "kind", "type_id", "pool_id")):
+            if any(value is not None and value != "" and row[key] not in
+                   (value if isinstance(value, list) else [value])
+                   for key in ("rarity", "kind", "type_id", "pool_id")
+                   for value in [filters.get(key)]):
                 continue
             if filters.get("date_from") and row["timestamp"][:10] < filters["date_from"]:
                 continue

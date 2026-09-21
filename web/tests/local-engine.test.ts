@@ -58,6 +58,52 @@ async function setup() {
   return { engine, id: profile.id };
 }
 
+test('overview returns all UI rows only for its selected profile', async () => {
+  const { engine, id } = await setup();
+  const other = engine.createProfile('Other');
+  await engine.importRecords({
+    profile_id: id,
+    records_document: document([record(1013), record(11007)])
+  });
+  await engine.importRecords({ profile_id: other.id, records_document: document([record(1015)]) });
+  const rows = engine.overview(id);
+  assert.deepEqual(rows, engine.history(filters(id)).items);
+  assert.deepEqual(
+    rows.map((row) => row.item_id),
+    [1013, 11007]
+  );
+  for (const row of rows)
+    for (const internal of ['key', 'occurrence', 'token', 'raw_record', 'account_fingerprint'])
+      assert.equal(internal in row, false);
+  assert.throws(() => engine.overview('missing'));
+});
+
+test('checkbox filters combine OR values and AND fields without changing pity', async () => {
+  const { engine, id } = await setup();
+  const rows = [record(1013), record(11007), record(1015, { type: 6 }), record(11008, { type: 6 })];
+  rows[3].record.pool_id = 224002;
+  await engine.importRecords({ profile_id: id, records_document: document(rows) });
+  const all = engine.history(filters(id));
+  const selected = engine.history(
+    filters(id, {
+      type_id: ['3', '6'],
+      pool_id: ['224001'],
+      kind: ['doll', 'weapon'],
+      rarity: ['Elite']
+    })
+  );
+  const expected = all.items.filter((row) => row.pool_id === 224001 && row.rarity === 'Elite');
+  assert.equal(expected.length, 2);
+  assert.deepEqual(selected.items, expected);
+  assert.equal(engine.statistics(filters(id, { rarity: ['Elite'] })).total, 2);
+  for (const key of ['rarity', 'kind', 'type_id', 'pool_id'] as const) {
+    assert.equal(engine.history(filters(id, { [key]: [] })).total, 0);
+    assert.equal(engine.statistics(filters(id, { [key]: [] })).total, 0);
+    assert.equal(engine.history(filters(id, { [key]: '' })).total, 4);
+  }
+  assert.equal(engine.history(filters(id, { type_id: '6' })).total, 2);
+});
+
 for (const fixture of fixtures)
   test(`shared Python/browser fixture: ${fixture.name}`, async () => {
     const { engine, id } = await setup();

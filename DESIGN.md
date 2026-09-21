@@ -144,11 +144,15 @@ Controls have slightly softened corners through `rounded.control`. Chart tracks,
 
 ## Components
 
+The header wordmark uses “GIRLS’ FRONTLINE 2: EXILIUM” when its available space is at least 23rem, falling back to “GFL2” beside the profile and import controls on narrower layouts. “PULL TRACKER” remains on the second line, and the home link always has the full accessible name.
+
 ### Buttons
 
 Primary and secondary buttons share centered inline content, an 8px icon gap, and a 40px minimum height. Primary buttons use signal orange with charcoal text; secondary buttons use a transparent surface and a slate outline. Hover brightens the primary surface or adds a cool gray tint to the secondary button. Text actions use an underline offset by 4px and no border. Disabled buttons reduce opacity to .45 and lose the pointer cursor.
 
 All keyboard-focusable controls receive a burnt-orange outline (3px) offset from the element (3px). File chooser labels use the same treatment through focus-within. The masthead uses bright orange focus against charcoal. Active navigation has a bottom orange marker; this indicates selection, not a decorative panel border.
+
+Enabled buttons, dropdowns, checkbox/radio controls and their labels, file pickers, and date-picker icons use a pointer cursor. Disabled controls use the default cursor, including those disabled by a parent fieldset. Editable text and page-number fields retain their text cursor.
 
 ### Fields
 
@@ -165,6 +169,16 @@ Rarity is a compact text label without a pill background. Elite uses burnt-orang
 The secondary overview leads with **What you recruited**: Dolls, Weapons, and Unknown counts. **Source details** discloses technical source-type and pool distributions with an explicit note that recruitment category names are unverified. Do not infer banner names from those IDs.
 
 ### Ledger and details
+
+Current pity sits beside the recruitment selector, above the portrait history, with the number of pulls since the last 5★ and that reward's name and date. Incomplete intervals use an explicit uncertainty message; histories without an Elite describe pulls before the first 5★. The counter stacks below the selector on mobile.
+
+Each ledger pity cell includes its recruitment name. Elite rows mark the counter reset, and a short explanation above the scroll region describes separate counters and filtered-out rewards. Keep this explanation readable without horizontal scrolling. Record log filters do not change the recruitment overview.
+
+At 760px and below, hide the Qty. column; item quantity remains available in expanded record details at every width.
+
+Pagination retains the current rows and expanded details while fetching the next page. Disable paging and row controls while busy, then preserve the visible pager's position when the replacement arrives. If the user scrolls away during loading, leave their position alone. Failed page requests retain the current page with an inline retry; filter and profile changes still clear outdated rows immediately.
+
+The current page number is an inline, underlined numeric field with no box or spinner: Enter jumps to a valid page, and Escape or leaving the field cancels an unsubmitted edit. Keep the total page count beside it and preserve the keyboard focus outline. At narrow mobile widths, move Rows onto its own line so Previous, the page field, and Next remain together.
 
 The ledger uses a charcoal header with white text, compact rows, and horizontal dividers. Hover gives the row a subtle tonal change. Expanded details use a cool gray surface and wrap their provenance fields, including raw source IDs. The disclosure SVG rotates over .2s. Unknown item names retain an explicit Unknown label and use lighter, italic treatment rather than disappearing.
 

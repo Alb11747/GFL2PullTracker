@@ -49,6 +49,51 @@ def load(client, profile_id, doc, **kwargs):
     return client.post("/api/imports", json={"profile_id": profile_id, "records_document": doc, **kwargs})
 
 
+def test_checkbox_filters_combine_or_values_and_and_fields(client):
+    p = profile(client)
+    load(client, p, document([record(1013), record(11007), record(1015, type_id=6),
+                              record(11008, type_id=6, pool=224002)]))
+    all_rows = client.get("/api/history", params={"profile_id": p}).json()["items"]
+    params = [("profile_id", p), ("type_id", "3"), ("type_id", "6"),
+              ("kind", "doll"), ("kind", "weapon"), ("rarity", "Elite"), ("pool_id", "224001")]
+    selected = client.get("/api/history", params=params)
+    assert selected.status_code == 200
+    expected = [row for row in all_rows if row["pool_id"] == 224001 and row["rarity"] == "Elite"]
+    assert len(expected) == 2
+    assert selected.json()["items"] == expected  # Includes unchanged pity metadata.
+    assert client.get("/api/statistics", params=params).json()["total"] == 2
+    for key in ("rarity", "kind", "type_id", "pool_id"):
+        for route in ("history", "statistics"):
+            assert client.get(f"/api/{route}", params={"profile_id": p, key: "__none__"}).json()["total"] == 0
+            assert client.get(f"/api/{route}", params={"profile_id": p, key: ""}).json()["total"] == 4
+    assert client.get("/api/history", params={"profile_id": p, "type_id": "6"}).json()["total"] == 2
+    for key, value in (("type_id", "0"), ("pool_id", "-1"), ("type_id", "nope")):
+        assert client.get("/api/history", params={"profile_id": p, key: value}).status_code == 422
+    assert client.get("/api/history", params=[("profile_id", p), ("rarity", "__none__"), ("rarity", "Elite")]).status_code == 422
+
+
+def test_overview_is_complete_profile_scoped_and_contains_only_ui_fields(client, monkeypatch):
+    p = profile(client)
+    other = profile(client, "Other")
+    load(client, p, document([record(1013), record(11007)]))
+    load(client, other, document([record(1015)]))
+    tracker = client.app.state.tracker
+    original = tracker.history
+    calls = []
+    def read(profile_id, selected):
+        calls.append((profile_id, selected))
+        return original(profile_id, selected)
+    monkeypatch.setattr(tracker, "history", read)
+    response = client.get("/api/overview", params={"profile_id": p})
+    assert response.status_code == 200
+    assert calls == [(p, {})]
+    rows = response.json()
+    assert [row["item_id"] for row in rows] == [1013, 11007]
+    assert rows == original(p, {})
+    assert all(not {"record_key", "occurrence", "token", "raw_record", "account_fingerprint"} & row.keys() for row in rows)
+    assert client.get("/api/overview", params={"profile_id": "missing"}).status_code == 404
+
+
 def test_occurrence_merge_overlap_idempotence_and_type_isolation(client):
     p = profile(client)
     one = document([record(), record(), record(11008)])

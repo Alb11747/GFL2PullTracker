@@ -31,6 +31,7 @@ const allowed = new Set([
   ...mutations,
   'profiles',
   'history',
+  'overview',
   'statistics',
   'filterOptions',
   'exportState',
