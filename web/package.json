@@ -10,6 +10,8 @@
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "test:browser": "vite --config tests/browser/vite.config.ts",
+    "test:routes": "node tests/routing/serve.mjs --smoke",
+    "test:routes:browser": "node tests/routing/serve.mjs",
     "format": "prettier --write ."
   },
   "dependencies": {

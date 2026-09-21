@@ -4,6 +4,20 @@ The public deployment uses IndexedDB and workers for personal archives, and the 
 
 The local archive and sync engines share synthetic parity fixtures with Python. Run `npm test`, `npm run check`, and `npm run build`. Browser tests must also check worker loading, IndexedDB persistence, and file serialization.
 
+## Page URLs
+
+The main pages use `/history`, `/backup`, `/profiles`, `/statistics`, and `/privacy`.
+Navigation retains the current browser archive, filters, imports, and Drive session;
+refreshing or opening a link in a new tab loads the requested page with the usual
+saved profile preference. Filters and profile IDs are not written into URLs.
+The root URL redirects to `/history`, and the full privacy policy lives at
+`/privacy-policy`. Local-server mode redirects hosted-only pages to `/history`
+and `/privacy` to `/privacy-policy`.
+
+After building, run `npm run test:routes` for HTTP routing checks in both modes.
+Run `npm run test:routes:browser` for the isolated application regression fixture;
+see [routing tests](tests/routing/README.md) for browser instructions and coverage.
+
 ## Windows local mode
 
 Run the two services with the repository's `Start-Tracker.ps1` launcher. The SvelteKit Node server forwards `/api/*` to the loopback Python service configured by `GFL2_API_URL` (default `http://127.0.0.1:8000`). Browsers use only the frontend origin. Development uses port 5173; the production launcher uses port 3000.

@@ -2,7 +2,7 @@
 
 The hosted site is `https://gfl2.alb11747.com`, with public support at
 `gfl2@alb11747.com`. Its privacy policy is available at
-`https://gfl2.alb11747.com/privacy` and discloses Canadian origin hosting.
+`https://gfl2.alb11747.com/privacy-policy` and discloses Canadian origin hosting.
 Configure a separate OAuth client for each installation using the instructions below.
 See [HOSTING.md](HOSTING.md) for deployment instructions.
 

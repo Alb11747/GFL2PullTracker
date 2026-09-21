@@ -549,6 +549,7 @@
       <header>
         <h2 id="privacy-heading">Privacy &amp; recovery</h2>
         <p>You choose where your history goes each time you collect it.</p>
+        <p><a href="/privacy-policy">Read the full privacy policy</a></p>
       </header>
       <dl class="privacy-list">
         <div>

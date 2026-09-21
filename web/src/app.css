@@ -31,7 +31,10 @@
   align-items: center;
   gap: 18px;
 }
-.archive-nav button {
+.archive-nav a {
+  display: inline-block;
+  font-weight: 600;
+  text-decoration: none;
   position: relative;
   padding: 14px 0;
   border: 0;
@@ -41,7 +44,7 @@
   font-size: 0.9rem;
   white-space: nowrap;
 }
-.archive-nav button:hover,
+.archive-nav a:hover,
 .archive-nav .chosen {
   background: transparent;
   color: var(--white);
@@ -320,7 +323,7 @@ textarea {
     flex-wrap: wrap;
     gap: 0 24px;
   }
-  .archive-nav button {
+  .archive-nav a {
     min-height: 44px;
     padding-block: 12px;
   }

@@ -11,7 +11,7 @@
 </svelte:head>
 
 <main class="migration-guide">
-  <a href="/">Back to GFL2 Pull Tracker</a>
+  <a href="/history">Back to GFL2 Pull Tracker</a>
   <header>
     <h1>Move history from Exilium</h1>
     <p>Keep your older pulls alongside newly collected history. This import merges into the game profile you choose.</p>

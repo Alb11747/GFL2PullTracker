@@ -13,7 +13,7 @@
 </svelte:head>
 
 <main class="privacy-page">
-  <a class="back-link" href="/">Back to GFL2 Pull Tracker</a>
+  <a class="back-link" href="/history">Back to GFL2 Pull Tracker</a>
   <header>
     <h1>Privacy</h1>
     <p class="intro">
@@ -127,7 +127,7 @@
   <footer>
     <span>GFL2 Pull Tracker</span>
     <GitHubLink />
-    <a href="/">Return to your archive</a>
+    <a href="/history">Return to your archive</a>
   </footer>
 </main>
 

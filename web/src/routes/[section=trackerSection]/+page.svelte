@@ -1,5 +1,8 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
+  import { goto } from '$app/navigation';
+  import { page } from '$app/state';
+  import { trackerPages, type TrackerSection } from '$lib/tracker-routes';
   import MultiSelect from '$lib/components/MultiSelect.svelte';
   import EliteHistory from '$lib/components/EliteHistory.svelte';
   import GitHubLink from '$lib/components/GitHubLink.svelte';
@@ -29,6 +32,7 @@
   } from '$lib/api';
   let { data } = $props();
   const hosted = $derived(data.mode === 'public');
+  let initializing = $state(true);
   let local = $state<ReturnType<typeof createLocalClient>>();
   let client = serverClient as Pick<
     typeof serverClient,
@@ -43,7 +47,9 @@
   const publicApi = createPublicClient();
   let drive = $state<ReturnType<typeof createDriveSync>>();
   let publicConfig = $state<Awaited<ReturnType<typeof publicApi.config>>>();
-  let section = $state<'tracker' | 'profiles' | 'backup' | 'statistics' | 'privacy'>('tracker');
+  // Every panel shares this route component so navigation retains imports and Drive authorization.
+  const section = $derived(page.params.section as TrackerSection);
+  const currentPage = $derived(trackerPages.find((item) => item.slug === section)!);
   let saveBackup = $state(false),
     contribute = $state(false),
     recovery = $state(false);
@@ -86,12 +92,12 @@
     }
     pendingRestoreFile = file;
     restoreRequest++;
-    section = 'backup';
+    await goto('/backup');
     await tick();
     document.getElementById('restore-heading')?.focus();
   }
   async function viewHistory() {
-    section = 'tracker';
+    await goto('/history');
     importOpen = false;
     await tick();
     document.getElementById('history-title')?.focus();
@@ -385,6 +391,7 @@
         createOpen = true;
       }
       await refresh();
+      initializing = false;
       const jobId = remembered(jobKey(filters.profile_id));
       if (jobId) {
         importOpen = true;
@@ -393,6 +400,8 @@
     } catch (e) {
       error = failure(e);
       loading = false;
+    } finally {
+      initializing = false;
     }
   }
   onMount(() => {
@@ -761,10 +770,10 @@
         {#if !importBusy && ['complete', 'partial', 'cancelled'].includes(importState)}
           <button class="primary" onclick={viewHistory}>View history</button>
         {/if}
-        {#if importBusy && (!importOpen || section !== 'tracker')}
+        {#if importBusy && (!importOpen || section !== 'history')}
           <button
-            onclick={() => {
-              section = 'tracker';
+            onclick={async () => {
+              await goto('/history');
               importOpen = true;
             }}>Show import</button
           >
@@ -776,8 +785,8 @@
           server. This fallback saves no server backup or contribution.
         </p>
         <button
-          onclick={() => {
-            section = 'tracker';
+          onclick={async () => {
+            await goto('/history');
             importOpen = true;
             if (capture.trim()) void runImport(true);
           }}
@@ -793,14 +802,14 @@
 {/snippet}
 
 <svelte:head
-  ><title>GFL2 Pull Tracker — Recruitment ledger</title><meta
+  ><title>GFL2 Pull Tracker — {currentPage.title}</title><meta
     name="description"
     content="Your source-preserving Girls’ Frontline 2 recruitment history."
   /></svelte:head
 >
 
 <header class="masthead" class:with-tabs={hosted}>
-  <a class="wordmark" href="/" aria-label="Girls’ Frontline 2: Exilium Pull Tracker home"
+  <a class="wordmark" href="/history" aria-label="Girls’ Frontline 2: Exilium Pull Tracker home"
     ><svg viewBox="0 0 32 32" aria-hidden="true"
       ><path d="M4 4h24v24H4zM10 4v24M4 11h24M16 17h7M16 22h7" /></svg
     ><span aria-hidden="true"
@@ -811,13 +820,11 @@
   >
   {#if hosted}
     <nav class="archive-nav" aria-label="Tracker navigation">
-      {#each [['tracker', 'My history'], ['backup', 'Backup & sync'], ['profiles', 'Profiles'], ['statistics', 'Community statistics'], ['privacy', 'Privacy']] as [id, label]}
-        <button
-          class:chosen={section === id}
-          aria-current={section === id ? 'page' : undefined}
-          onclick={() => {
-            section = id as typeof section;
-          }}>{label}</button
+      {#each trackerPages as item}
+        <a
+          href={`/${item.slug}`}
+          class:chosen={section === item.slug}
+          aria-current={section === item.slug ? 'page' : undefined}>{item.label}</a
         >
       {/each}
     </nav>
@@ -833,13 +840,13 @@
       ></label
     ><button
       class="primary"
-      onclick={() => {
-        if (section !== 'tracker') {
-          section = 'tracker';
+      onclick={async () => {
+        if (section !== 'history') {
+          await goto('/history');
           importOpen = true;
         } else importOpen = !importOpen;
       }}
-      aria-expanded={importOpen}
+      aria-expanded={importOpen && section === 'history'}
       aria-controls="import-panel"
       ><svg viewBox="0 0 20 20" aria-hidden="true"
         ><path d="M10 3v10m-4-4 4 4 4-4M4 13v4h12v-4" /></svg
@@ -849,10 +856,18 @@
 </header>
 
 <main>
-  {#if !importOpen || section !== 'tracker'}{@render importStatus()}{/if}
-  {#if hosted && section === 'statistics'}
+  {#if !importOpen || section !== 'history'}{@render importStatus()}{/if}
+  {#if hosted && section !== 'history' && initializing}
+    <section class="empty-state" aria-label={currentPage.title} aria-busy="true">
+      <p role="status">Loading {currentPage.label.toLowerCase()}…</p>
+    </section>
+  {:else if hosted && section !== 'history' && !local}
+    <section class="empty-state" aria-label={currentPage.title}>
+      <p role="alert">{error || 'Could not open your browser archive. Reload to try again.'}</p>
+    </section>
+  {:else if hosted && section === 'statistics'}
     <CommunityStatistics />
-  {:else if hosted && section !== 'tracker' && local}
+  {:else if hosted && section !== 'history' && local}
     <ArchiveSettings
       {local}
       {profiles}
@@ -878,12 +893,12 @@
         filters.profile_id = id;
         void profileChanged();
       }}
-      onrecover={() => {
+      onrecover={async () => {
         if (importBusy || !capabilities.backup) return;
         recovery = true;
         importMode = 'capture';
         importOpen = true;
-        section = 'tracker';
+        await goto('/history');
       }}
     />
   {:else}
@@ -1456,7 +1471,7 @@
   <footer>
     <span>GFL2 Pull Tracker</span>
     <GitHubLink />
-    <a href="/privacy">Privacy</a>
+    <a href="/privacy-policy">Privacy policy</a>
     <a
       href="https://github.com/Infernal-Crack-LED/gfl2-team-builder"
       target="_blank"
