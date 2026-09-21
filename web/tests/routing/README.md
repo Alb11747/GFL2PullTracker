@@ -24,7 +24,9 @@ archive workers, gzip encoding/decoding and IndexedDB are exercised. All fixture
 credentials and game records are synthetic. Unknown external fetches fail closed.
 The runner never uses the live API backend.
 
-The visible results cover ordinary navigation links, titles/current-page state,
+The visible results cover usable history while optional configuration is stalled,
+absence of history/reward/summary/filter worker queries on unrelated routes,
+ordinary navigation links, titles/current-page state,
 Back/Forward, selected-profile/filter retention, a deferred settings operation,
 Drive authorization retention, a deferred capture/import, profile operation
 locks, history focus, and a production backup file handed across routes and
@@ -35,3 +37,28 @@ Also inspect desktop/mobile appearance and keyboard navigation manually. Open a
 navigation link in a new tab and refresh each panel to verify browser entry and
 hydration. The scripted suite does not automate browser tabs or viewport sizing,
 and synthetic Google transport does not prove live OAuth approval or Drive access.
+
+## Production DOM performance
+
+Open <http://127.0.0.1:14195/history?performance=1> or use **Run DOM performance**.
+This separate run resets only the isolated fixture origin and leaves the ordinary
+routing regression run unchanged. Keep this browser tab visible throughout the run;
+animation-frame timing and background sync intentionally depend on visibility.
+
+The suite creates 1,000-, 10,000-, and 30,000-record profiles using production file
+inputs and **Validate and import**, then imports overlapping halves and verifies
+that the occurrence counts remain exact. It connects the production Drive controller
+to synthetic HTTP responses and holds a background metadata request while measuring
+pagination, search, recruitment selection, profile switches, and route navigation.
+All measured browsing goes through production controls and components.
+
+Each action records event-to-render/next-paint-opportunity time, first worker-query
+dispatch delay, time after query dispatch, DOM mutation count, and whether background
+sync was pending. Completion uses actual worker replies, DOM readiness, and animation
+frames; it does not include the ordinary regression suite's fixed polling delay.
+Two frames approximate a paint opportunity, not an exact hardware presentation time.
+Search reports include the intentional 100 ms debounce and are separated from the
+other warm actions' maximum, p95, and 200 ms target. Long tasks and import times are
+reported separately. Results remain visible and in `window.routingPerformanceResults`.
+Synthetic sync overlap is evidence of usable browsing during an outstanding cloud
+request; it does not measure authenticated Drive latency or full sync CPU contention.

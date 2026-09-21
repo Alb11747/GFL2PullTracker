@@ -1,22 +1,26 @@
 export const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const API = 'https://www.googleapis.com/drive/v3/files';
-const UPLOAD = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id';
-export const MAX_REVISION_BYTES = 32 * 1024 * 1024;
+const UPLOAD =
+  'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,version,size';
+export const MAX_REVISION_BYTES = 16 * 1024 * 1024;
 export const MAX_REVISIONS = 2000;
 
 export interface Revision {
-  /** Missing only on legacy/test transports; new publications always use v2. */
-  formatVersion?: 1 | 2;
   id: string;
   parents: string[];
   createdAt: string;
   sha256: string;
   fileId: string;
+  /** Drive's observed file generation, not an archive schema version. */
+  contentVersion: string;
 }
+export type NewRevision = Omit<Revision, 'fileId' | 'contentVersion'>;
+export type PublishedRevision = Pick<Revision, 'fileId' | 'contentVersion'>;
 export interface RevisionTransport {
   list(): Promise<Revision[]>;
   download(revision: Revision): Promise<Uint8Array>;
-  upload(revision: Omit<Revision, 'fileId'>, bytes: Uint8Array): Promise<string>;
+  upload(revision: NewRevision, bytes: Uint8Array): Promise<PublishedRevision>;
+  delete(fileId: string): Promise<void>;
 }
 export class DriveError extends Error {
   code: 'reconnect' | 'quota' | 'network' | 'invalid';
@@ -59,16 +63,34 @@ async function boundedBytes(response: Response, limit: number): Promise<Uint8Arr
   }
   return bytes;
 }
-function revisionFromFile(file: {
+interface DriveFile {
   id: string;
   description?: string;
   appProperties?: Record<string, string>;
-}): Revision {
+  version?: string;
+  size?: string;
+}
+
+function observedContentVersion(file: DriveFile): string {
+  // Drive documents `version` as increasing for every server-side file change.
+  // Preserve its int64 string: coercing it to Number could miss later changes.
+  if (
+    typeof file.version !== 'string' ||
+    !/^\d{1,20}$/.test(file.version) ||
+    typeof file.size !== 'string' ||
+    !/^\d{1,20}$/.test(file.size)
+  )
+    throw new DriveError('invalid', 'Drive returned invalid observed file metadata.');
+  return `${file.version}:${file.size}`;
+}
+
+function revisionFromFile(file: DriveFile, contentVersion: string): Revision {
   try {
     const value = JSON.parse(file.description ?? '') as Record<string, unknown>;
     if (
       value.format !== 'gfl2-drive-revision' ||
-      ![1, 2].includes(value.version as number) ||
+      'version' in value ||
+      'formatVersion' in value ||
       typeof value.id !== 'string' ||
       !/^[\w-]{1,100}$/.test(value.id) ||
       value.id !== file.appProperties?.revision ||
@@ -83,12 +105,12 @@ function revisionFromFile(file: {
     )
       throw new Error();
     return {
-      formatVersion: value.version as 1 | 2,
       id: value.id,
       parents: value.parents as string[],
       createdAt: value.createdAt,
       sha256: value.sha256,
-      fileId: file.id
+      fileId: file.id,
+      contentVersion
     };
   } catch {
     throw new DriveError(
@@ -130,23 +152,33 @@ export function createDriveTransport(
         'quota',
         'Google Drive denied this request or reached a quota. Local data is safe. Check access and storage, then retry.'
       );
-    if (!response.ok)
+    if (!response.ok && !(init.method === 'DELETE' && response.status === 404))
       throw new DriveError(
         'network',
         `Drive sync failed (HTTP ${response.status}). Local data is safe; retry explicitly.`
       );
     return response;
   };
+  const remove = async (fileId: string) => {
+    if (!/^[\w-]+$/.test(fileId)) throw new DriveError('invalid', 'Invalid Drive file identifier.');
+    await request(`${API}/${encodeURIComponent(fileId)}`, { method: 'DELETE' });
+  };
   return {
     async list() {
       const revisions = new Map<string, Revision>();
+      const validFiles: Revision[] = [];
+      const invalidFiles = new Set<string>();
+      const filesByRevision = new Map<string, string[]>();
+      const conflicting = new Set<string>();
+      const seenFiles = new Map<string, string>();
+      let fileCount = 0;
       let pageToken = '';
       const seenPages = new Set<string>();
       do {
         const params = new URLSearchParams({
           spaces: 'appDataFolder',
-          q: "trashed = false and appProperties has { key='tracker' and value='gfl2-v1' }",
-          fields: 'nextPageToken,files(id,description,appProperties)',
+          q: "trashed = false and (appProperties has { key='tracker' and value='gfl2' } or appProperties has { key='tracker' and value='gfl2-v1' })",
+          fields: 'nextPageToken,files(id,description,appProperties,version,size)',
           pageSize: '1000'
         });
         if (pageToken) params.set('pageToken', pageToken);
@@ -157,18 +189,51 @@ export function createDriveTransport(
         } catch {
           throw new DriveError('invalid', 'Drive returned invalid revision metadata.');
         }
-        if (!Array.isArray(page.files))
+        if (!page || typeof page !== 'object' || !Array.isArray(page.files))
           throw new DriveError('invalid', 'Drive returned invalid revision metadata.');
         for (const file of page.files) {
-          const revision = revisionFromFile(file);
+          if (++fileCount > MAX_REVISIONS)
+            throw new DriveError(
+              'quota',
+              'Drive revision limit reached. No cloud files were changed.'
+            );
+          if (!file || typeof file.id !== 'string' || !/^[\w-]+$/.test(file.id))
+            throw new DriveError('invalid', 'Drive returned an invalid file identifier.');
+          if (!['gfl2', 'gfl2-v1'].includes(file.appProperties?.tracker ?? ''))
+            throw new DriveError('invalid', 'Drive returned a file outside this tracker archive.');
+          const contentVersion = observedContentVersion(file);
+          const metadata = JSON.stringify([file.description, file.appProperties, contentVersion]);
+          const seen = seenFiles.get(file.id);
+          if (seen !== undefined) {
+            if (seen !== metadata)
+              throw new DriveError('network', 'Drive metadata changed during listing. Retry sync.');
+            continue;
+          }
+          seenFiles.set(file.id, metadata);
+          if (BigInt(file.size!) > BigInt(MAX_REVISION_BYTES)) {
+            invalidFiles.add(file.id);
+            continue;
+          }
+          let revision: Revision;
+          try {
+            revision = revisionFromFile(file, contentVersion);
+          } catch (error) {
+            if (!(error instanceof DriveError) || error.code !== 'invalid') throw error;
+            invalidFiles.add(file.id);
+            continue;
+          }
+          const copies = filesByRevision.get(revision.id) ?? [];
+          copies.push(file.id);
+          filesByRevision.set(revision.id, copies);
           const previous = revisions.get(revision.id);
           if (
             previous &&
-            (previous.formatVersion !== revision.formatVersion ||
-              previous.sha256 !== revision.sha256 ||
+            (previous.sha256 !== revision.sha256 ||
+              previous.createdAt !== revision.createdAt ||
               JSON.stringify(previous.parents) !== JSON.stringify(revision.parents))
           )
-            throw new DriveError('invalid', 'Drive contains conflicting copies of a revision.');
+            conflicting.add(revision.id);
+          validFiles.push(revision);
           revisions.set(revision.id, revision);
           if (revisions.size > MAX_REVISIONS)
             throw new DriveError(
@@ -176,23 +241,27 @@ export function createDriveTransport(
               'Drive revision limit reached. Export a local backup before archiving old cloud history.'
             );
         }
+        if (page.nextPageToken !== undefined && typeof page.nextPageToken !== 'string')
+          throw new DriveError('invalid', 'Drive returned an invalid page cursor.');
         pageToken = page.nextPageToken ?? '';
-        if (pageToken && (typeof pageToken !== 'string' || seenPages.has(pageToken)))
+        if (pageToken && seenPages.has(pageToken))
           throw new DriveError('invalid', 'Drive returned an invalid page cursor.');
         seenPages.add(pageToken);
       } while (pageToken);
-      return [...revisions.values()];
+      // Never act on a partial listing: a later page may be malformed or unavailable.
+      for (const id of conflicting) {
+        for (const fileId of filesByRevision.get(id)!) invalidFiles.add(fileId);
+        revisions.delete(id);
+      }
+      for (const fileId of invalidFiles) await remove(fileId);
+      // Keep identical copies visible so every physical payload gets audited.
+      return validFiles.filter((revision) => !conflicting.has(revision.id));
     },
     async download(revision) {
       const bytes = await boundedBytes(
         await request(`${API}/${encodeURIComponent(revision.fileId)}?alt=media`),
         MAX_REVISION_BYTES
       );
-      if ((await digest(bytes)) !== revision.sha256)
-        throw new DriveError(
-          'invalid',
-          'Drive backup integrity check failed. Local data is unchanged.'
-        );
       return bytes;
     },
     async upload(revision, bytes) {
@@ -206,8 +275,8 @@ export function createDriveTransport(
         name: `gfl2-${revision.id}.json.gz`,
         mimeType: 'application/gzip',
         parents: ['appDataFolder'],
-        appProperties: { tracker: 'gfl2-v1', revision: revision.id },
-        description: JSON.stringify({ ...revision, format: 'gfl2-drive-revision', version: 2 })
+        appProperties: { tracker: 'gfl2', revision: revision.id },
+        description: JSON.stringify({ ...revision, format: 'gfl2-drive-revision' })
       };
       const body = new Blob([
         `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: application/gzip\r\n\r\n`,
@@ -220,13 +289,14 @@ export function createDriveTransport(
         headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
         body
       });
-      const result = (await response.json()) as { id?: string };
+      const result = (await response.json()) as DriveFile;
       if (typeof result.id !== 'string' || !/^[\w-]+$/.test(result.id))
         throw new DriveError(
           'invalid',
           'Drive did not confirm the uploaded revision. Retry sync explicitly to check it.'
         );
-      return result.id;
-    }
+      return { fileId: result.id, contentVersion: observedContentVersion(result) };
+    },
+    delete: remove
   };
 }

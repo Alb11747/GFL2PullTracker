@@ -1,4 +1,5 @@
 import catalog from '../../../../backend/catalog.json' with { type: 'json' };
+import { createRewardQuery, type ProfileOverview } from '../reward-query.ts';
 import type {
   Filters,
   FilterOptions,
@@ -23,9 +24,19 @@ import {
   type SourceSnapshot
 } from './types.ts';
 
+/** Explicitly rejected archive content, distinct from storage or platform failures. */
+export class InvalidArchiveError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InvalidArchiveError';
+  }
+}
+
 export const MAX_STATE_BYTES = 64 * 1024 * 1024;
 export const MAX_RECORDS = 500_000;
 const items = new Map(catalog.items.map((item) => [item.id, item]));
+/** Worker diagnostics count actual reconstruction, without including personal data. */
+export const engineDiagnostics = { engineBuilds: 0, rowBuilds: 0 };
 type JsonObject = Record<string, unknown>;
 interface Entry {
   source_type_id: number;
@@ -41,7 +52,7 @@ const blocked =
   /^(authorization|cookie|token|capture|account_value|original_url|headers|access_token|refresh_token|id_token|session|session_id|csrf|csrf_token|verified|verified_at|server_verified|verification|trusted)$/i;
 export function object(value: unknown, label = 'value'): JsonObject {
   if (!value || typeof value !== 'object' || Array.isArray(value))
-    throw new Error(`Invalid ${label}.`);
+    throw new InvalidArchiveError(`Invalid ${label}.`);
   return value as JsonObject;
 }
 export function canonical(value: unknown): string {
@@ -56,24 +67,28 @@ export function canonical(value: unknown): string {
     .join(',')}}`;
 }
 export function noCredentials(value: unknown, depth = 0): void {
-  if (depth > 50) throw new Error('Archive is nested too deeply.');
+  if (depth > 50) throw new InvalidArchiveError('Archive is nested too deeply.');
   if (
     typeof value === 'string' &&
     (/\bBearer\s+[A-Za-z0-9._~-]{8,}/i.test(value) ||
       /[?&](?:token|access_token|auth|authorization|cookie)=/i.test(value))
   )
-    throw new Error('Archive contains credentials. Export records without request captures.');
+    throw new InvalidArchiveError(
+      'Archive contains credentials. Export records without request captures.'
+    );
   if (value && typeof value === 'object') {
     for (const [key, child] of Object.entries(value)) {
       if (blocked.test(key))
-        throw new Error('Archive contains credentials or server verification claims.');
+        throw new InvalidArchiveError(
+          'Archive contains credentials or server verification claims.'
+        );
       noCredentials(child, depth + 1);
     }
   }
 }
 function integer(value: unknown, label: string, zero = false): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < (zero ? 0 : 1))
-    throw new Error(`Invalid ${label}.`);
+    throw new InvalidArchiveError(`Invalid ${label}.`);
   return value;
 }
 function date(value: unknown, label: string): string {
@@ -82,12 +97,12 @@ function date(value: unknown, label: string): string {
     !/(?:Z|[+-]\d\d:\d\d)$/.test(value) ||
     !Number.isFinite(Date.parse(value))
   )
-    throw new Error(`Invalid ${label}; use an ISO timestamp with timezone.`);
+    throw new InvalidArchiveError(`Invalid ${label}; use an ISO timestamp with timezone.`);
   return value;
 }
 function text(value: unknown, label: string, max = 200): string {
   if (typeof value !== 'string' || !value.trim() || value.length > max)
-    throw new Error(`Invalid ${label}.`);
+    throw new InvalidArchiveError(`Invalid ${label}.`);
   return value;
 }
 function identity(value: JsonObject): Identity {
@@ -98,18 +113,18 @@ function identity(value: JsonObject): Identity {
     result.account_fingerprint !== null &&
     !/^sha256:[0-9a-f]{64}$/.test(result.account_fingerprint)
   )
-    throw new Error('Invalid account fingerprint.');
+    throw new InvalidArchiveError('Invalid account fingerprint.');
   if (result.endpoint_host !== null && !OFFICIAL_HOSTS.has(result.endpoint_host))
-    throw new Error('Unknown game endpoint host.');
+    throw new InvalidArchiveError('Unknown game endpoint host.');
   for (const key of ['server', 'game_channel_id'] as const)
     if (result[key] !== null && !/^\d+$/.test(result[key]))
-      throw new Error('Invalid server or channel.');
+      throw new InvalidArchiveError('Invalid server or channel.');
   return result;
 }
 function bind(profile: Identity, incoming: Identity): void {
   for (const key of IDENTITY_FIELDS) {
     if (profile[key] !== null && incoming[key] !== null && incoming[key] !== profile[key])
-      throw new Error(
+      throw new InvalidArchiveError(
         'This data belongs to a different account, server, or channel. Choose another profile.'
       );
   }
@@ -128,15 +143,15 @@ export function validateDocument(
 ): Identity {
   noCredentials([document, manifest, rawPages]);
   if (![1, 2].includes(document.schema_version as number))
-    throw new Error('Unsupported export schema version; expected 1 or 2.');
+    throw new InvalidArchiveError('Unsupported export schema version; expected 1 or 2.');
   date(document.exported_at, 'export date');
   if (!Array.isArray(document.records) || document.records.length > MAX_RECORDS)
-    throw new Error('Export records must contain at most 500,000 records.');
+    throw new InvalidArchiveError('Export records must contain at most 500,000 records.');
   const id = identity(document);
   // Legacy records can be deliberately assigned to a selected profile. They may
   // remain unbound, but can never independently match a different synced profile.
   if (document.schema_version === 2 && IDENTITY_FIELDS.some((key) => id[key] === null))
-    throw new Error('Version 2 exports need a complete collector identity.');
+    throw new InvalidArchiveError('Version 2 exports need a complete collector identity.');
   const counts = new Map<number, number>();
   const expected = new Map<string, unknown[]>();
   for (const input of document.records) {
@@ -149,7 +164,7 @@ export function validateDocument(
     integer(raw.item_num, 'quantity', true);
     const timestamp = integer(raw.time, 'timestamp', true);
     if (!Number.isFinite(new Date(timestamp * 1000).valueOf()) || timestamp > 253402300799)
-      throw new Error('Invalid timestamp.');
+      throw new InvalidArchiveError('Invalid timestamp.');
     counts.set(type, (counts.get(type) || 0) + 1);
     const key = `${type}/${page}`;
     const group = expected.get(key) || [];
@@ -161,16 +176,16 @@ export function validateDocument(
       manifest.schema_version !== document.schema_version ||
       typeof manifest.complete !== 'boolean'
     )
-      throw new Error('Invalid manifest schema or collection status.');
+      throw new InvalidArchiveError('Invalid manifest schema or collection status.');
     date(manifest.started_at, 'manifest start date');
     if (manifest.completed_at != null) date(manifest.completed_at, 'manifest completion date');
     if (manifest.complete && manifest.completed_at == null)
-      throw new Error('Completed manifest needs a completion date.');
+      throw new InvalidArchiveError('Completed manifest needs a completion date.');
     if (manifest.started_at !== document.exported_at)
-      throw new Error('Manifest and records belong to different runs.');
+      throw new InvalidArchiveError('Manifest and records belong to different runs.');
     for (const key of IDENTITY_FIELDS)
       if (manifest[key] != null && manifest[key] !== id[key])
-        throw new Error('Manifest identity does not match the records.');
+        throw new InvalidArchiveError('Manifest identity does not match the records.');
     const types = object(manifest.types, 'manifest types');
     for (const [key, input] of Object.entries(types)) {
       const value = object(input, 'manifest type');
@@ -180,21 +195,21 @@ export function validateDocument(
           value.status as string
         )
       )
-        throw new Error('Invalid manifest type status.');
+        throw new InvalidArchiveError('Invalid manifest type status.');
       integer(value.pages, 'manifest pages', true);
       integer(value.records, 'manifest records', true);
       if (value.records !== (counts.get(Number(key)) || 0))
-        throw new Error('Manifest counts do not match the records.');
+        throw new InvalidArchiveError('Manifest counts do not match the records.');
       if (
         manifest.complete &&
         !['complete', 'empty', 'unavailable'].includes(value.status as string)
       )
-        throw new Error('Completed manifest contains an unfinished type.');
+        throw new InvalidArchiveError('Completed manifest contains an unfinished type.');
     }
     for (const row of document.records as Entry[]) {
       const status = types[String(row.source_type_id)] as JsonObject | undefined;
       if (!status || row.source_page > Number(status.pages))
-        throw new Error('Record provenance exceeds manifest pages.');
+        throw new InvalidArchiveError('Record provenance exceeds manifest pages.');
     }
   }
   if (rawPages !== null) {
@@ -202,11 +217,19 @@ export function validateDocument(
     for (const [path, contents] of Object.entries(rawPages)) {
       const match = /^(?:raw|responses)\/type_(\d+)\/page_(\d+)\.json$/.exec(path);
       if (!match || typeof contents !== 'string')
-        throw new Error('Invalid raw page archive name or content.');
-      const parsed = object(JSON.parse(contents.replace(/^\uFEFF/, '')), 'raw page');
+        throw new InvalidArchiveError('Invalid raw page archive name or content.');
+      let parsed: JsonObject;
+      try {
+        parsed = object(JSON.parse(contents.replace(/^\uFEFF/, '')), 'raw page');
+      } catch (cause) {
+        if (cause instanceof SyntaxError)
+          throw new InvalidArchiveError('Raw page does not contain valid JSON.');
+        throw cause;
+      }
       noCredentials(parsed);
       const list = object(parsed.data, 'raw page data').list;
-      if (!Array.isArray(list)) throw new Error('Raw pages must contain response record arrays.');
+      if (!Array.isArray(list))
+        throw new InvalidArchiveError('Raw pages must contain response record arrays.');
       // Incremental collectors also preserve original network responses. Those
       // can include overlap stripped from the normalized raw page archive.
       if (path.startsWith('responses/')) continue;
@@ -216,14 +239,14 @@ export function validateDocument(
         seen.has(key) ||
         canonical(list) !== canonical(expected.get(key) || [])
       )
-        throw new Error('Raw page records do not match snapshot provenance.');
+        throw new InvalidArchiveError('Raw page records do not match snapshot provenance.');
       seen.add(key);
     }
     if ([...expected.keys()].some((key) => !seen.has(key)))
-      throw new Error('Raw archive is missing referenced pages.');
+      throw new InvalidArchiveError('Raw archive is missing referenced pages.');
   }
   if (new TextEncoder().encode(canonical([document, manifest, rawPages])).length > MAX_STATE_BYTES)
-    throw new Error('Import exceeds the 64 MiB expanded limit.');
+    throw new InvalidArchiveError('Import exceeds the 64 MiB expanded limit.');
   return id;
 }
 export async function digest(value: unknown): Promise<string> {
@@ -401,17 +424,46 @@ function publicProfile(profile: PortableProfile): Profile {
   const { snapshots: _snapshots, updated_at: _updated, aliases: _aliases, ...result } = profile;
   return result;
 }
+function sameDerivedProfile(left: PortableProfile, right: PortableProfile): boolean {
+  // Validated snapshot digests cover documents, manifests and raw pages. Their
+  // sequence controls occurrence/order merging; the host controls launch pity.
+  return (
+    left.id === right.id &&
+    left.endpoint_host === right.endpoint_host &&
+    left.snapshots.length === right.snapshots.length &&
+    left.snapshots.every((snapshot, index) => snapshot.digest === right.snapshots[index].digest)
+  );
+}
 export class LocalEngine {
   state: PortableState;
   private cache = new Map<string, Row[]>();
+  private rewardQueries = new Map<string, ReturnType<typeof createRewardQuery>>();
   constructor(state: PortableState = emptyState()) {
-    if (state.version !== 2)
-      throw new Error('Legacy archives must be validated and migrated before use.');
+    engineDiagnostics.engineBuilds++;
+    if ('version' in state) throw new InvalidArchiveError('Unsupported archive format.');
     this.state = structuredClone(state);
+  }
+  /** A mutation works on its own state until persistence succeeds. Derived rows are immutable. */
+  fork(state: PortableState = this.state): LocalEngine {
+    const candidate = new LocalEngine(state);
+    candidate.cache = new Map(this.cache);
+    candidate.rewardQueries = new Map(this.rewardQueries);
+    candidate.retainDerivedCaches(this.state, state);
+    return candidate;
+  }
+  private retainDerivedCaches(previous: PortableState, next: PortableState): void {
+    const profiles = new Map(next.profiles.map((profile) => [profile.id, profile]));
+    for (const profile of previous.profiles) {
+      const replacement = profiles.get(profile.id);
+      if (!replacement || !sameDerivedProfile(profile, replacement)) {
+        this.cache.delete(profile.id);
+        this.rewardQueries.delete(profile.id);
+      }
+    }
   }
   private profile(id: string): PortableProfile {
     const profile = this.state.profiles.find((p) => profileIds(p).includes(id));
-    if (!profile) throw new Error('Profile not found.');
+    if (!profile) throw new InvalidArchiveError('Profile not found.');
     return profile;
   }
   profiles(): Profile[] {
@@ -433,7 +485,8 @@ export class LocalEngine {
       updated_at: timestamp,
       snapshots: []
     };
-    if (this.state.profiles.length >= 100) throw new Error('At most 100 profiles are supported.');
+    if (this.state.profiles.length >= 100)
+      throw new InvalidArchiveError('At most 100 profiles are supported.');
     this.state.profiles.push(profile);
     return publicProfile(profile);
   }
@@ -456,7 +509,8 @@ export class LocalEngine {
       deleted_at: new Date().toISOString()
     });
     this.state.profiles = this.state.profiles.filter((profile) => profile !== p);
-    this.cache.clear();
+    this.cache.delete(p.id);
+    this.rewardQueries.delete(p.id);
   }
   async importRecords(input: ImportInput): Promise<ImportResult> {
     const { records_document: document, manifest = null, raw_pages = null } = input;
@@ -472,14 +526,14 @@ export class LocalEngine {
           (fullIdentity !== null && t.identity === fullIdentity)
       )
     )
-      throw new Error(
+      throw new InvalidArchiveError(
         'This account has a synced deletion. Resolve that deletion before importing it again.'
       );
     if (
       fullIdentity !== null &&
       this.state.profiles.some((other) => other.id !== p.id && identityKey(other) === fullIdentity)
     )
-      throw new Error(
+      throw new InvalidArchiveError(
         'This game account already belongs to another profile. Select that profile before importing.'
       );
     const hash = await digest([document, manifest, raw_pages]);
@@ -514,11 +568,12 @@ export class LocalEngine {
       profiles: this.state.profiles.map((profile) => (profile.id === p.id ? candidate : profile))
     };
     if (new TextEncoder().encode(canonical(totalState)).length > MAX_STATE_BYTES)
-      throw new Error(
+      throw new InvalidArchiveError(
         'Local archive exceeds the 64 MiB limit. Export and remove an old profile first.'
       );
     this.state = totalState;
     this.cache.delete(p.id);
+    this.rewardQueries.delete(p.id);
     const after = this.rows(p.id).length;
     return {
       id: snapshot.id,
@@ -533,29 +588,32 @@ export class LocalEngine {
   }
   private rows(id: string): Row[] {
     const profile = this.profile(id);
-    if (!this.cache.has(profile.id)) this.cache.set(profile.id, buildRows(profile));
+    if (!this.cache.has(profile.id)) {
+      engineDiagnostics.rowBuilds++;
+      this.cache.set(profile.id, buildRows(profile));
+    }
     return this.cache.get(profile.id)!;
   }
   private filtered(filters: Partial<Filters> & { profile_id: string }): Row[] {
-    return this.rows(filters.profile_id).filter((row) => {
-      if (
-        filters.q &&
-        !`${row.name} ${row.item_id}`.toLocaleLowerCase().includes(filters.q.toLocaleLowerCase())
-      )
-        return false;
-      for (const key of ['rarity', 'kind', 'type_id', 'pool_id'] as const) {
-        const selected = filters[key];
-        if (selected === undefined || selected === '') continue;
-        const values = Array.isArray(selected) ? selected : [selected];
-        if (
-          !values.some((value) =>
+    const query = filters.q?.toLocaleLowerCase();
+    const selections = (['rarity', 'kind', 'type_id', 'pool_id'] as const).flatMap((key) => {
+      const selected = filters[key];
+      if (selected === undefined || selected === '') return [];
+      const values = Array.isArray(selected) ? selected : [selected];
+      return [
+        {
+          key,
+          values: new Set<string | number>(
             key === 'type_id' || key === 'pool_id'
-              ? value !== '' && Number(value) === row[key]
-              : value === row[key]
+              ? values.filter((value) => value !== '').map(Number)
+              : values
           )
-        )
-          return false;
-      }
+        }
+      ];
+    });
+    return this.rows(filters.profile_id).filter((row) => {
+      if (query && !`${row.name} ${row.item_id}`.toLocaleLowerCase().includes(query)) return false;
+      for (const { key, values } of selections) if (!values.has(row[key])) return false;
       return !(
         (filters.date_from && row.timestamp.slice(0, 10) < filters.date_from) ||
         (filters.date_to && row.timestamp.slice(0, 10) > filters.date_to)
@@ -580,6 +638,25 @@ export class LocalEngine {
     return this.rows(id).map(
       ({ key: _key, occurrence: _occurrence, token: _token, ...row }) => row
     );
+  }
+  rewards(
+    id: string,
+    typeId: number | null,
+    rarities: string[],
+    offset: number,
+    limit: number
+  ): ProfileOverview {
+    const profile = this.profile(id);
+    if (!this.rewardQueries.has(profile.id))
+      this.rewardQueries.set(profile.id, createRewardQuery(this.rows(profile.id)));
+    const result = this.rewardQueries.get(profile.id)!(typeId, rarities, offset, limit);
+    const publicRow = ({ key: _key, occurrence: _occurrence, token: _token, ...row }: Row): Pull =>
+      row;
+    return {
+      ...result,
+      items: result.items.map((row) => publicRow(row as Row)),
+      lastElite: result.lastElite ? publicRow(result.lastElite as Row) : null
+    };
   }
   filterOptions(id: string): FilterOptions {
     const rows = this.rows(id);
@@ -637,8 +714,9 @@ export class LocalEngine {
     return structuredClone(this.state);
   }
   async replaceState(state: unknown): Promise<PortableState> {
-    this.state = await validateState(state);
-    this.cache.clear();
+    const next = await validateState(state);
+    this.retainDerivedCaches(this.state, next);
+    this.state = next;
     return this.exportState();
   }
   async mergeState(input: unknown): Promise<PortableState> {
@@ -652,7 +730,7 @@ export class LocalEngine {
             (deletion.identity !== null && identityKey(p) === deletion.identity)
         )
       )
-        throw new Error(
+        throw new InvalidArchiveError(
           'A synced deletion conflicts with a local profile. Resolve it in Backup & Sync.'
         );
       const existing = merged.tombstones.find(
@@ -666,7 +744,7 @@ export class LocalEngine {
           deletion.identity !== null &&
           existing.identity !== deletion.identity
         )
-          throw new Error('Deletion aliases refer to different game accounts.');
+          throw new InvalidArchiveError('Deletion aliases refer to different game accounts.');
         existing.aliases = [
           ...new Set([...deletionIds(existing), ...deletionIds(deletion)])
         ].sort();
@@ -684,7 +762,7 @@ export class LocalEngine {
             (fullIdentity !== null && t.identity === fullIdentity)
         )
       )
-        throw new Error(
+        throw new InvalidArchiveError(
           'An imported profile conflicts with a deletion. Resolve it in Backup & Sync.'
         );
       const local = merged.profiles.find(
@@ -700,7 +778,9 @@ export class LocalEngine {
       local.aliases = [...new Set([...profileIds(local), ...profileIds(remote)])].sort();
       local.id = local.aliases[0];
       if (local.name !== remote.name)
-        throw new Error('Profile names conflict. Resolve the rename in Backup & Sync.');
+        throw new InvalidArchiveError(
+          'Profile names conflict. Resolve the rename in Backup & Sync.'
+        );
       const known = new Set(local.snapshots.map((s) => s.digest));
       local.snapshots.push(...remote.snapshots.filter((s) => !known.has(s.digest)));
       local.snapshots.sort(
@@ -726,7 +806,8 @@ function validateSettings(
 ): asserts value is Record<string, string | number | boolean> {
   const settings = object(value, 'portable settings');
   noCredentials(settings);
-  if (Object.keys(settings).length > 50) throw new Error('Too many portable settings.');
+  if (Object.keys(settings).length > 50)
+    throw new InvalidArchiveError('Too many portable settings.');
   for (const [key, value] of Object.entries(settings)) {
     if (
       !/^[a-zA-Z][a-zA-Z0-9_.-]{0,79}$/.test(key) ||
@@ -734,28 +815,25 @@ function validateSettings(
       (typeof value === 'number' && !Number.isFinite(value)) ||
       (typeof value === 'string' && value.length > 2000)
     )
-      throw new Error('Invalid portable setting.');
+      throw new InvalidArchiveError('Invalid portable setting.');
     if (/backup|contribut|consent|analytic/i.test(key))
-      throw new Error('Server consent preferences must remain on this device.');
+      throw new InvalidArchiveError('Server consent preferences must remain on this device.');
   }
 }
-export async function validateState(
-  input: unknown,
-  options: { preserveVersion?: boolean } = {}
-): Promise<PortableState> {
+export async function validateState(input: unknown): Promise<PortableState> {
   const state = object(input, 'archive');
   noCredentials(state);
-  if (state.format !== 'gfl2-pull-tracker' || ![1, 2].includes(state.version as number))
-    throw new Error('Unsupported backup format or version.');
+  if (state.format !== 'gfl2-pull-tracker' || 'version' in state)
+    throw new InvalidArchiveError('Unsupported backup format.');
   if (new TextEncoder().encode(canonical(state)).length > MAX_STATE_BYTES)
-    throw new Error('Archive exceeds the 64 MiB expanded limit.');
+    throw new InvalidArchiveError('Archive exceeds the 64 MiB expanded limit.');
   if (
     !Array.isArray(state.profiles) ||
     state.profiles.length > 100 ||
     !Array.isArray(state.tombstones) ||
     state.tombstones.length > 10000
   )
-    throw new Error('Invalid profile or deletion list.');
+    throw new InvalidArchiveError('Invalid profile or deletion list.');
   validateSettings(state.settings);
   const result = emptyState();
   result.settings = { ...state.settings };
@@ -763,19 +841,20 @@ export async function validateState(
   const identities = new Set<string>();
   let aliasReferences = 0;
   function aliases(value: unknown, id: string): string[] {
-    if (state.version === 1) return [id];
     if (!Array.isArray(value) || !value.length || value.length > MAX_PROFILE_ALIASES)
-      throw new Error('Invalid profile aliases.');
+      throw new InvalidArchiveError('Invalid profile aliases.');
     const validated = value.map((alias) => text(alias, 'profile alias'));
     if (
       new Set(validated).size !== validated.length ||
       !validated.includes(id) ||
       canonical(validated) !== canonical([...validated].sort())
     )
-      throw new Error('Profile aliases must be unique, sorted, and include the canonical ID.');
+      throw new InvalidArchiveError(
+        'Profile aliases must be unique, sorted, and include the canonical ID.'
+      );
     aliasReferences += validated.length;
     if (aliasReferences > MAX_PROFILE_ALIASES)
-      throw new Error('Archive contains too many profile alias references.');
+      throw new InvalidArchiveError('Archive contains too many profile alias references.');
     return validated;
   }
   for (const raw of state.profiles) {
@@ -783,11 +862,11 @@ export async function validateState(
     const id = text(p.id, 'profile ID');
     const retainedIds = aliases(p.aliases, id);
     if (retainedIds.some((alias) => ids.has(alias)))
-      throw new Error('Duplicate profile ID or alias.');
+      throw new InvalidArchiveError('Duplicate profile ID or alias.');
     retainedIds.forEach((alias) => ids.add(alias));
     const bound = identity(p);
     if (!Array.isArray(p.snapshots) || p.snapshots.length > 10000)
-      throw new Error('Invalid source snapshot list.');
+      throw new InvalidArchiveError('Invalid source snapshot list.');
     const profile: PortableProfile = {
       id,
       aliases: retainedIds,
@@ -809,7 +888,8 @@ export async function validateState(
       const sourceIdentity = validateDocument(document, manifest, rawPages);
       bind(profile, sourceIdentity);
       const hash = await digest([document, manifest, rawPages]);
-      if (hash !== snapshot.digest) throw new Error('Source snapshot integrity check failed.');
+      if (hash !== snapshot.digest)
+        throw new InvalidArchiveError('Source snapshot integrity check failed.');
       if (digests.has(hash)) continue;
       digests.add(hash);
       profile.snapshots.push({
@@ -823,7 +903,7 @@ export async function validateState(
     }
     const fullIdentity = identityKey(profile);
     if (fullIdentity !== null && identities.has(fullIdentity))
-      throw new Error(
+      throw new InvalidArchiveError(
         'Archive repeats a complete game identity across profiles. Merge those profiles before restoring.'
       );
     if (fullIdentity !== null) identities.add(fullIdentity);
@@ -835,10 +915,15 @@ export async function validateState(
     const id = text(d.profile_id, 'deleted profile ID');
     const retainedIds = aliases(d.aliases, id);
     if (retainedIds.some((alias) => ids.has(alias)))
-      throw new Error('Archive contains both a profile and its deletion.');
+      throw new InvalidArchiveError('Archive contains both a profile and its deletion.');
     const value = d.identity === null ? null : text(d.identity, 'deleted identity', 1000);
     if (value !== null) {
-      const parsed = JSON.parse(value);
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(value);
+      } catch {
+        throw new InvalidArchiveError('Invalid deleted identity.');
+      }
       if (
         !Array.isArray(parsed) ||
         parsed.length !== 4 ||
@@ -848,12 +933,12 @@ export async function validateState(
           )
         ) !== value
       )
-        throw new Error('Invalid deleted identity.');
+        throw new InvalidArchiveError('Invalid deleted identity.');
     }
     if (value !== null && result.profiles.some((p) => identityKey(p) === value))
-      throw new Error('Archive contains both a game identity and its deletion.');
-    if (state.version === 2 && retainedIds.some((alias) => deletionOwners.has(alias)))
-      throw new Error('Archive repeats a deletion alias.');
+      throw new InvalidArchiveError('Archive contains both a game identity and its deletion.');
+    if (retainedIds.some((alias) => deletionOwners.has(alias)))
+      throw new InvalidArchiveError('Archive repeats a deletion alias.');
     retainedIds.forEach((alias) => deletionOwners.set(alias, value));
     result.tombstones.push({
       profile_id: id,
@@ -861,40 +946,6 @@ export async function validateState(
       identity: value,
       deleted_at: date(d.deleted_at, 'deletion date')
     });
-  }
-  if (state.version === 1 && options.preserveVersion) {
-    result.version = 1;
-    for (const value of [...result.profiles, ...result.tombstones])
-      delete (value as unknown as Record<string, unknown>).aliases;
-    return result;
-  }
-  if (state.version === 1) {
-    // v1 permitted repeated deletion records. Preserve their full identifier set
-    // while refusing evidence which assigns a retained ID to different accounts.
-    const deletions: PortableState['tombstones'] = [];
-    for (const deletion of result.tombstones) {
-      const matches = deletions.filter(
-        (existing) =>
-          existing.aliases.some((alias) => deletion.aliases.includes(alias)) ||
-          (existing.identity !== null && existing.identity === deletion.identity)
-      );
-      for (const existing of matches) {
-        if (
-          existing.identity !== null &&
-          deletion.identity !== null &&
-          existing.identity !== deletion.identity
-        )
-          throw new Error('Deletion aliases refer to different game accounts.');
-        deletion.aliases = [...new Set([...deletion.aliases, ...existing.aliases])].sort();
-        deletion.profile_id = deletion.aliases[0];
-        deletion.identity ??= existing.identity;
-        deletion.deleted_at = [deletion.deleted_at, existing.deleted_at].sort().at(-1)!;
-        deletions.splice(deletions.indexOf(existing), 1);
-      }
-      deletions.push(deletion);
-    }
-    result.tombstones = deletions;
-    return validateState(result);
   }
   return result;
 }

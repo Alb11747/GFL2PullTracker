@@ -38,10 +38,17 @@ Small cohorts are suppressed. Disabling contribution withdraws that account's
 records from future calculations. Deleting a private server backup is a separate
 action and does not imply deleting browser or Drive copies.
 
-Drive stores versioned compressed archives in this application's hidden data
+Drive stores immutable compressed archives in this application's hidden data
 folder. Archives contain histories, profile identities, source snapshots, and
 portable settings; they exclude tokens, sessions, and server verification claims.
 Compression is not encryption. Downloaded backups contain private game data.
+
+During prerelease testing, the unversioned archive cutover clears old browser
+archive and recovery data and removes obsolete versioned tracker files from
+Drive when connected. Sync also deletes tracker files proven invalid; temporary
+network or authorization failures do not establish corruption. Display preferences,
+Windows SQLite history, and original export files remain intact. See the
+[reset and cleanup rules](GOOGLE_DRIVE.md#prerelease-archive-reset).
 
 Removing a local profile and deleting a profile across synced devices are
 different actions. Drive changes do not automatically change server backup or

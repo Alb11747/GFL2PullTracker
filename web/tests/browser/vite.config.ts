@@ -8,6 +8,15 @@ export default defineConfig({
   cacheDir: fileURLToPath(new URL('../../node_modules/.vite-browser-regressions', import.meta.url)),
   plugins: [svelte({ configFile: false })],
   resolve: { alias: { $lib: fileURLToPath(new URL('../../src/lib', import.meta.url)) } },
+  build: {
+    outDir: fileURLToPath(new URL('../../node_modules/.browser-regression-build', import.meta.url)),
+    emptyOutDir: true,
+    rollupOptions: {
+      input: Object.fromEntries(['index', 'rewards', 'performance'].map((name) =>
+        [name, fileURLToPath(new URL(`./${name}.html`, import.meta.url))]))
+    }
+  },
+  preview: { host: '127.0.0.1', port: 14194, strictPort: true },
   server: {
     host: '127.0.0.1',
     port: 14194,

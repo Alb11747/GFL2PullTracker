@@ -4,6 +4,7 @@ import {
   LocalEngine,
   canonical,
   digest,
+  engineDiagnostics,
   mergeSourceOrder,
   validateState
 } from '../src/lib/local/engine.ts';
@@ -82,6 +83,65 @@ test('overview returns all UI rows only for its selected profile', async () => {
     for (const internal of ['key', 'occurrence', 'token', 'raw_record', 'account_fingerprint'])
       assert.equal(internal in row, false);
   assert.throws(() => engine.overview('missing'));
+});
+
+test('warm queries share derived rows and a rejected mutation candidate cannot poison the retained engine', async () => {
+  const { engine, id } = await setup();
+  await engine.importRecords({
+    profile_id: id,
+    records_document: document([record(), record(1013)])
+  });
+  const before = { ...engineDiagnostics };
+  const history = engine.history(filters(id));
+  engine.statistics(filters(id));
+  engine.filterOptions(id);
+  const reward = engine.rewards(id, null, ['Elite', 'Standard', 'Retired', 'Unknown'], 0, 1);
+  engine.history(filters(id, { q: 'not-present', page: 2 }));
+  engine.rewards(id, 3, ['Elite'], 1, 1);
+  assert.deepEqual(engineDiagnostics, before, 'warm queries do not rebuild the engine or rows');
+  assert.equal(reward.items.length, 1);
+  assert.equal(reward.total, history.total);
+  for (const row of [...reward.items, ...(reward.lastElite ? [reward.lastElite] : [])])
+    for (const internal of ['key', 'occurrence', 'token']) assert.equal(internal in row, false);
+  const original = engine.exportState();
+  const candidate = engine.fork();
+  candidate.renameProfile(id, 'Uncommitted name');
+  await candidate.importRecords({ profile_id: id, records_document: document([record(11008)]) });
+  assert.deepEqual(engine.exportState(), original);
+  assert.deepEqual(engine.history(filters(id)), history);
+  assert.equal(engine.rewards(id, 3, ['Elite', 'Standard', 'Retired', 'Unknown'], 0, 20).total, 2);
+  assert.equal(
+    candidate.rewards(id, 3, ['Elite', 'Standard', 'Retired', 'Unknown'], 0, 20).total,
+    3
+  );
+});
+
+test('replacement preserves unchanged profile queries and invalidates changed snapshot data', async () => {
+  const { engine, id } = await setup();
+  const other = engine.createProfile('Other');
+  await engine.importRecords({ profile_id: id, records_document: document([record()]) });
+  await engine.importRecords({ profile_id: other.id, records_document: document([record(1013)]) });
+  const original = engine.rewards(id, null, ['Elite'], 0, 20);
+  engine.rewards(other.id, null, ['Elite'], 0, 20);
+  const replacement = engine.fork();
+  await replacement.importRecords({
+    profile_id: other.id,
+    records_document: document([record(11008)])
+  });
+  const before = engineDiagnostics.rowBuilds;
+  await engine.replaceState(replacement.exportState());
+  assert.deepEqual(engine.rewards(id, null, ['Elite'], 0, 20), original);
+  assert.equal(engineDiagnostics.rowBuilds, before, 'profile A keeps its derived rows');
+  assert.equal(engine.history(filters(other.id)).total, 2);
+  assert.equal(engineDiagnostics.rowBuilds, before + 1, 'only profile B rebuilds');
+  const poisoned = engine.exportState();
+  (poisoned.profiles[0].snapshots[0].document.records as unknown[]).push(record(11008));
+  await assert.rejects(() => engine.replaceState(poisoned), /integrity/);
+  assert.deepEqual(engine.rewards(id, null, ['Elite'], 0, 20), original);
+  assert.equal(engineDiagnostics.rowBuilds, before + 1);
+  engine.deleteProfile(other.id);
+  assert.deepEqual(engine.rewards(id, null, ['Elite'], 0, 20), original);
+  assert.equal(engineDiagnostics.rowBuilds, before + 1, 'deleting B keeps A cached');
 });
 
 test('checkbox filters combine OR values and AND fields without changing pity', async () => {
@@ -392,38 +452,69 @@ test('duplicate account assignment and implicit resurrection cannot invalidate p
   await validateState(engine.exportState());
 });
 
-test('legacy gzip checks its original checksum before migrating without changing source hashes', async () => {
+test('unreleased versioned archives and backups are rejected instead of migrated', async () => {
   const { engine, id } = await setup();
   await engine.importRecords({ profile_id: id, records_document: document([record()]) });
-  const original = engine.exportState();
-  const legacy = structuredClone(original) as unknown as Record<string, unknown>;
-  legacy.version = 1;
-  for (const profile of legacy.profiles as Record<string, unknown>[]) delete profile.aliases;
-  assert.deepEqual(await validateState(legacy, { preserveVersion: true }), legacy);
-  async function compressed(sha256: string) {
-    const envelope = { format: 'gfl2-pull-tracker-backup', version: 1, state: legacy, sha256 };
-    return new Uint8Array(
+  const state = engine.exportState();
+  assert.equal('version' in state, false);
+  for (const version of [1, 2, 3]) {
+    const legacy = { ...state, version };
+    await assert.rejects(() => validateState(legacy), /Unsupported/);
+    assert.throws(() => new LocalEngine(legacy), /Unsupported/);
+    for (const envelope of [
+      { format: 'gfl2-pull-tracker-backup', version, state, sha256: await digest(state) },
+      { format: 'gfl2-pull-tracker-backup', state: legacy, sha256: await digest(legacy) }
+    ]) {
+      const bytes = new Uint8Array(
+        await new Response(
+          new Blob([canonical(envelope)]).stream().pipeThrough(new CompressionStream('gzip'))
+        ).arrayBuffer()
+      );
+      await assert.rejects(() => decodeBackup(bytes), { name: 'InvalidBackupError' });
+    }
+  }
+  assert.deepEqual(await decodeBackup(await encodeBackup(state)), state);
+});
+
+test('backup decoding distinguishes unsupported platforms from malformed nested content', async () => {
+  const { engine, id } = await setup();
+  await engine.importRecords({ profile_id: id, records_document: document([record()]) });
+  const state = engine.exportState();
+  const bytes = await encodeBackup(state);
+  const original = globalThis.DecompressionStream;
+  const platformFailure = new Error('Decompression unavailable');
+  globalThis.DecompressionStream = class {
+    constructor() {
+      throw platformFailure;
+    }
+  } as unknown as typeof DecompressionStream;
+  try {
+    await assert.rejects(
+      () => decodeBackup(bytes),
+      (error) => error === platformFailure
+    );
+  } finally {
+    globalThis.DecompressionStream = original;
+  }
+  const malformed = structuredClone(state);
+  malformed.profiles[0].snapshots[0].raw_pages = { 'raw/type_3/page_1.json': '{' };
+  const deleted = engine.exportState();
+  deleted.profiles = [];
+  deleted.tombstones = [
+    { profile_id: id, aliases: [id], identity: '{', deleted_at: '2026-09-20T00:00:00Z' }
+  ];
+  for (const bad of [malformed, deleted]) {
+    const envelope = { format: 'gfl2-pull-tracker-backup', state: bad, sha256: await digest(bad) };
+    const compressed = new Uint8Array(
       await new Response(
         new Blob([canonical(envelope)]).stream().pipeThrough(new CompressionStream('gzip'))
       ).arrayBuffer()
     );
+    await assert.rejects(() => decodeBackup(compressed), { name: 'InvalidBackupError' });
   }
-  const legacyBytes = await compressed(await digest(legacy));
-  const migrated = await decodeBackup(legacyBytes);
-  await assert.rejects(() => decodeBackup(legacyBytes, 2), /metadata and backup versions/);
-  const v2Bytes = await encodeBackup(original);
-  await assert.rejects(() => decodeBackup(v2Bytes, 1), /metadata and backup versions/);
-  assert.deepEqual(migrated, original);
-  assert.deepEqual(migrated.profiles[0].snapshots, original.profiles[0].snapshots);
-  const migratedHash = await digest(original);
-  await assert.rejects(() => compressed(migratedHash).then(decodeBackup), /integrity/);
-  assert.throws(
-    () => new LocalEngine(legacy as unknown as typeof original),
-    /validated and migrated/
-  );
 });
 
-test('v2 rejects missing, duplicate, overlapping, oversized, and contradictory aliases', async () => {
+test('archive rejects missing, duplicate, overlapping, oversized, and contradictory aliases', async () => {
   const { engine } = await setup();
   const original = engine.exportState();
   for (const aliases of [
@@ -492,23 +583,13 @@ test('merges and deletion retain every historical ID for offline partial profile
   await validateState(left.exportState());
 });
 
-test('v1 duplicate deletion records migrate to a valid v2 deletion without losing the latest date', async () => {
-  const legacy = {
-    format: 'gfl2-pull-tracker',
-    version: 1,
-    profiles: [],
-    settings: {},
-    tombstones: [
-      { profile_id: 'old', identity: null, deleted_at: '2026-09-19T00:00:00Z' },
-      { profile_id: 'old', identity: null, deleted_at: '2026-09-20T00:00:00Z' }
-    ]
-  };
-  assert.deepEqual(await validateState(legacy, { preserveVersion: true }), legacy);
-  const migrated = await validateState(legacy);
-  assert.equal(migrated.tombstones.length, 1);
-  assert.deepEqual(migrated.tombstones[0].aliases, ['old']);
-  assert.equal(migrated.tombstones[0].deleted_at, '2026-09-20T00:00:00Z');
-  assert.deepEqual(await validateState(migrated), migrated);
+test('duplicate deletion aliases are rejected', async () => {
+  const engine = new LocalEngine();
+  const profile = engine.createProfile('Deleted');
+  engine.deleteProfile(profile.id);
+  const state = engine.exportState();
+  state.tombstones.push({ ...state.tombstones[0], deleted_at: '2026-09-20T00:00:00Z' });
+  await assert.rejects(() => validateState(state), /repeats a deletion alias/);
 });
 
 test('imports refresh history cached through a retained profile alias', async () => {

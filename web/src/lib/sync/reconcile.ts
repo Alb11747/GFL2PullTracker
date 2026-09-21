@@ -32,6 +32,21 @@ export function canonical(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function conflictEvidence(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(conflictEvidence);
+  if (value && typeof value === 'object') {
+    const item = value as Record<string, unknown>;
+    // Validated source digests identify immutable document/manifest/page bytes.
+    // Dialog fingerprints need that identity, not another full archive copy.
+    if (typeof item.digest === 'string' && 'document' in item)
+      return { id: item.id, digest: item.digest, imported_at: item.imported_at };
+    return Object.fromEntries(
+      Object.entries(item).map(([key, child]) => [key, conflictEvidence(child)])
+    );
+  }
+  return value;
+}
+
 function incompatible(a: PortableProfile, b: PortableProfile): boolean {
   return IDENTITY_FIELDS.some((key) => a[key] !== null && b[key] !== null && a[key] !== b[key]);
 }
@@ -96,7 +111,7 @@ export function reconcile(
     alternatives: unknown
   ) => {
     const id = `${kind}:${key}`;
-    const fingerprint = canonical({ kind, alternatives });
+    const fingerprint = canonical({ kind, alternatives: conflictEvidence(alternatives) });
     const resolution = resolutions[id];
     if (resolution?.fingerprint === fingerprint) return resolution.choice;
     conflicts.push({ id, kind, profileName: name, localLabel, remoteLabel, fingerprint });

@@ -1,6 +1,12 @@
-import { canonical, LocalEngine, validateState } from './engine.ts';
+import { canonical, engineDiagnostics, LocalEngine, validateState } from './engine.ts';
 import { decodeBackup, encodeBackup } from './backup.ts';
-import { readArchive, recoverySnapshot, writeArchive } from './storage.ts';
+import {
+  readArchive,
+  readRevision,
+  recoverySnapshot,
+  writeArchive,
+  type StoredArchive
+} from './storage.ts';
 import type { PortableState } from './types.ts';
 import {
   applyExclusions,
@@ -21,7 +27,22 @@ const scope = globalThis as unknown as {
 };
 const updates =
   typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('gfl2-archive-updates') : null;
-updates?.addEventListener('message', () => scope.postMessage({ changed: true }));
+updates?.addEventListener('message', ({ data }: MessageEvent<{ revision: number }>) => {
+  if (Number.isSafeInteger(data?.revision) && data.revision >= 0)
+    scope.postMessage({ changed: true, revision: data.revision });
+});
+let cached: { stored: StoredArchive; engine: LocalEngine } | undefined;
+let archiveReads = 0;
+async function archive() {
+  const revision = await readRevision();
+  if (!cached || cached.stored.revision !== revision) {
+    const stored = await readArchive();
+    archiveReads++;
+    const engine = cached ? cached.engine.fork(stored.state) : new LocalEngine(stored.state);
+    cached = { stored: { ...stored, state: engine.state }, engine };
+  }
+  return cached;
+}
 const mutations = new Set([
   'createProfile',
   'renameProfile',
@@ -37,6 +58,9 @@ const allowed = new Set([
   'profiles',
   'history',
   'overview',
+  'rewards',
+  'revision',
+  'diagnostics',
   'statistics',
   'filterOptions',
   'exportState',
@@ -51,6 +75,8 @@ const allowed = new Set([
 ]);
 async function dispatch(method: string, args: unknown[]): Promise<unknown> {
   if (!allowed.has(method)) throw new Error('Unknown local archive operation.');
+  if (method === 'revision') return readRevision();
+  if (method === 'diagnostics') return { archiveReads, ...engineDiagnostics };
   if (method === 'readExport' || method === 'inspectExiliumProfiles') {
     // File custom properties are not preserved by structured clone. Paths travel
     // separately while bytes are read and parsed exclusively inside this worker.
@@ -65,13 +91,18 @@ async function dispatch(method: string, args: unknown[]): Promise<unknown> {
       : inspectExiliumProfiles(files);
   }
   if (method === 'encodeBackup') return encodeBackup(args[0] as PortableState);
-  if (method === 'decodeBackup')
-    return decodeBackup(args[0] as Uint8Array, args[1] as 1 | 2 | undefined);
+  if (method === 'decodeBackup') return decodeBackup(args[0] as Uint8Array);
   if (method === 'validateState') return validateState(args[0]);
   if (method === 'recoverySnapshot') return recoverySnapshot();
-  const stored = await readArchive();
+  const current = await archive();
+  // Read requests reuse immutable derived rows. Mutations are isolated until
+  // the atomic revision-guarded write succeeds, including quota/error paths.
+  const mutation = mutations.has(method);
+  const stored = mutation
+    ? { ...current.stored, exclusions: structuredClone(current.stored.exclusions) }
+    : current.stored;
   const originalExclusions = canonical(stored.exclusions);
-  const engine = new LocalEngine(stored.state);
+  const engine = mutation ? current.engine.fork() : current.engine;
   let result: unknown;
   let replacement = false;
   let recovery: PortableState | null | undefined;
@@ -126,8 +157,10 @@ async function dispatch(method: string, args: unknown[]): Promise<unknown> {
       stored.revision,
       recovery !== undefined ? recovery : replacement ? stored.state : undefined
     );
-    updates?.postMessage({ changed: true });
-    scope.postMessage({ changed: true });
+    const revision = stored.revision + 1;
+    cached = { stored: { ...stored, state: engine.state, revision }, engine };
+    updates?.postMessage({ revision });
+    scope.postMessage({ changed: true, revision });
   }
   return result;
 }
@@ -140,13 +173,14 @@ scope.onmessage = ({ data }) => {
       try {
         const run = () => dispatch(data.method, data.args);
         const result =
-          typeof navigator !== 'undefined' && navigator.locks
+          mutations.has(data.method) && typeof navigator !== 'undefined' && navigator.locks
             ? await navigator.locks.request('gfl2-local-archive', run)
             : await run();
         scope.postMessage({ id: data.id, result });
       } catch (error) {
         scope.postMessage({
           id: data.id,
+          errorName: error instanceof Error ? error.name : 'Error',
           error: error instanceof Error ? error.message : 'The local archive operation failed.'
         });
       }

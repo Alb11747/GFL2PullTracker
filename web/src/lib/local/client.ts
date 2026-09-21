@@ -10,6 +10,7 @@ import type {
 } from '../api.ts';
 import type { PortableState } from './types.ts';
 import type { ExiliumProfile } from '../exilium-import.ts';
+import type { ProfileOverview } from '../reward-query.ts';
 export type { PortableState, PortableProfile, SourceSnapshot } from './types.ts';
 
 function transferableFilters(filters: Filters): Filters {
@@ -31,22 +32,32 @@ export function createLocalClient() {
     number,
     { resolve: (value: unknown) => void; reject: (error: Error) => void }
   >();
-  const listeners = new Set<() => void>();
+  const listeners = new Set<(revision: number) => void>();
   function activeWorker(): Worker {
     if (!worker) {
       worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
       worker.onmessage = ({
         data
-      }: MessageEvent<{ id?: number; result?: unknown; error?: string; changed?: boolean }>) => {
+      }: MessageEvent<{
+        id?: number;
+        result?: unknown;
+        error?: string;
+        errorName?: string;
+        changed?: boolean;
+        revision?: number;
+      }>) => {
         if (data.changed) {
-          for (const listener of listeners) listener();
+          for (const listener of listeners) listener(data.revision!);
           return;
         }
         const request = pending.get(data.id!);
         if (!request) return;
         pending.delete(data.id!);
-        if (data.error) request.reject(new Error(data.error));
-        else request.resolve(data.result);
+        if (data.error) {
+          const error = new Error(data.error);
+          error.name = data.errorName ?? 'Error';
+          request.reject(error);
+        } else request.resolve(data.result);
       };
       worker.onerror = () => {
         for (const request of pending.values())
@@ -74,6 +85,7 @@ export function createLocalClient() {
     });
   }
   return {
+    revision: () => call<number>('revision'),
     profiles: () => call<Profile[]>('profiles'),
     createProfile: (name: string) => call<Profile>('createProfile', name),
     renameProfile: (id: string, name: string) => call<Profile>('renameProfile', id, name),
@@ -81,6 +93,13 @@ export function createLocalClient() {
       call<void>('deleteProfile', id, acrossDevices),
     history: (filters: Filters) => call<History>('history', transferableFilters(filters)),
     overview: (profileId: string) => call<Pull[]>('overview', profileId),
+    rewards: (
+      profileId: string,
+      typeId: number | null,
+      rarities: string[],
+      offset: number,
+      limit: number
+    ) => call<ProfileOverview>('rewards', profileId, typeId, [...rarities], offset, limit),
     statistics: (filters: Filters) => call<Statistics>('statistics', transferableFilters(filters)),
     filterOptions: (id: string) => call<FilterOptions>('filterOptions', id),
     importRecords: (input: ImportInput) => call<ImportResult>('importRecords', input),
@@ -105,13 +124,12 @@ export function createLocalClient() {
     importBackup: (bytes: Uint8Array, replace = false) =>
       call<PortableState>('importBackup', bytes, replace),
     encodeBackup: (state: PortableState) => call<Uint8Array>('encodeBackup', state),
-    decodeBackup: (bytes: Uint8Array, expectedVersion?: 1 | 2) =>
-      call<PortableState>('decodeBackup', bytes, expectedVersion),
+    decodeBackup: (bytes: Uint8Array) => call<PortableState>('decodeBackup', bytes),
     recoverySnapshot: () => call<PortableState | null>('recoverySnapshot'),
     preferences: () => call<Record<string, string | number | boolean>>('preferences'),
     setPreferences: (settings: Record<string, string | number | boolean>) =>
       call<void>('setPreferences', settings),
-    subscribe(listener: () => void) {
+    subscribe(listener: (revision: number) => void) {
       listeners.add(listener);
       activeWorker();
       return () => {

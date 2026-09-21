@@ -50,3 +50,53 @@ test('worker filter requests copy nested reactive selections before structured c
     globalThis.Worker = original;
   }
 });
+
+test('rewards copy reactive rarity selections and worker errors retain content rejection identity', async () => {
+  const original = globalThis.Worker;
+  let worker: TestWorker;
+  const requests: { method: string; args: unknown[] }[] = [];
+  class TestWorker {
+    onmessage?: (event: { data: unknown }) => void;
+    constructor() {
+      worker = this;
+    }
+    postMessage(message: { id: number; method: string; args: unknown[] }) {
+      const copied = structuredClone(message);
+      requests.push(copied);
+      queueMicrotask(() =>
+        this.onmessage?.({
+          data:
+            copied.method === 'decodeBackup'
+              ? {
+                  id: copied.id,
+                  error: 'Unsupported backup format.',
+                  errorName: 'InvalidBackupError'
+                }
+              : { id: copied.id, result: copied.method === 'revision' ? 12 : {} }
+        })
+      );
+    }
+    terminate() {}
+  }
+  globalThis.Worker = TestWorker as unknown as typeof Worker;
+  const client = createLocalClient();
+  try {
+    const revisions: number[] = [];
+    client.subscribe((revision) => revisions.push(revision));
+    await client.rewards('profile', 3, new Proxy(['Elite', 'Standard'], {}), 20, 20);
+    assert.deepEqual(requests[0], {
+      id: 1,
+      method: 'rewards',
+      args: ['profile', 3, ['Elite', 'Standard'], 20, 20]
+    });
+    assert.equal(await client.revision(), 12);
+    worker!.onmessage?.({ data: { changed: true, revision: 13 } });
+    assert.deepEqual(revisions, [13]);
+    await assert.rejects(() => client.decodeBackup(new Uint8Array([1])), {
+      name: 'InvalidBackupError'
+    });
+  } finally {
+    client.close();
+    globalThis.Worker = original;
+  }
+});

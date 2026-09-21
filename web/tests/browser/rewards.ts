@@ -48,7 +48,16 @@ const rows: Pull[] = Array.from({ length: 34 }, (_, index) => {
     estimated_group_size: 1
   };
 });
-let mounted: { changeProfile: () => void; replaceRows: (next: Pull[]) => void } | undefined;
+let mounted:
+  | {
+      changeProfile: () => void;
+      replaceRows: (next: Pull[]) => void;
+      deferQueries: (value?: boolean) => void;
+      pendingCount: () => number;
+      finishQuery: (index?: number, error?: string) => void;
+      requests: { profileId: string; offset: number; limit: number }[];
+    }
+  | undefined;
 let observing = false;
 const runtimeErrors: string[] = [];
 function runtimeError(reason: unknown) {
@@ -309,9 +318,136 @@ run.onclick = async () => {
       await settle();
       assert(!dialog().open, 'Removed record left stale dialog');
     });
+    await test('Large histories stay bounded across expansion, paging and collapse', async () => {
+      localStorage.setItem(REWARD_RARITIES_KEY, JSON.stringify(['Elite']));
+      const large = Array.from({ length: 601 }, (_, index) => ({
+        ...rows[0],
+        id: index + 1,
+        name: `Large reward ${index + 1}`,
+        timestamp_order: index
+      }));
+      await reload(large);
+      await expand();
+      assert(cards().length === 200, 'Expansion must stop at 200 cards');
+      assert(
+        cards()[0].textContent?.includes('Large reward 1'),
+        'First window starts at first reward'
+      );
+      button('Next rewards').click();
+      await settle();
+      assert(cards().length === 200, 'Next window must be bounded');
+      assert(
+        document.activeElement === fixture.querySelector('.section-heading h2'),
+        'Window navigation must focus the history heading'
+      );
+      assert(
+        cards()[0].textContent?.includes('Large reward 201'),
+        'Next window repeats or skips rewards'
+      );
+      button('Next rewards').click();
+      await settle();
+      button('Next rewards').click();
+      await settle();
+      assert(
+        cards().length === 1 && cards()[0].textContent?.includes('Large reward 601'),
+        'Last window must contain the remainder'
+      );
+      button('Previous rewards').click();
+      await settle();
+      assert(
+        cards().length === 200 && cards()[0].textContent?.includes('Large reward 401'),
+        'Previous window failed'
+      );
+      button('Show fewer').click();
+      await settle();
+      assert(
+        cards().length < 200 && cards()[0].textContent?.includes('Large reward 1'),
+        'Collapse returns to preview'
+      );
+      assert(
+        mounted!.requests.every((request) => request.limit <= 200),
+        'Query exceeded bounded payload'
+      );
+    });
+    await test('Late async results cannot replace a newer profile revision', async () => {
+      await reload();
+      mounted!.deferQueries();
+      mounted!.changeProfile();
+      await settle();
+      assert(cards().length === 0, 'Pending profile retained previous rewards');
+      assert(
+        !fixture.querySelector(
+          '.current-pity, .metrics, .rarity-breakdown, .section-heading h2 span'
+        ),
+        'Pending profile retained previous counts or summary'
+      );
+      mounted!.replaceRows([{ ...rows[0], name: 'Newest revision reward' }]);
+      await settle();
+      assert(mounted!.pendingCount() === 2, 'Expected one request per changed context');
+      mounted!.finishQuery(1);
+      await settle();
+      assert(
+        cards().length === 1 && cards()[0].textContent?.includes('Newest revision reward'),
+        'New result did not render'
+      );
+      mounted!.finishQuery(0);
+      await settle();
+      assert(
+        cards().length === 1 && cards()[0].textContent?.includes('Newest revision reward'),
+        'Late result overwrote the latest revision'
+      );
+    });
+    await test('Failed profile queries clear previous data, retain controls and can be retried', async () => {
+      const previousName = cards()[0].querySelector('.pull-name')!.textContent!;
+      const select = fixture.querySelector('select')!;
+      const grid = fixture.querySelector('.portrait-grid');
+      const inputs = checkboxes();
+      mounted!.changeProfile();
+      await settle();
+      assert(
+        cards().length === 0 && !fixture.textContent?.includes(previousName),
+        'Pending profile relabeled previous reward data'
+      );
+      assert(
+        !fixture.querySelector(
+          '.current-pity, .metrics, .rarity-breakdown, .section-heading h2 span'
+        ),
+        'Pending profile relabeled previous summary data'
+      );
+      assert(
+        fixture.querySelector('select') === select &&
+          !select.disabled &&
+          checkboxes().every((input, index) => input === inputs[index] && !input.disabled) &&
+          fixture.querySelector('.portrait-grid') === grid,
+        'Query controls must remain available during loading'
+      );
+      assert(mounted!.pendingCount() === 1, 'Clearing old rewards must not restart the query');
+      mounted!.finishQuery(0, 'Synthetic query failure');
+      await settle();
+      assert(
+        fixture.querySelector('[role="alert"]')?.textContent?.includes('Synthetic query failure'),
+        'Query failure was not announced'
+      );
+      assert(
+        cards().length === 0 &&
+          !fixture.textContent?.includes(previousName) &&
+          !fixture.querySelector(
+            '.current-pity, .metrics, .rarity-breakdown, .section-heading h2 span'
+          ),
+        'Failed profile query exposed previous rewards or summary'
+      );
+      assert(fixture.querySelector('select') === select, 'Failure removed the query controls');
+      mounted!.deferQueries(false);
+      button('Retry recruitment history').click();
+      await settle();
+      assert(
+        !fixture.querySelector('[role="alert"]') && cards().length === 1,
+        'Retry did not recover'
+      );
+    });
     localStorage.setItem(REWARD_RARITIES_KEY, JSON.stringify(keys));
     await reload();
-    summary.textContent = 'PASS: 7 reward-history browser regression groups';
+    summary.textContent = 'PASS: 10 reward-history browser regression groups';
     results.textContent +=
       'Manual check: activate a reward using Enter/Space, cycle Tab/Shift+Tab inside the modal, press Escape, and verify focus returns. Synthetic key events do not invoke native browser default actions.\n';
   } catch (error) {

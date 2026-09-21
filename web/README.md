@@ -4,6 +4,13 @@ The public deployment uses IndexedDB and workers for personal archives, and the 
 
 The local archive and sync engines share synthetic parity fixtures with Python. Run `npm test`, `npm run check`, and `npm run build`. Browser tests must also check worker loading, IndexedDB persistence, and file serialization.
 
+Archive, backup, and Drive data use one strict unversioned prerelease schema.
+The cutover clears the former browser archive and recovery data, stale profile
+and job references, and obsolete versioned cloud files. Display preferences remain.
+IndexedDB still uses its required database revision to coordinate storage changes
+and close older connections. Windows SQLite data and original exports remain
+untouched. See [reset and cleanup rules](../docs/GOOGLE_DRIVE.md#prerelease-archive-reset).
+
 ## Page URLs
 
 The main pages use `/history`, `/backup`, `/profiles`, `/statistics`, and `/privacy`.
@@ -39,7 +46,7 @@ Imports preserve raw page text and require one collector export folder; selectin
 
 ## Import and restore controls
 
-**Choose files** routes collector/Exilium JSON through existing export validation and recognizes gzip tracker backups by their bytes. A backup must be selected alone and pass format, version, checksum, schema, and size validation. In hosted mode, it opens **Backup & sync** with the selected file retained; the separate **Restore a tracker backup** link opens the same restore controls. Restoration defaults to merging the contained profiles, while replacement requires confirmation and downloads a recovery copy first. Windows local-server mode rejects compressed archives with an explanation; it does not interpret them as records JSON.
+**Choose files** routes collector/Exilium JSON through existing export validation and recognizes gzip tracker backups by their bytes. A backup must be selected alone and pass format, checksum, strict unversioned schema, and size validation. Earlier versioned tracker backups are unsupported. In hosted mode, it opens **Backup & sync** with the selected file retained; the separate **Restore a tracker backup** link opens the same restore controls. Restoration defaults to merging the contained profiles, while replacement requires confirmation and downloads a recovery copy first. Windows local-server mode rejects compressed archives with an explanation; it does not interpret them as records JSON.
 
 Browser-only collection is the default for new users; saved server choices apply only when supported. Every import retains its operation and destination profile while profile/archive mutations are locked. **Stop collection** aborts browser requests or requests cooperative server cancellation, preserving validated partial history before releasing the lock. The local and public APIs expose idempotent `POST /api/jobs/{id}/cancel` and `POST /api/public/jobs/{id}/cancel`; the public route retains session ownership and CSRF checks. Accepted cancellation moves through `cancelling` to `cancelled`; already-finalizing jobs complete normally. An uncertain cancellation response leaves the job checkable without resubmitting credentials.
 

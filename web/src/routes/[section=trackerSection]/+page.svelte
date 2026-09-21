@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { trackerPages, type TrackerSection } from '$lib/tracker-routes';
@@ -8,20 +8,13 @@
   import GitHubLink from '$lib/components/GitHubLink.svelte';
   import { capturePaginationAnchor } from '$lib/pagination-anchor';
   import { recruitmentName } from '$lib/recruitment';
-  import { createProfileHistoryLoader, profileFilters } from '$lib/profile-history';
+  import { profileFilters } from '$lib/profile-history';
   import { client as serverClient, ApiError } from '$lib/api';
   import { createLocalClient } from '$lib/local/client';
-  import { createDriveSync } from '$lib/sync/controller';
-  import { collectCapture, CaptureError, validateCapture } from '$lib/capture';
+  import type { createDriveSync } from '$lib/sync/controller';
   import { createPublicClient, PublicApiError } from '$lib/public-api';
-  import ArchiveSettings from '$lib/components/ArchiveSettings.svelte';
-  import CommunityStatistics from '$lib/components/CommunityStatistics.svelte';
-  import ImportGuide from '$lib/components/ImportGuide.svelte';
-  import { readExport, inspectExiliumProfiles } from '$lib/import-files';
-  import { classifyImportFiles } from '$lib/import-selection';
   import { serverCapabilities, savedServerChoices } from '$lib/import-policy';
   import type {
-    Pull,
     ImportResult,
     Filters,
     Profile,
@@ -33,13 +26,14 @@
   let { data } = $props();
   const hosted = $derived(data.mode === 'public');
   let initializing = $state(true);
+  let archiveReady = $state(false);
   let local = $state<ReturnType<typeof createLocalClient>>();
   let client = serverClient as Pick<
     typeof serverClient,
     | 'profiles'
     | 'createProfile'
     | 'history'
-    | 'overview'
+    | 'rewards'
     | 'statistics'
     | 'filterOptions'
     | 'importRecords'
@@ -81,6 +75,10 @@
     stopping = false;
     saving = false;
     abortCapture = undefined;
+    if (archiveDirty && !disposed)
+      void archiveChanged().catch((cause) => {
+        error = failure(cause);
+      });
   }
   async function openRestore(file: File | null = null) {
     if (importBusy) return;
@@ -116,23 +114,39 @@
   }
   let abortCapture = $state<AbortController>();
   let unsubscribeArchive: (() => void) | undefined;
-  async function archiveChanged() {
-    loadProfileHistory.invalidate();
-    overviewKey = '';
-    profiles = await client.profiles();
-    if (!importBusy && !profiles.some((p) => p.id === filters.profile_id))
-      filters.profile_id = profiles[0]?.id || '';
-    await refresh();
+  let archiveRevision = $state(0);
+  let lastNotifiedRevision = -1;
+  let archiveRefresh: Promise<void> | undefined;
+  let archiveDirty = false;
+  function archiveChanged(): Promise<void> {
+    archiveDirty = true;
+    if (archiveRefresh) return archiveRefresh;
+    archiveRefresh = (async () => {
+      do {
+        archiveDirty = false;
+        const revision = local ? await local.revision() : archiveRevision + 1;
+        if (revision === lastNotifiedRevision) continue;
+        archiveRevision = revision;
+        profiles = await client.profiles();
+        if (!importBusy && !profiles.some((p) => p.id === filters.profile_id))
+          filters.profile_id = profiles[0]?.id || '';
+        await refresh();
+        lastNotifiedRevision = revision;
+      } while (archiveDirty && !disposed);
+    })().finally(() => {
+      archiveRefresh = undefined;
+    });
+    return archiveRefresh;
   }
-  let profiles = $state<Profile[]>([]),
-    history = $state<History>({ items: [], total: 0, page: 1, page_size: 20, pages: 1 });
-  let overviewRows = $state<Pull[]>([]);
-  let overviewLoading = $state(true);
-  let overviewError = $state('');
-  let overviewKey = '';
-  const loadProfileHistory = createProfileHistoryLoader((profileId) => client.overview(profileId));
-  let stats = $state<Statistics | null>(null),
-    options = $state<FilterOptions>({ rarities: [], kinds: [], types: [], pools: [] });
+  let profiles = $state.raw<Profile[]>([]),
+    history = $state.raw<History>({ items: [], total: 0, page: 1, page_size: 20, pages: 1 });
+  let stats = $state.raw<Statistics | null>(null),
+    options = $state.raw<FilterOptions>({ rarities: [], kinds: [], types: [], pools: [] });
+  let metadataKey = '';
+  let metadata: Promise<[Statistics, FilterOptions]> | undefined;
+  let ledgerKey = '';
+  let ledger: Promise<History> | undefined;
+  const rewardQuery: typeof serverClient.rewards = (...args) => client.rewards(...args);
   let filters = $state<Filters>({
     profile_id: '',
     q: '',
@@ -172,7 +186,8 @@
     importState = 'idle';
     message = '';
     try {
-      const format = await classifyImportFiles(files, hosted);
+      const { classifyImportFiles } = await import('$lib/import-selection');
+      const format = await classifyImportFiles(files, hosted, local?.decodeBackup);
       if (selection !== fileSelection) return;
       if (format === 'backup') {
         selectedFiles = [];
@@ -181,7 +196,7 @@
       }
       const choices = local
         ? await local.inspectExiliumProfiles(files)
-        : await inspectExiliumProfiles(files);
+        : await (await import('$lib/import-files')).inspectExiliumProfiles(files);
       if (selection !== fileSelection) return;
       sourceProfiles = choices;
       if (choices.length === 1) sourceProfile = choices[0].id;
@@ -198,7 +213,6 @@
     profileError = $state(''),
     creating = $state(false);
   let request = 0;
-  let overviewRequest = 0;
   let optionsProfile = '';
   let tableScroll = $state<HTMLElement>();
   let nextPageButton = $state<HTMLButtonElement>();
@@ -258,12 +272,7 @@
     history = { items: [], total: 0, page: filters.page, page_size: filters.page_size, pages: 1 };
     expanded = null;
     if (optionsProfile !== filters.profile_id) {
-      overviewRequest++;
       stats = null;
-      overviewRows = [];
-      overviewKey = '';
-      overviewError = '';
-      overviewLoading = true;
       options = { rarities: [], kinds: [], types: [], pools: [] };
     }
     return id;
@@ -305,83 +314,101 @@
   }
   async function refresh(reset = false) {
     if (reset) filters.page = 1;
+    remember(PROFILE_KEY, filters.profile_id);
+    // The shared shell retains ongoing operations; hidden routes do no ledger work.
+    if (section !== 'history') return;
     const id = invalidateResults();
     if (!filters.profile_id) {
-      history = { items: [], total: 0, page: 1, page_size: filters.page_size, pages: 1 };
       stats = null;
-      overviewRows = [];
-      overviewLoading = false;
       loading = false;
       return;
     }
-    remember(PROFILE_KEY, filters.profile_id);
+    const profileId = filters.profile_id;
     try {
-      const [h, s, o] = await Promise.all([
-        client.history({ ...filters }),
-        client.statistics(profileFilters(filters.profile_id)),
-        client.filterOptions(filters.profile_id)
-      ]);
-      if (id === request && !disposed) {
-        history = h;
-        loading = false;
-        stats = s;
-        options = o;
-        optionsProfile = filters.profile_id;
-        const profileId = filters.profile_id;
-        const revision = `${s.total}:${s.last_import_at ?? ''}`;
-        const key = `${profileId}:${revision}`;
-        if (overviewKey !== key || overviewError) {
-          // The overview belongs to the profile, so paging must not cancel its pending load.
-          const overviewId = ++overviewRequest;
-          overviewLoading = true;
-          overviewError = '';
-          try {
-            const rows = await loadProfileHistory(profileId, revision);
-            if (overviewId === overviewRequest && profileId === filters.profile_id && !disposed) {
-              overviewRows = rows;
-              overviewKey = key;
-            }
-          } catch (cause) {
-            if (overviewId === overviewRequest && profileId === filters.profile_id && !disposed)
-              overviewError = failure(cause);
-          } finally {
-            if (overviewId === overviewRequest && profileId === filters.profile_id && !disposed)
-              overviewLoading = false;
-          }
-        }
+      if (local) archiveRevision = await local.revision();
+      if (id !== request || disposed) return;
+      const key = `${profileId}:${archiveRevision}`;
+      if (metadataKey !== key || !metadata) {
+        metadataKey = key;
+        metadata = Promise.all([
+          client.statistics(profileFilters(profileId)),
+          client.filterOptions(profileId)
+        ]);
+        const current = metadata;
+        void current.catch(() => {
+          if (metadata === current) metadata = undefined;
+        });
       }
-    } catch (e) {
-      if (id === request) {
-        error = failure(e);
-        overviewLoading = false;
-        if (!overviewRows.length) overviewError = failure(e);
+      const nextLedgerKey = JSON.stringify([archiveRevision, filters]);
+      if (ledgerKey !== nextLedgerKey || !ledger) {
+        ledgerKey = nextLedgerKey;
+        ledger = client.history({ ...filters });
+        const current = ledger;
+        void current.catch(() => {
+          if (ledger === current) ledger = undefined;
+        });
       }
+      const [h, [s, o]] = await Promise.all([ledger, metadata]);
+      if (id !== request || disposed) return;
+      history = h;
+      stats = s;
+      options = o;
+      optionsProfile = profileId;
+    } catch (cause) {
+      if (id === request && !disposed) error = failure(cause);
     } finally {
-      if (id === request) loading = false;
+      if (id === request && !disposed) loading = false;
     }
   }
+  async function configureServices() {
+    try {
+      publicConfig = await publicApi.config();
+      if (disposed) return;
+      ({ saveBackup, contribute } = savedServerChoices(
+        publicConfig,
+        remembered('gfl2.server-backup'),
+        remembered('gfl2.contribute')
+      ));
+    } catch {
+      // Optional services never block the browser archive.
+    }
+  }
+  $effect(() => {
+    if (archiveReady && !initializing && section === 'history') untrack(() => void refresh());
+  });
   async function initialize() {
     try {
       if (hosted) {
         local = createLocalClient();
         client = local;
-        drive = createDriveSync({ clientId: data.googleClientId, store: local });
+        // Configuration and sync code load independently of personal history.
+        void configureServices();
+        void import('$lib/sync/controller')
+          .then(({ createDriveSync }) => {
+            if (!disposed && local)
+              drive = createDriveSync({ clientId: data.googleClientId, store: local });
+          })
+          .catch((cause) => {
+            if (!disposed) error = failure(cause);
+          });
         unsubscribeArchive = local.subscribe(() => {
-          if (!disposed)
+          archiveDirty = true;
+          // Operation completion refreshes once with the committed revision.
+          if (!disposed && !importBusy && !settingsBusy && !creating)
             void archiveChanged().catch((cause) => {
               error = failure(cause);
             });
         });
-        try {
-          publicConfig = await publicApi.config();
-        } catch {
-          /* Local archives remain available when server features are offline. */
+        if (remembered('gfl2.archive-format') !== 'main') {
+          // Only prerelease archive references are reset; presentation preferences survive.
+          try {
+            for (const key of Object.keys(localStorage))
+              if (key === PROFILE_KEY || key.startsWith('gfl2.job.')) localStorage.removeItem(key);
+            localStorage.setItem('gfl2.archive-format', 'main');
+          } catch {
+            /* Browser storage may be unavailable. */
+          }
         }
-        ({ saveBackup, contribute } = savedServerChoices(
-          publicConfig,
-          remembered('gfl2.server-backup'),
-          remembered('gfl2.contribute')
-        ));
       }
       profiles = await client.profiles();
       const saved = remembered(PROFILE_KEY);
@@ -390,7 +417,7 @@
         importOpen = true;
         createOpen = true;
       }
-      await refresh();
+      archiveReady = true;
       initializing = false;
       const jobId = remembered(jobKey(filters.profile_id));
       if (jobId) {
@@ -420,7 +447,7 @@
   function searchChanged() {
     clearTimeout(searchTimer);
     invalidateResults();
-    searchTimer = setTimeout(() => void refresh(true), 180);
+    searchTimer = setTimeout(() => void refresh(true), 100);
   }
   async function profileChanged() {
     if (operation) {
@@ -485,6 +512,10 @@
       profileError = failure(e);
     } finally {
       creating = false;
+      if (archiveDirty && !disposed)
+        void archiveChanged().catch((cause) => {
+          error = failure(cause);
+        });
     }
   }
   async function pollJob(id: string, op: Operation) {
@@ -536,6 +567,7 @@
             ? 'No new records were saved.'
             : next.message);
       remember(jobKey(op.profileId), null);
+      if (!local) archiveRevision++;
       await refresh(true);
       finishOperation(op);
     } catch (e) {
@@ -595,6 +627,9 @@
     const backup = saveBackup;
     const contribution = contribute;
     let submittedCapture = capture;
+    // Acquire ownership before loading optional code, including capture validation.
+    const op = beginOperation(profileId);
+    let captureModule: typeof import('$lib/capture') | undefined;
     try {
       if (!profileId) throw new Error('Create or choose a profile before importing.');
       if (mode === 'file') {
@@ -608,7 +643,9 @@
           throw new Error(
             'Server ID must be a number, such as 10. Your capture is still in the field.'
           );
-        validateCapture(submittedCapture, serverId);
+        captureModule = await import('$lib/capture');
+        if (!owns(op)) return;
+        captureModule.validateCapture(submittedCapture, serverId);
         if (
           hosted &&
           (((recover || backup) && !capabilities.backup) ||
@@ -622,9 +659,9 @@
       importState = 'error';
       message = failure(cause);
       submittedCapture = '';
+      finishOperation(op);
       return;
     }
-    const op = beginOperation(profileId);
     if (mode === 'capture') capture = '';
     message = '';
     job = null;
@@ -635,7 +672,7 @@
         message = 'Validating export files…';
         const payload = local
           ? await local.readExport(files, profileId, source)
-          : await readExport(files, profileId, source);
+          : await (await import('$lib/import-files')).readExport(files, profileId, source);
         if (!owns(op)) return;
         saving = true;
         message = 'Saving records into the archive…';
@@ -643,6 +680,7 @@
         if (!owns(op)) return;
         importState = result.complete === false ? 'partial' : 'complete';
         message = summary(result);
+        if (!local) archiveRevision++;
         await refresh(true);
       } else if (hosted && recover) {
         message = 'Verifying account for recovery…';
@@ -667,6 +705,7 @@
         message = `Server backup recovered: ${number(read)} records read · ${number(added)} added · ${number(total)} in this profile.`;
         await archiveChanged();
       } else if (hosted && !backup && !contribution && !forceRelay) {
+        const { collectCapture, CaptureError } = captureModule!;
         abortCapture = new AbortController();
         message = 'Starting browser collection…';
         try {
@@ -866,41 +905,49 @@
       <p role="alert">{error || 'Could not open your browser archive. Reload to try again.'}</p>
     </section>
   {:else if hosted && section === 'statistics'}
-    <CommunityStatistics />
+    {#await import('$lib/components/CommunityStatistics.svelte') then panel}
+      <panel.default />
+    {:catch cause}<p role="alert">{failure(cause)}</p>{/await}
   {:else if hosted && section !== 'history' && local}
-    <ArchiveSettings
-      {local}
-      {profiles}
-      activeProfileId={filters.profile_id}
-      googleClientId={data.googleClientId}
-      {drive}
-      {publicApi}
-      {publicConfig}
-      importBusy={importBusy || settingsBusy}
-      onbusychange={(busy) => {
-        settingsBusy = busy;
-      }}
-      {pendingRestoreFile}
-      {restoreRequest}
-      onrestoreaccepted={() => {
-        pendingRestoreFile = null;
-        restoreRequest = 0;
-      }}
-      section={section as 'profiles' | 'backup' | 'privacy'}
-      onchanged={archiveChanged}
-      onselect={(id) => {
-        if (importBusy) return;
-        filters.profile_id = id;
-        void profileChanged();
-      }}
-      onrecover={async () => {
-        if (importBusy || !capabilities.backup) return;
-        recovery = true;
-        importMode = 'capture';
-        importOpen = true;
-        await goto('/history');
-      }}
-    />
+    {#await import('$lib/components/ArchiveSettings.svelte') then panel}
+      <panel.default
+        {local}
+        {profiles}
+        activeProfileId={filters.profile_id}
+        googleClientId={data.googleClientId}
+        {drive}
+        {publicApi}
+        {publicConfig}
+        importBusy={importBusy || settingsBusy}
+        onbusychange={(busy) => {
+          settingsBusy = busy;
+          if (!busy && archiveDirty && !disposed)
+            void archiveChanged().catch((cause) => {
+              error = failure(cause);
+            });
+        }}
+        {pendingRestoreFile}
+        {restoreRequest}
+        onrestoreaccepted={() => {
+          pendingRestoreFile = null;
+          restoreRequest = 0;
+        }}
+        section={section as 'profiles' | 'backup' | 'privacy'}
+        onchanged={archiveChanged}
+        onselect={(id) => {
+          if (importBusy) return;
+          filters.profile_id = id;
+          void profileChanged();
+        }}
+        onrecover={async () => {
+          if (importBusy || !capabilities.backup) return;
+          recovery = true;
+          importMode = 'capture';
+          importOpen = true;
+          await goto('/history');
+        }}
+      />
+    {:catch cause}<p role="alert">{failure(cause)}</p>{/await}
   {:else}
     {#if importOpen}
       <section id="import-panel" class="import-panel" aria-labelledby="import-title">
@@ -1112,7 +1159,8 @@
                   : 'Fetch accessible history'}</button
             >
             {@render importStatus()}
-            {#if hosted && importMode === 'capture'}<ImportGuide />{/if}
+            {#if hosted && importMode === 'capture'}{#await import('$lib/components/ImportGuide.svelte') then guide}<guide.default
+                />{/await}{/if}
           </div>
         </div>
       </section>
@@ -1142,15 +1190,7 @@
           >
         </div>
       </div>
-      <EliteHistory
-        rows={overviewRows}
-        profileId={filters.profile_id}
-        loading={overviewLoading}
-        error={overviewError}
-      />
-      {#if overviewError}<button class="text-button" onclick={() => refresh()}
-          >Refresh overview</button
-        >{/if}
+      <EliteHistory query={rewardQuery} profileId={filters.profile_id} revision={archiveRevision} />
       <div class="coverage">
         <svg viewBox="0 0 20 20" aria-hidden="true"
           ><circle cx="10" cy="10" r="7" /><path d="M10 9v5M10 6v1" /></svg

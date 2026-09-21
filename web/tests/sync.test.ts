@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { gzipSync } from 'node:zlib';
 import { createDriveSync, type SyncStore } from '../src/lib/sync/controller.ts';
 import { canonical, reconcile } from '../src/lib/sync/reconcile.ts';
 import {
@@ -50,8 +51,12 @@ function state(profiles = [profile()]): PortableState {
 }
 function memoryStore(initial: PortableState) {
   let current = structuredClone(initial);
+  let revision = 0;
   const listeners = new Set<() => void>();
   const store: SyncStore & { edit(next: PortableState): void; beforeReplace?: () => void } = {
+    async revision() {
+      return revision;
+    },
     async validateState(next) {
       return structuredClone(next);
     },
@@ -63,6 +68,7 @@ function memoryStore(initial: PortableState) {
       if (expected && canonical(expected) !== canonical(current))
         throw new Error('Local history changed during sync. Retry sync.');
       current = structuredClone(next);
+      revision++;
       for (const listener of listeners) listener();
       return structuredClone(current);
     },
@@ -70,7 +76,13 @@ function memoryStore(initial: PortableState) {
       return new TextEncoder().encode(canonical(next));
     },
     async decodeBackup(bytes) {
-      return JSON.parse(new TextDecoder().decode(bytes));
+      try {
+        return JSON.parse(new TextDecoder().decode(bytes));
+      } catch {
+        const error = new Error('Invalid archive JSON.');
+        error.name = 'InvalidBackupError';
+        throw error;
+      }
     },
     subscribe(listener) {
       listeners.add(listener);
@@ -80,6 +92,7 @@ function memoryStore(initial: PortableState) {
     },
     edit(next) {
       current = structuredClone(next);
+      revision++;
       for (const listener of listeners) listener();
     }
   };
@@ -91,6 +104,9 @@ function cloud() {
   let committedButUnconfirmed = false;
   let uploads = 0;
   const transport: RevisionTransport = {
+    async delete(fileId) {
+      files.delete(fileId);
+    },
     async list() {
       return [...files.values()].map((file) => structuredClone(file.revision));
     },
@@ -101,14 +117,14 @@ function cloud() {
       uploads++;
       if (failUpload) throw failUpload;
       files.set(revision.id, {
-        revision: { ...structuredClone(revision), fileId: revision.id },
+        revision: { ...structuredClone(revision), fileId: revision.id, contentVersion: '1' },
         bytes
       });
       if (committedButUnconfirmed) {
         committedButUnconfirmed = false;
         throw new Error('Connection lost after upload');
       }
-      return revision.id;
+      return { fileId: revision.id, contentVersion: '1' };
     }
   };
   return {
@@ -433,7 +449,7 @@ test('revoked authorization pauses sync and never erases local data', async () =
   }
 });
 
-test('corrupted archives and missing ancestors fail without replacing local data', async () => {
+test('corrupted archives are deleted and missing parents preserve healthy local data', async () => {
   const drive = cloud();
   const store = memoryStore(state());
   const sync = client(store, drive.transport);
@@ -443,33 +459,40 @@ test('corrupted archives and missing ancestors fail without replacing local data
     file.bytes = new TextEncoder().encode('corrupt');
     sync.disconnect();
     await sync.connect();
-    assert.equal(sync.status.phase, 'error');
+    assert.equal(sync.status.phase, 'synced', sync.status.message);
     assert.equal((await store.exportState()).profiles.length, 1);
-    file.revision.parents = ['missing'];
+    assert.ok(!drive.files.has(file.revision.id));
+    const replacement = [...drive.files.values()][0];
+    replacement.revision.parents = ['missing'];
     await sync.sync();
-    assert.match(sync.status.message, /incomplete/);
+    assert.equal(sync.status.phase, 'synced', sync.status.message);
   } finally {
     sync.destroy();
   }
 });
 
-test('long immutable histories are traversed iteratively and cycles are rejected', async () => {
+test('long histories audit every file once and only cycle members are removed', async () => {
   const store = memoryStore(state());
   const bytes = await store.encodeBackup(state());
   const sha256 = await digest(bytes);
   let revisions: Revision[] = Array.from({ length: 2000 }, (_, index) => ({
-    formatVersion: 2,
     id: `revision-${index}`,
     fileId: `file-${index}`,
+    contentVersion: '1',
     parents: index ? [`revision-${index - 1}`] : [],
     createdAt: time,
     sha256
   }));
+  let downloads = 0;
   const transport: RevisionTransport = {
+    async delete(fileId) {
+      revisions = revisions.filter((item) => item.fileId !== fileId);
+    },
     async list() {
       return revisions;
     },
     async download() {
+      downloads++;
       return bytes;
     },
     async upload() {
@@ -480,13 +503,27 @@ test('long immutable histories are traversed iteratively and cycles are rejected
   try {
     await sync.connect();
     assert.equal(sync.status.phase, 'synced');
+    assert.equal(downloads, 2000, 'Every unseen physical file is audited before reporting success');
+    await sync.sync();
+    assert.equal(downloads, 2000, 'Unchanged generations never download again');
     revisions = [
-      { id: 'a', fileId: 'a', parents: ['b'], createdAt: time, sha256 },
-      { id: 'b', fileId: 'b', parents: ['a'], createdAt: time, sha256 }
+      { id: 'a', fileId: 'a', contentVersion: '1', parents: ['b'], createdAt: time, sha256 },
+      { id: 'b', fileId: 'b', contentVersion: '1', parents: ['a'], createdAt: time, sha256 },
+      {
+        id: 'healthy',
+        fileId: 'healthy',
+        contentVersion: '1',
+        parents: ['a'],
+        createdAt: time,
+        sha256
+      }
     ];
     await sync.sync();
-    assert.equal(sync.status.phase, 'error');
-    assert.match(sync.status.message, /cycle/);
+    assert.equal(sync.status.phase, 'synced', sync.status.message);
+    assert.deepEqual(
+      revisions.map((item) => item.id),
+      ['healthy']
+    );
     assert.equal((await store.exportState()).profiles.length, 1);
   } finally {
     sync.destroy();
@@ -517,7 +554,9 @@ test('Drive transport uses appDataFolder scope, bearer headers and immutable mul
   const requests: { url: string; init: RequestInit }[] = [];
   const fetcher = (async (input: string | URL | Request, init: RequestInit = {}) => {
     requests.push({ url: String(input), init });
-    return Response.json(init.method === 'POST' ? { id: 'new-file' } : { files: [] });
+    return Response.json(
+      init.method === 'POST' ? { id: 'new-file', version: '1', size: '12' } : { files: [] }
+    );
   }) as typeof fetch;
   const transport = createDriveTransport(() => 'test-secret', fetcher);
   await transport.list();
@@ -543,7 +582,7 @@ test('Drive transport uses appDataFolder scope, bearer headers and immutable mul
   assert.equal(requests[1].init.method, 'POST');
 });
 
-test('Drive transport rejects oversized downloads and invalid metadata', async () => {
+test('Drive transport rejects oversized downloads and deletes owned invalid metadata', async () => {
   const oversize = createDriveTransport(
     () => 'test',
     (async () =>
@@ -555,15 +594,33 @@ test('Drive transport rejects oversized downloads and invalid metadata', async (
     oversize.download({
       id: 'revision',
       fileId: 'file',
+      contentVersion: '1',
       parents: [],
       createdAt: time,
       sha256: '0'.repeat(64)
     }),
     /size limit/
   );
-  const invalid = createDriveTransport(() => 'test', (async () =>
-    Response.json({ files: [{ id: 'file', description: '{}' }] })) as typeof fetch);
-  await assert.rejects(invalid.list(), /unsupported or damaged/);
+  const deleted: string[] = [];
+  const invalid = createDriveTransport(() => 'test', (async (url, init) => {
+    if (init?.method === 'DELETE') {
+      deleted.push(String(url));
+      return new Response(null, { status: 204 });
+    }
+    return Response.json({
+      files: [
+        {
+          id: 'file',
+          description: '{}',
+          appProperties: { tracker: 'gfl2-v1' },
+          version: '1',
+          size: '1'
+        }
+      ]
+    });
+  }) as typeof fetch);
+  assert.deepEqual(await invalid.list(), []);
+  assert.deepEqual(deleted, ['https://www.googleapis.com/drive/v3/files/file']);
 });
 
 async function seedRevision(
@@ -571,7 +628,6 @@ async function seedRevision(
   id: string,
   archive: PortableState,
   parents: string[] = [],
-  formatVersion: 1 | 2 = 2,
   encode: (archive: PortableState) => Promise<Uint8Array> = async (value) =>
     new TextEncoder().encode(canonical(value))
 ) {
@@ -580,9 +636,9 @@ async function seedRevision(
     revision: {
       id,
       fileId: id,
+      contentVersion: '1',
       parents,
       createdAt: time,
-      formatVersion,
       sha256: await digest(bytes)
     },
     bytes
@@ -757,89 +813,6 @@ test('concurrent portable settings converge and stop uploading, including after 
   }
 });
 
-async function encodeLegacy(archive: PortableState): Promise<Uint8Array> {
-  const original = {
-    ...archive,
-    version: 1,
-    profiles: archive.profiles.map(({ aliases: _aliases, ...profile }) => profile),
-    tombstones: archive.tombstones.map(({ aliases: _aliases, ...deletion }) => deletion)
-  };
-  const envelope = {
-    format: 'gfl2-pull-tracker-backup',
-    version: 1,
-    sha256: await archiveDigest(original),
-    state: original
-  };
-  const stream = new Blob([JSON.stringify(envelope)])
-    .stream()
-    .pipeThrough(new CompressionStream('gzip'));
-  return new Uint8Array(await new Response(stream).arrayBuffer());
-}
-
-test('validated v1 lineage prevents an old partial profile resurrecting after a canonical-ID deletion', async () => {
-  const drive = cloud();
-  const old = profile('Account', []);
-  old.account_fingerprint = `sha256:${'a'.repeat(64)}`;
-  old.id = 'z-offline';
-  old.aliases = ['z-offline'];
-  old.server = null;
-  const full = { ...old, server: '1' };
-  const canonicalProfile = { ...full, id: 'a-canonical', aliases: ['a-canonical'] };
-  const deleted = emptyState();
-  deleted.tombstones = [
-    {
-      profile_id: canonicalProfile.id,
-      aliases: canonicalProfile.aliases,
-      identity: identityKey(canonicalProfile),
-      deleted_at: time
-    }
-  ];
-  await seedRevision(drive, 'partial', state([old]), [], 1, encodeLegacy);
-  await seedRevision(drive, 'identified', state([full]), ['partial'], 1, encodeLegacy);
-  await seedRevision(drive, 'merged', state([canonicalProfile]), ['identified'], 1, encodeLegacy);
-  await seedRevision(drive, 'deleted', deleted, ['merged'], 1, encodeLegacy);
-  const store = memoryStore(await decodeBackup(await encodeLegacy(state([old]))));
-  store.validateState = validateState;
-  store.encodeBackup = encodeBackup;
-  store.decodeBackup = decodeBackup;
-  const sync = client(store, drive.transport);
-  try {
-    await sync.connect();
-    assert.ok(['synced', 'conflict'].includes(sync.status.phase), sync.status.message);
-    if (sync.status.phase === 'conflict') {
-      assert.equal(drive.uploads, 0, 'ambiguous ancestry cannot silently publish a live account');
-      for (let attempt = 0; attempt < 3 && sync.status.phase === 'conflict'; attempt++) {
-        await sync.resolve({
-          generation: sync.status.resolutionGeneration,
-          choices: Object.fromEntries(
-            sync.status.conflicts.map((conflict) => [
-              conflict.id,
-              conflict.localLabel.startsWith('Delete') ? 'local' : 'remote'
-            ])
-          )
-        });
-      }
-    }
-    assert.equal(sync.status.phase, 'synced', sync.status.message);
-    const result = await store.exportState();
-    assert.equal(result.profiles.length, 0);
-    assert.deepEqual(result.tombstones[0].aliases, ['a-canonical', 'z-offline']);
-    const uploaded = [...drive.files.values()].find((file) => file.revision.formatVersion === 2)!;
-    assert.ok(uploaded, 'the legacy history gets one v2 alias checkpoint');
-    const saved = await decodeBackup(uploaded.bytes);
-    assert.equal(saved.version, 2);
-    assert.equal(saved.profiles.length, 0);
-    assert.deepEqual(saved.tombstones[0].aliases, ['a-canonical', 'z-offline']);
-    const uploads = drive.uploads;
-    sync.disconnect();
-    await sync.connect();
-    assert.equal(sync.status.phase, 'synced');
-    assert.equal(drive.uploads, uploads);
-  } finally {
-    sync.destroy();
-  }
-});
-
 test('an import immediately after the resolution snapshot cannot be deleted by the accepted stale choice', async () => {
   const drive = cloud();
   const deleted = emptyState();
@@ -893,24 +866,433 @@ test('an import immediately after the resolution snapshot cannot be deleted by t
   }
 });
 
-test('v2 revision metadata cannot hide a v1 archive and bypass historical alias recovery', async () => {
+test('unchanged sync performs no archive export, merge validation, download, or upload', async () => {
   const drive = cloud();
-  const account = profile('Account', []);
-  account.account_fingerprint = `sha256:${'a'.repeat(64)}`;
-  await seedRevision(drive, 'mismatched', state([account]), [], 2, encodeLegacy);
-  const original = state([account]);
-  const store = memoryStore(original);
-  store.validateState = validateState;
-  store.encodeBackup = encodeBackup;
-  store.decodeBackup = decodeBackup;
+  const store = memoryStore(state());
   const sync = client(store, drive.transport);
   try {
     await sync.connect();
-    assert.equal(sync.status.phase, 'error');
-    assert.match(sync.status.message, /version|metadata/i);
-    assert.equal(canonical(await store.exportState()), canonical(original));
+    const uploaded = drive.uploads;
+    store.exportState = async () => {
+      throw new Error('Unexpected full export');
+    };
+    store.validateState = async () => {
+      throw new Error('Unexpected validation');
+    };
+    store.encodeBackup = async () => {
+      throw new Error('Unexpected compression');
+    };
+    drive.transport.download = async () => {
+      throw new Error('Unexpected download');
+    };
+    await sync.sync();
+    assert.equal(sync.status.phase, 'synced', sync.status.message);
+    assert.equal(drive.uploads, uploaded);
+  } finally {
+    sync.destroy();
+  }
+});
+
+test('a corrupt non-head is removed without deleting its healthy descendant', async () => {
+  const drive = cloud();
+  await seedRevision(drive, 'old', state());
+  await seedRevision(drive, 'healthy', state(), ['old']);
+  drive.files.get('old')!.bytes = new TextEncoder().encode('corrupted');
+  const sync = client(memoryStore(state()), drive.transport);
+  try {
+    await sync.connect();
+    assert.equal(sync.status.phase, 'synced', sync.status.message);
+    assert.ok(!drive.files.has('old'));
+    assert.ok(drive.files.has('healthy'));
     assert.equal(drive.uploads, 0);
   } finally {
     sync.destroy();
   }
+});
+
+test('payload corruption removes the file but network and worker failures never do', async () => {
+  for (const error of [
+    new DriveError('network', 'offline'),
+    new Error('The local worker stopped')
+  ]) {
+    const drive = cloud();
+    await seedRevision(drive, 'healthy', state());
+    const store = memoryStore(state());
+    if (error instanceof DriveError)
+      drive.transport.download = async () => {
+        throw error;
+      };
+    else
+      store.decodeBackup = async () => {
+        throw error;
+      };
+    const sync = client(store, drive.transport);
+    try {
+      await sync.connect();
+      assert.equal(sync.status.phase, 'error');
+      assert.ok(drive.files.has('healthy'));
+      assert.equal(drive.uploads, 0);
+    } finally {
+      sync.destroy();
+    }
+  }
+});
+
+test('failed corrupt-file deletion leaves local state intact and blocks publication', async () => {
+  const drive = cloud();
+  await seedRevision(drive, 'bad', state());
+  drive.files.get('bad')!.bytes = new Uint8Array([0]);
+  drive.transport.delete = async () => {
+    throw new DriveError('quota', 'Deletion denied');
+  };
+  const store = memoryStore(state());
+  const original = canonical(await store.exportState());
+  const sync = client(store, drive.transport);
+  try {
+    await sync.connect();
+    assert.equal(sync.status.phase, 'error');
+    assert.equal(canonical(await store.exportState()), original);
+    assert.ok(drive.files.has('bad'));
+    assert.equal(drive.uploads, 0);
+  } finally {
+    sync.destroy();
+  }
+});
+
+function driveMetadata(id: string, revision = id, extra: Record<string, unknown> = {}) {
+  return {
+    id,
+    appProperties: { tracker: 'gfl2', revision },
+    version: '1',
+    size: '100',
+    description: JSON.stringify({
+      format: 'gfl2-drive-revision',
+      id: revision,
+      parents: [],
+      createdAt: time,
+      sha256: 'a'.repeat(64),
+      ...extra
+    })
+  };
+}
+
+test('versioned app files are deleted only after the entire listing validates', async () => {
+  for (const malformed of [false, true]) {
+    const deleted: string[] = [];
+    let page = 0;
+    const transport = createDriveTransport(() => 'token', (async (url, init) => {
+      if (init?.method === 'DELETE') {
+        deleted.push(String(url));
+        return new Response(null, { status: 204 });
+      }
+      page++;
+      if (page === 1)
+        return Response.json({
+          files: [
+            {
+              ...driveMetadata('old', 'old', { version: 2 }),
+              appProperties: { tracker: 'gfl2-v1', revision: 'old' }
+            }
+          ],
+          nextPageToken: 'next'
+        });
+      return Response.json(malformed ? { files: null } : { files: [driveMetadata('healthy')] });
+    }) as typeof fetch);
+    if (malformed) {
+      await assert.rejects(transport.list(), /invalid revision metadata/);
+      assert.equal(deleted.length, 0);
+    } else {
+      assert.deepEqual(
+        (await transport.list()).map((item) => item.id),
+        ['healthy']
+      );
+      assert.equal(deleted.length, 1);
+      assert.ok(deleted[0].endsWith('/old'));
+    }
+  }
+});
+
+test('conflicting revision IDs remove all conflicting copies and preserve unrelated files', async () => {
+  const deleted: string[] = [];
+  const transport = createDriveTransport(() => 'token', (async (url, init) => {
+    if (init?.method === 'DELETE') {
+      deleted.push(String(url).split('/').at(-1)!);
+      return new Response(null, { status: 204 });
+    }
+    return Response.json({
+      files: [
+        driveMetadata('a', 'same'),
+        driveMetadata('b', 'same', { sha256: 'b'.repeat(64) }),
+        driveMetadata('healthy')
+      ]
+    });
+  }) as typeof fetch);
+  assert.deepEqual(
+    (await transport.list()).map((item) => item.id),
+    ['healthy']
+  );
+  assert.deepEqual(deleted.sort(), ['a', 'b']);
+});
+
+test('unowned file metadata and invalid list responses never authorize deletion', async () => {
+  const deleted: string[] = [];
+  const transport = createDriveTransport(() => 'token', (async (url, init) => {
+    if (init?.method === 'DELETE') {
+      deleted.push(String(url));
+      return new Response(null, { status: 204 });
+    }
+    return Response.json({
+      files: [driveMetadata('old', 'old', { version: 1 }), { id: 'foreign', description: '{}' }]
+    });
+  }) as typeof fetch);
+  await assert.rejects(transport.list(), /outside this tracker/);
+  assert.deepEqual(deleted, []);
+});
+
+test('identical metadata copies stay visible so neither payload escapes validation', async () => {
+  const transport = createDriveTransport(() => 'token', (async () =>
+    Response.json({
+      files: [driveMetadata('a', 'same'), driveMetadata('b', 'same')]
+    })) as typeof fetch);
+  assert.deepEqual(
+    (await transport.list()).map((item) => item.fileId),
+    ['a', 'b']
+  );
+});
+
+test('a committed delete whose response was lost can be retried safely after relisting', async () => {
+  const transport = createDriveTransport(
+    () => 'token',
+    (async () => new Response(null, { status: 404 })) as typeof fetch
+  );
+  await transport.delete('already-gone');
+});
+
+test('current aliases prevent an offline partial profile from resurrecting a deleted merged account', async () => {
+  const drive = cloud();
+  const old = profile('Account', []);
+  old.id = 'z-offline';
+  old.aliases = ['z-offline'];
+  old.server = null;
+  const deleted = emptyState();
+  deleted.tombstones = [
+    {
+      profile_id: 'a-canonical',
+      aliases: ['a-canonical', 'z-offline'],
+      identity: identityKey(profile()),
+      deleted_at: time
+    }
+  ];
+  await seedRevision(drive, 'deleted', deleted);
+  const store = memoryStore(state([old]));
+  const sync = client(store, drive.transport);
+  try {
+    await sync.connect();
+    if (sync.status.phase === 'conflict') await resolveAll(sync, 'remote');
+    assert.equal(sync.status.phase, 'synced', sync.status.message);
+    const saved = await store.exportState();
+    assert.equal(saved.profiles.length, 0);
+    assert.deepEqual(saved.tombstones[0].aliases, ['a-canonical', 'z-offline']);
+  } finally {
+    sync.destroy();
+  }
+});
+
+test('invalid gzip, backup versions, and archive structure are deleted using real backup validation', async () => {
+  const account = profile('Account', []);
+  account.account_fingerprint = `sha256:${'a'.repeat(64)}`;
+  const original = state([account]);
+  const envelope = {
+    format: 'gfl2-pull-tracker-backup',
+    sha256: await archiveDigest(original),
+    state: original
+  };
+  const payloads = [
+    new Uint8Array([0x1f, 0x8b, 0]),
+    gzipSync(JSON.stringify({ ...envelope, version: 2 })),
+    gzipSync(JSON.stringify({ ...envelope, state: { ...original, profiles: 'broken' } })),
+    gzipSync(JSON.stringify({ ...envelope, sha256: '0'.repeat(64) }))
+  ];
+  for (const bytes of payloads) {
+    const drive = cloud();
+    drive.files.set('bad', {
+      revision: {
+        id: 'bad',
+        fileId: 'bad',
+        contentVersion: '1',
+        parents: [],
+        createdAt: time,
+        sha256: await digest(bytes)
+      },
+      bytes
+    });
+    const store = memoryStore(original);
+    store.decodeBackup = decodeBackup;
+    store.encodeBackup = encodeBackup;
+    store.validateState = validateState;
+    const sync = client(store, drive.transport);
+    try {
+      await sync.connect();
+      assert.equal(sync.status.phase, 'synced', sync.status.message);
+      assert.ok(!drive.files.has('bad'));
+      assert.equal(canonical(await store.exportState()), canonical(original));
+      assert.equal(drive.uploads, 1);
+    } finally {
+      sync.destroy();
+    }
+  }
+});
+
+test('a malformed pagination cursor never authorizes cleanup queued on that page', async () => {
+  let deletes = 0;
+  const transport = createDriveTransport(() => 'token', (async (_url, init) => {
+    if (init?.method === 'DELETE') {
+      deletes++;
+      return new Response(null, { status: 204 });
+    }
+    return Response.json({
+      files: [driveMetadata('old', 'old', { version: 2 })],
+      nextPageToken: false
+    });
+  }) as typeof fetch);
+  await assert.rejects(transport.list(), /invalid page cursor/);
+  assert.equal(deletes, 0);
+});
+
+test('conflict fingerprints retain source identity without copying source documents into the dialog', () => {
+  const source = snapshot('immutable-digest');
+  source.document = { schema_version: 1, records: [], padding: 'x'.repeat(1_000_000) };
+  const local = state([profile('Alice', [source])]);
+  const remote = state([profile('Bob', [source])]);
+  const result = reconcile(local, remote, emptyState());
+  assert.equal(result.conflicts.length, 1);
+  assert.ok(result.conflicts[0].fingerprint.length < 3000);
+  const changed = structuredClone(remote);
+  changed.profiles[0].snapshots[0].digest = 'new-immutable-digest';
+  assert.notEqual(
+    reconcile(local, changed, emptyState()).conflicts[0].fingerprint,
+    result.conflicts[0].fingerprint
+  );
+});
+
+test('a file changing metadata across listing pages delays cleanup until a consistent listing', async () => {
+  let deletes = 0;
+  let page = 0;
+  const transport = createDriveTransport(() => 'token', (async (_url, init) => {
+    if (init?.method === 'DELETE') {
+      deletes++;
+      return new Response(null, { status: 204 });
+    }
+    page++;
+    return Response.json(
+      page === 1
+        ? { files: [driveMetadata('changing', 'old', { version: 2 })], nextPageToken: 'next' }
+        : { files: [driveMetadata('changing', 'new')] }
+    );
+  }) as typeof fetch);
+  await assert.rejects(transport.list(), /metadata changed/);
+  assert.equal(deletes, 0);
+});
+
+test('a previously audited file changed in place is revalidated using Drive-observed generation', async () => {
+  const bytes = new TextEncoder().encode(canonical(state()));
+  const sha256 = await digest(bytes);
+  const root = driveMetadata('root', 'root', { sha256 });
+  const head = driveMetadata('head', 'head', { sha256, parents: ['root'] });
+  root.size = head.size = String(bytes.byteLength);
+  const files = new Map([
+    ['root', { metadata: root, bytes }],
+    ['head', { metadata: head, bytes }]
+  ]);
+  const deleted: string[] = [];
+  let downloads = 0;
+  const transport = createDriveTransport(() => 'token', (async (input, init) => {
+    const url = new URL(String(input));
+    const id = url.pathname.split('/').at(-1)!;
+    if (init?.method === 'DELETE') {
+      deleted.push(id);
+      files.delete(id);
+      return new Response(null, { status: 204 });
+    }
+    if (url.searchParams.get('alt') === 'media') {
+      downloads++;
+      return new Response(files.get(id)!.bytes);
+    }
+    assert.notEqual(init?.method, 'POST', 'Healthy head already contains the local archive');
+    assert.match(url.searchParams.get('fields') ?? '', /version,size/);
+    return Response.json({ files: [...files.values()].map((file) => file.metadata) });
+  }) as typeof fetch);
+  const sync = client(memoryStore(state()), transport);
+  try {
+    await sync.connect();
+    assert.equal(sync.status.phase, 'synced', sync.status.message);
+    const originalDescription = root.description;
+    const observedDownloads = downloads;
+    files.get('root')!.bytes = new Uint8Array([0]);
+    root.version = '2';
+    root.size = '1';
+    await sync.sync();
+    assert.equal(sync.status.phase, 'synced', sync.status.message);
+    assert.equal(root.description, originalDescription);
+    assert.equal(downloads, observedDownloads + 1);
+    assert.deepEqual(deleted, ['root']);
+    assert.ok(files.has('head'));
+  } finally {
+    sync.destroy();
+  }
+});
+
+test('all invalid non-head files are removed before sync reports success', async () => {
+  const drive = cloud();
+  for (let index = 0; index < 17; index++) {
+    const id = `bad-${index}`;
+    await seedRevision(drive, id, state(), index ? [`bad-${index - 1}`] : []);
+    drive.files.get(id)!.bytes = new Uint8Array([0]);
+  }
+  await seedRevision(drive, 'healthy', state(), ['bad-16']);
+  let activeDownloads = 0;
+  let maxDownloads = 0;
+  const originalDownload = drive.transport.download;
+  drive.transport.download = async (revision) => {
+    maxDownloads = Math.max(maxDownloads, ++activeDownloads);
+    await Promise.resolve();
+    try {
+      return await originalDownload(revision);
+    } finally {
+      activeDownloads--;
+    }
+  };
+  const sync = client(memoryStore(state()), drive.transport);
+  try {
+    await sync.connect();
+    assert.equal(sync.status.phase, 'synced', sync.status.message);
+    assert.deepEqual([...drive.files.keys()], ['healthy']);
+    assert.equal(maxDownloads, 1, 'Full audit bounds in-flight snapshot memory');
+    assert.equal(drive.uploads, 0);
+  } finally {
+    sync.destroy();
+  }
+});
+
+test('oversized files identified by Drive metadata are deleted without downloading them', async () => {
+  const deleted: string[] = [];
+  const transport = createDriveTransport(() => 'token', (async (input, init) => {
+    const url = new URL(String(input));
+    assert.notEqual(url.searchParams.get('alt'), 'media');
+    if (init?.method === 'DELETE') {
+      deleted.push(url.pathname.split('/').at(-1)!);
+      return new Response(null, { status: 204 });
+    }
+    return Response.json({
+      files: [
+        { ...driveMetadata('oversized'), size: '999999999999999999' },
+        driveMetadata('healthy')
+      ]
+    });
+  }) as typeof fetch);
+  assert.deepEqual(
+    (await transport.list()).map((revision) => revision.id),
+    ['healthy']
+  );
+  assert.deepEqual(deleted, ['oversized']);
 });

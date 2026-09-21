@@ -1,3 +1,5 @@
+import type { ProfileOverview } from './reward-query.ts';
+
 export interface Profile {
   id: string;
   name: string;
@@ -165,6 +167,13 @@ export function createClient(fetcher: typeof fetch = fetch) {
     },
     history(filters: Filters) {
       return request<History>(`history?${queryString(filters)}`);
+    },
+    rewards(profile_id: string, typeId: number | null, rarities: string[], offset: number, limit: number) {
+      const query = new URLSearchParams(queryString({ profile_id, rarity: rarities }));
+      if (typeId !== null) query.set('type_id', String(typeId));
+      query.set('offset', String(offset));
+      query.set('limit', String(limit));
+      return request<ProfileOverview>(`rewards?${query}`);
     },
     overview(profile_id: string) {
       return request<Pull[]>(`overview?${queryString({ profile_id })}`);

@@ -1,11 +1,9 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import type { Pull } from '$lib/api';
   import { recruitmentName } from '$lib/recruitment';
   import portraits from '$lib/portraits.json';
-  import { eliteSummary } from '$lib/elite-summary';
+  import type { ProfileOverview } from '$lib/reward-query';
   import {
-    filterRewards,
     readRewardRarities,
     rewardRarities,
     rewardRarity,
@@ -13,14 +11,36 @@
     type RewardRarity
   } from '$lib/reward-history';
 
-  export let rows: Pull[] = [];
+  export let query: (
+    profileId: string,
+    typeId: number | null,
+    rarities: string[],
+    offset: number,
+    limit: number
+  ) => Promise<ProfileOverview>;
+  export let revision: string | number = 0;
   export let profileId = '';
   export let loading = false;
   export let error = '';
 
   let selectedType: number | null = null;
   let selectedId: number | null = null;
+  const windowLimit = 200;
   let visibleBatches = 1;
+  let offset = 0;
+  let mounted = false;
+  let pending = false;
+  let queryError = '';
+  let retry = 0;
+  let requestId = 0;
+  let activeContext = '';
+  let overview: ProfileOverview | null = null;
+  // Keep query controls mounted while discarding the previous context's data.
+  let types: number[] = [];
+  let lastSelectedType: number | null = null;
+  let availableRarityKeys: string[] = [];
+  let historyHeading: HTMLHeadingElement;
+  let focusWindow = false;
   let previewLimit = 8;
   let selectedRarities: RewardRarity[] = ['Elite'];
   let dialog: HTMLDialogElement;
@@ -40,24 +60,31 @@
       ...(full ? { year: 'numeric' as const } : {})
     });
 
-  $: types = [...new Set(rows.map((row) => row.type_id))].sort((a, b) => a - b);
-  $: if (selectedType === null || !types.includes(selectedType)) {
-    selectedType = types.includes(3) ? 3 : (types[0] ?? null);
-    selectedId = null;
-    visibleBatches = 1;
-  }
-  $: ({ scoped, elites, currentPity, currentUncertain, average } = eliteSummary(
-    rows,
-    selectedType
-  ));
-  $: filtered = filterRewards(scoped, selectedRarities);
-  $: shown = filtered.slice(0, previewLimit * visibleBatches);
-  $: selected = loading || error ? undefined : shown.find((row) => row.id === selectedId);
+  // A context change invalidates details and pagination before dispatching a query.
+  // The query result carries only one bounded window and precomputed summaries.
+  $: context = JSON.stringify([profileId, revision, selectedType, selectedRarities]);
+  $: resetContext(context);
+  $: limit = offset > 0 ? windowLimit : Math.min(windowLimit, previewLimit * visibleBatches);
+  $: void load(
+    mounted && !loading,
+    query,
+    context,
+    profileId,
+    selectedType,
+    selectedRarities,
+    offset,
+    limit,
+    retry
+  );
+  $: busy = loading || pending;
+  $: failure = error || queryError;
+  $: shown = overview?.items ?? [];
+  $: selected = busy || failure ? undefined : shown.find((row) => row.id === selectedId);
   $: availableRarities = rewardRarities.filter(
     (rarity) =>
       rarity.key !== 'Unknown' ||
       selectedRarities.includes('Unknown') ||
-      scoped.some((row) => rewardRarity(row.rarity) === 'Unknown')
+      availableRarityKeys.includes('Unknown')
   );
   $: historyTitle = selectedRarities.length
     ? `${rewardRarities
@@ -65,18 +92,58 @@
         .map((rarity) => rarity.label)
         .join(' + ')} history`
     : 'Reward history';
-  $: resetContext(profileId, selectedType);
   $: if (!selected && dialog?.open) dialog.close();
-  $: breakdown = rarityLabels
-    .map((rarity) => {
-      const count = scoped.filter((row) =>
-        rarity.key === 'Unknown'
-          ? !['Elite', 'Standard', 'Retired'].includes(row.rarity)
-          : row.rarity === rarity.key
-      ).length;
-      return { ...rarity, count, percent: scoped.length ? (count / scoped.length) * 100 : 0 };
-    })
-    .filter((rarity) => rarity.key !== 'Unknown' || rarity.count > 0);
+  $: breakdown = (overview?.breakdown ?? []).map((entry) => ({
+    ...entry,
+    ...rarityLabels.find((rarity) => rarity.key === entry.rarity)!
+  }));
+  $: totalPulls = breakdown.reduce((sum, rarity) => sum + rarity.count, 0);
+
+  async function load(
+    ready: boolean,
+    fetchOverview: typeof query,
+    _context: string,
+    profile: string,
+    type: number | null,
+    rarities: string[],
+    start: number,
+    count: number,
+    _retry: number
+  ) {
+    const id = ++requestId;
+    if (!ready) {
+      pending = false;
+      return;
+    }
+    if (!profile) {
+      overview = null;
+      types = [];
+      pending = false;
+      queryError = '';
+      return;
+    }
+    pending = true;
+    queryError = '';
+    try {
+      const result = await fetchOverview(profile, type, [...rarities], start, count);
+      if (!mounted || id !== requestId) return;
+      overview = result;
+      types = result.types;
+      lastSelectedType = result.selectedType;
+      availableRarityKeys = result.availableRarities;
+      if (focusWindow) {
+        focusWindow = false;
+        void tick().then(() => {
+          if (mounted && id === requestId) historyHeading?.focus();
+        });
+      }
+    } catch (cause) {
+      if (!mounted || id !== requestId) return;
+      queryError = cause instanceof Error ? cause.message : 'Could not load recruitment history.';
+    } finally {
+      if (mounted && id === requestId) pending = false;
+    }
+  }
 
   function measureRows(node: HTMLElement) {
     let frame = 0;
@@ -84,7 +151,7 @@
       const columns = getComputedStyle(node)
         .gridTemplateColumns.split(/\s+/)
         .filter(Boolean).length;
-      previewLimit = Math.max(1, columns) * 2;
+      previewLimit = Math.min(windowLimit, Math.max(1, columns) * 2);
     };
     // Changing the preview count also changes this grid's height. Defer the
     // layout write until after ResizeObserver has delivered its notifications.
@@ -107,11 +174,27 @@
     } catch {
       selectedRarities = ['Elite'];
     }
+    mounted = true;
+    return () => {
+      mounted = false;
+      requestId++;
+    };
   });
-  // IDs are scoped to a profile. Never retain a selection across profile changes.
-  function resetContext(_profile: string, _type: number | null) {
+  // IDs are scoped to a profile. Never retain a selection across query contexts.
+  function resetContext(next: string) {
+    if (activeContext === next) return;
+    activeContext = next;
+    overview = null;
+    focusWindow = false;
     selectedId = null;
     visibleBatches = 1;
+    offset = 0;
+  }
+  function moveWindow(direction: -1 | 1) {
+    focusWindow = true;
+    offset = Math.max(0, offset + direction * windowLimit);
+    visibleBatches = Math.ceil(windowLimit / previewLimit);
+    selectedId = null;
   }
   function toggleRarity(key: RewardRarity) {
     selectedRarities = selectedRarities.includes(key)
@@ -119,7 +202,6 @@
       : rewardRarities
           .filter((rarity) => rarity.key === key || selectedRarities.includes(rarity.key))
           .map((rarity) => rarity.key);
-    resetContext(profileId, selectedType);
     try {
       localStorage.setItem(REWARD_RARITIES_KEY, JSON.stringify(selectedRarities));
     } catch {
@@ -136,51 +218,65 @@
   }
 </script>
 
-<section class="elite-overview" aria-label="Recruitment overview" aria-busy={loading}>
-  {#if loading}
-    <p class="state" role="status">Loading recruitment history…</p>
-  {:else if error}
-    <p class="state error" role="alert">{error}</p>
-  {:else if !rows.length}
-    <p class="state">Import pull history to see your rewards and rarity breakdown.</p>
+<section class="elite-overview" aria-label="Recruitment overview" aria-busy={busy}>
+  {#if busy}<p class="state" role="status">Loading recruitment history…</p>{/if}
+  {#if failure}
+    <p class="state error" role="alert">{failure}</p>
+    <button on:click={() => retry++}>Retry recruitment history</button>
+  {/if}
+  {#if !types.length}
+    {#if !busy && !failure}<p class="state">
+        Import pull history to see your rewards and rarity breakdown.
+      </p>{/if}
   {:else}
     <div class="overview-toolbar">
       <label class="recruitment-select"
         >Recruitment
-        <select bind:value={selectedType}>
+        <select
+          value={selectedType !== null && types.includes(selectedType)
+            ? selectedType
+            : lastSelectedType}
+          on:change={(event) => (selectedType = Number(event.currentTarget.value))}
+        >
           {#each types as type}<option value={type}>{recruitmentName(type)}</option>{/each}
         </select>
       </label>
-      <div class="current-pity" role="status" aria-atomic="true">
-        <dl>
-          <dt>Current pity</dt>
-          <dd>
-            {currentPity.toLocaleString()}{#if currentUncertain}<sup
-                title={uncertainty}
-                aria-label=" uncertain">?</sup
-              >{/if}{' '}<span
-              >{currentUncertain
-                ? 'saved pulls in this interval'
-                : !elites.length
-                  ? currentPity === 1
-                    ? 'pull before your first 5★'
-                    : 'pulls before your first 5★'
-                  : currentPity === 1
-                    ? 'pull since last 5★'
-                    : 'pulls since last 5★'}</span
-            >
-          </dd>
-        </dl>
-        <p>
-          {#if currentUncertain}Count uncertain · history may be incomplete.
-          {:else if elites[0]}Last 5★: {elites[0].name} · {date(elites[0].timestamp, true)}
-          {:else}No 5★ recorded in this recruitment yet.{/if}
-        </p>
-      </div>
+      {#if overview}<div class="current-pity" role="status" aria-atomic="true">
+          <dl>
+            <dt>Current pity</dt>
+            <dd>
+              {overview.currentPity.toLocaleString()}{#if overview.currentUncertain}<sup
+                  title={uncertainty}
+                  aria-label=" uncertain">?</sup
+                >{/if}{' '}<span
+                >{overview.currentUncertain
+                  ? 'saved pulls in this interval'
+                  : !overview.lastElite
+                    ? overview.currentPity === 1
+                      ? 'pull before your first 5★'
+                      : 'pulls before your first 5★'
+                    : overview.currentPity === 1
+                      ? 'pull since last 5★'
+                      : 'pulls since last 5★'}</span
+              >
+            </dd>
+          </dl>
+          <p>
+            {#if overview.currentUncertain}Count uncertain · history may be incomplete.
+            {:else if overview.lastElite}Last 5★: {overview.lastElite.name} · {date(
+                overview.lastElite.timestamp,
+                true
+              )}
+            {:else}No 5★ recorded in this recruitment yet.{/if}
+          </p>
+        </div>{/if}
     </div>
     <section class="elite-history" aria-label={historyTitle}>
       <div class="section-heading">
-        <h2>{historyTitle} <span>{filtered.length.toLocaleString()} rewards</span></h2>
+        <h2 bind:this={historyHeading} tabindex="-1">
+          {historyTitle}
+          {#if overview}<span>{overview.total.toLocaleString()} rewards</span>{/if}
+        </h2>
         <span>Newest first</span>
       </div>
       <fieldset class="rarity-controls">
@@ -196,61 +292,70 @@
           </label>
         {/each}
       </fieldset>
-      {#if filtered.length}
-        <div class="portrait-grid" use:measureRows>
-          {#each shown as row (row.id)}
-            <button
-              class="pull"
-              class:selected={selectedId === row.id}
-              aria-haspopup="dialog"
-              aria-label={`Details for ${row.name}, ${rewardRarities.find((rarity) => rarity.key === rewardRarity(row.rarity))?.label}, 5★ pity ${row.pity}${row.pity_uncertain ? ', uncertain' : ''}, ${date(row.timestamp, true)}`}
-              on:click={() => openReward(row.id)}
+      <div class="portrait-grid" use:measureRows>
+        {#each shown as row (row.id)}
+          <button
+            class="pull"
+            disabled={busy || Boolean(failure)}
+            class:selected={selectedId === row.id}
+            aria-haspopup="dialog"
+            aria-label={`Details for ${row.name}, ${rewardRarities.find((rarity) => rarity.key === rewardRarity(row.rarity))?.label}, 5★ pity ${row.pity}${row.pity_uncertain ? ', uncertain' : ''}, ${date(row.timestamp, true)}`}
+            on:click={() => openReward(row.id)}
+          >
+            <span class="portrait">
+              {#if imageMap[row.item_id] && !failedImages.has(row.item_id)}
+                <img
+                  src={imageMap[row.item_id]}
+                  alt=""
+                  width="80"
+                  height="80"
+                  loading="lazy"
+                  on:error={() => imageFailed(row.item_id)}
+                />
+              {:else}<span class="missing">No image</span>{/if}
+              <span class="pity"
+                >{row.pity}{#if row.pity_uncertain}<sup title={uncertainty} aria-label=" uncertain"
+                    >?</sup
+                  >{/if}</span
+              >
+            </span>
+            <span class="pull-rarity"
+              >{rewardRarities.find((rarity) => rarity.key === rewardRarity(row.rarity))
+                ?.label}</span
             >
-              <span class="portrait">
-                {#if imageMap[row.item_id] && !failedImages.has(row.item_id)}
-                  <img
-                    src={imageMap[row.item_id]}
-                    alt=""
-                    width="80"
-                    height="80"
-                    loading="lazy"
-                    on:error={() => imageFailed(row.item_id)}
-                  />
-                {:else}<span class="missing">No image</span>{/if}
-                <span class="pity"
-                  >{row.pity}{#if row.pity_uncertain}<sup
-                      title={uncertainty}
-                      aria-label=" uncertain">?</sup
-                    >{/if}</span
-                >
-              </span>
-              <span class="pull-rarity"
-                >{rewardRarities.find((rarity) => rarity.key === rewardRarity(row.rarity))
-                  ?.label}</span
-              >
-              <span class="pull-name" title={row.name}>{row.name}</span><span class="pull-date"
-                >{date(row.timestamp)}</span
-              >
-            </button>
-          {/each}
-        </div>
+            <span class="pull-name" title={row.name}>{row.name}</span><span class="pull-date"
+              >{date(row.timestamp)}</span
+            >
+          </button>
+        {/each}
+      </div>
+      {#if overview?.total}
         <div class="history-pagination">
-          {#if shown.length < filtered.length}
-            <button on:click={() => (visibleBatches += 1)}>Show more</button>
+          {#if offset === 0 && limit < windowLimit && shown.length < overview.total}
+            <button disabled={busy} on:click={() => (visibleBatches += 1)}>Show more</button>
           {/if}
-          {#if visibleBatches > 1}
+          {#if offset > 0}
+            <button disabled={busy} on:click={() => moveWindow(-1)}>Previous rewards</button>
+          {/if}
+          {#if limit === windowLimit && offset + shown.length < overview.total}
+            <button disabled={busy} on:click={() => moveWindow(1)}>Next rewards</button>
+          {/if}
+          {#if visibleBatches > 1 || offset > 0}
             <button
+              disabled={busy}
               on:click={() => {
                 visibleBatches = 1;
+                offset = 0;
                 selectedId = null;
               }}>Show fewer</button
             >
           {/if}
-          {#if filtered.length > previewLimit}<span role="status"
-              >Showing {shown.length} of {filtered.length} rewards</span
+          {#if overview.total > previewLimit}<span role="status"
+              >Showing {offset ? `${offset + 1}–${offset + shown.length}` : shown.length} of {overview.total}
+              rewards</span
             >{/if}
         </div>
-      {:else}<p class="empty" role="status">
+      {:else if overview}<p class="empty" role="status">
           {selectedRarities.length
             ? 'No rewards match the selected rarities in this recruitment.'
             : 'Select a rarity to show rewards.'}
@@ -266,33 +371,35 @@
         </p>
       </details>
     </section>
-    <dl class="metrics">
-      <div>
-        <dt>Average 5★ pity</dt>
-        <dd title="Only intervals with complete known history are included">{average}</dd>
-      </div>
-      <div>
-        <dt>Total pulls</dt>
-        <dd>{scoped.length.toLocaleString()}</dd>
-      </div>
-    </dl>
-    <section class="rarity-breakdown" aria-label="Rarity breakdown">
-      <h2>Rarity breakdown</h2>
-      <div class="rarity-content">
-        <div class="stack" aria-hidden="true">
-          {#each breakdown as rarity}<span
-              style:width={`${rarity.percent}%`}
-              style:background={rarity.color}
-            ></span>{/each}
+    {#if overview}<dl class="metrics">
+        <div>
+          <dt>Average 5★ pity</dt>
+          <dd title="Only intervals with complete known history are included">
+            {overview.average === null ? '—' : overview.average.toFixed(1)}
+          </dd>
         </div>
-        <dl class="rarities">
-          {#each breakdown as rarity}<div>
-              <dt><span class="swatch" style:background={rarity.color}></span>{rarity.label}</dt>
-              <dd>{rarity.count.toLocaleString()} <small>{rarity.percent.toFixed(1)}%</small></dd>
-            </div>{/each}
-        </dl>
-      </div>
-    </section>
+        <div>
+          <dt>Total pulls</dt>
+          <dd>{totalPulls.toLocaleString()}</dd>
+        </div>
+      </dl>
+      <section class="rarity-breakdown" aria-label="Rarity breakdown">
+        <h2>Rarity breakdown</h2>
+        <div class="rarity-content">
+          <div class="stack" aria-hidden="true">
+            {#each breakdown as rarity}<span
+                style:width={`${rarity.percent}%`}
+                style:background={rarity.color}
+              ></span>{/each}
+          </div>
+          <dl class="rarities">
+            {#each breakdown as rarity}<div>
+                <dt><span class="swatch" style:background={rarity.color}></span>{rarity.label}</dt>
+                <dd>{rarity.count.toLocaleString()} <small>{rarity.percent.toFixed(1)}%</small></dd>
+              </div>{/each}
+          </dl>
+        </div>
+      </section>{/if}
   {/if}
 </section>
 

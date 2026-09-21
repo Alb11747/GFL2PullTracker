@@ -1,7 +1,6 @@
 import { emptyState, type PortableState } from '../local/types.ts';
 import { canonical, type Choices, type Resolutions, type SyncConflict } from './reconcile.ts';
 import { createMergeWorker } from './merge-worker.ts';
-import { createLineageIndex } from './lineage.ts';
 import {
   createDriveTransport,
   digest,
@@ -9,15 +8,17 @@ import {
   DriveError,
   MAX_REVISIONS,
   type Revision,
+  type NewRevision,
   type RevisionTransport
 } from './drive.ts';
 export type { SyncConflict, Choices, Resolutions } from './reconcile.ts';
 
 export interface SyncStore {
+  revision(): Promise<number>;
   exportState(): Promise<PortableState>;
   replaceState(state: PortableState, expectedState?: PortableState): Promise<PortableState>;
   encodeBackup(state: PortableState): Promise<Uint8Array>;
-  decodeBackup(bytes: Uint8Array, expectedVersion?: 1 | 2): Promise<PortableState>;
+  decodeBackup(bytes: Uint8Array): Promise<PortableState>;
   validateState(state: PortableState): Promise<PortableState>;
   subscribe(listener: () => void): () => void;
 }
@@ -83,53 +84,6 @@ function loadIdentity(): Promise<GoogleIdentity> {
   return identityLoading;
 }
 
-function graph(revisions: Revision[]) {
-  if (revisions.length > MAX_REVISIONS) throw new Error('Drive revision limit exceeded.');
-  const byId = new Map(revisions.map((revision) => [revision.id, revision]));
-  const parents = new Set(revisions.flatMap((revision) => revision.parents));
-  const ancestors = new Map<string, Set<string>>();
-  const children = new Map<string, string[]>();
-  const remaining = new Map<string, number>();
-  for (const revision of revisions) {
-    const uniqueParents = new Set(revision.parents);
-    remaining.set(revision.id, uniqueParents.size);
-    for (const parent of uniqueParents) {
-      if (!byId.has(parent))
-        throw new Error(
-          'Drive revision history is incomplete. Local data is safe; restore a downloaded backup.'
-        );
-      const next = children.get(parent) ?? [];
-      next.push(revision.id);
-      children.set(parent, next);
-    }
-  }
-  // Iterative topological traversal also bounds deep histories without depending on JS stack size.
-  const queue = revisions
-    .filter((revision) => revision.parents.length === 0)
-    .map((revision) => revision.id);
-  for (let index = 0; index < queue.length; index++) {
-    const id = queue[index];
-    const result = new Set([id]);
-    for (const parent of byId.get(id)!.parents)
-      for (const ancestor of ancestors.get(parent)!) result.add(ancestor);
-    ancestors.set(id, result);
-    for (const child of children.get(id) ?? []) {
-      const count = remaining.get(child)! - 1;
-      remaining.set(child, count);
-      if (count === 0) queue.push(child);
-    }
-  }
-  if (ancestors.size !== revisions.length)
-    throw new Error('Drive revision history contains a cycle. Local data is safe.');
-  return {
-    byId,
-    heads: revisions
-      .filter((revision) => !parents.has(revision.id))
-      .sort((a, b) => a.id.localeCompare(b.id)),
-    ancestors
-  };
-}
-
 export interface DriveSyncOptions {
   clientId: string;
   store: SyncStore;
@@ -163,7 +117,7 @@ export function createDriveSync(options: DriveSyncOptions) {
   let debounce: ReturnType<typeof setTimeout> | undefined;
   let expiryTimer: ReturnType<typeof setTimeout> | undefined;
   let resolutionSession: { key: string; choices: Resolutions } | null = null;
-  let pendingUpload: { revision: Omit<Revision, 'fileId'>; bytes: Uint8Array } | null = null;
+  let pendingUpload: { revision: NewRevision; bytes: Uint8Array } | null = null;
   let retryReadOnWake = false;
   const merger = createMergeWorker();
   const setStatus = (next: Partial<SyncStatus>) => {
@@ -177,8 +131,12 @@ export function createDriveSync(options: DriveSyncOptions) {
   };
   const transport = options.transport ?? createDriveTransport(token);
   const decoded = new Map<string, PortableState>();
+  const audited = new Set<string>();
+  let checkpoint: { cloud: string; revision: number } | null = null;
+  const revisionKey = (revision: Revision) =>
+    `${revision.fileId}:${revision.id}:${revision.sha256}:${revision.contentVersion}`;
   const decode = async (revision: Revision) => {
-    const cacheKey = `${revision.formatVersion ?? 1}:${revision.id}:${revision.sha256}`;
+    const cacheKey = revisionKey(revision);
     if (!decoded.has(cacheKey)) {
       const bytes = await transport.download(revision);
       if ((await digest(bytes)) !== revision.sha256)
@@ -186,7 +144,17 @@ export function createDriveSync(options: DriveSyncOptions) {
           'invalid',
           'Drive backup integrity check failed. Local data is unchanged.'
         );
-      decoded.set(cacheKey, await options.store.decodeBackup(bytes, revision.formatVersion ?? 1));
+      let state: PortableState;
+      try {
+        state = await options.store.decodeBackup(bytes);
+      } catch (error) {
+        // Worker/lifecycle failures are operational failures, not corrupt content.
+        if (error instanceof Error && error.name === 'InvalidBackupError')
+          throw new DriveError('invalid', error.message);
+        throw error;
+      }
+      decoded.set(cacheKey, state);
+      audited.add(cacheKey);
       if (decoded.size > 3) decoded.delete(decoded.keys().next().value!);
     }
     return decoded.get(cacheKey)!;
@@ -227,57 +195,88 @@ export function createDriveSync(options: DriveSyncOptions) {
         conflicts: [],
         resolutionGeneration: null
       });
-      const revisions = await transport.list();
+      let revisions = await transport.list();
       active(startedEpoch);
-      const history = graph(revisions);
-      if (pendingUpload && history.byId.has(pendingUpload.revision.id)) pendingUpload = null;
-      // Finish all network reads before binding decisions to the archive used by
-      // the final compare-and-swap. V2 heads checkpoint retained aliases; legacy
-      // ancestry is read once while upgrading, without retaining its snapshots.
-      const lineage = createLineageIndex();
-      const visited = new Set<string>();
-      const pending = [...history.heads];
-      const headStates = new Map<string, PortableState>();
-      const headIds = new Set(history.heads.map((head) => head.id));
-      while (pending.length) {
-        const revision = pending.pop()!;
-        if (visited.has(revision.id)) continue;
-        visited.add(revision.id);
-        const state = await decode(revision);
+      const liveKeys = new Set(revisions.map(revisionKey));
+      for (const key of audited) if (!liveKeys.has(key)) audited.delete(key);
+      const removed = new Set<string>();
+      const remove = async (revision: Revision) => {
         active(startedEpoch);
-        lineage.add(state);
-        if (headIds.has(revision.id)) headStates.set(revision.id, state);
-        if (revision.formatVersion !== 2)
-          pending.push(...revision.parents.map((id) => history.byId.get(id)!));
-      }
-      const commonStates = new Map<string, PortableState>();
-      const mergedHeads: string[] = [];
-      for (const head of history.heads) {
-        let common = emptyState();
-        if (mergedHeads.length) {
-          const candidates = [...history.ancestors.get(head.id)!].filter((id) =>
-            mergedHeads.every((other) => history.ancestors.get(other)!.has(id))
-          );
-          const closest = candidates.filter(
-            (id) =>
-              !candidates.some((other) => other !== id && history.ancestors.get(other)!.has(id))
-          );
-          if (closest.length === 1) common = await decode(history.byId.get(closest[0])!);
+        await transport.delete(revision.fileId);
+        active(startedEpoch);
+        revisions = revisions.filter((item) => item.fileId !== revision.fileId);
+        removed.add(revision.fileId);
+        audited.delete(revisionKey(revision));
+        decoded.delete(revisionKey(revision));
+      };
+      const readValid = async (revision: Revision): Promise<PortableState | null> => {
+        if (removed.has(revision.fileId)) return null;
+        try {
+          return await decode(revision);
+        } catch (error) {
+          if (!(error instanceof DriveError) || error.code !== 'invalid') throw error;
+          await remove(revision);
+          return null;
         }
-        commonStates.set(head.id, common);
-        mergedHeads.push(head.id);
-      }
+      };
+      // Drain the entire unseen-file audit before reporting success. Downloads
+      // remain serial and decoded snapshots are bounded by the small cache.
+      for (const revision of revisions.filter((item) => !audited.has(revisionKey(item))))
+        await readValid(revision);
       active(startedEpoch);
+      const cloudKey = canonical(
+        revisions
+          .map(({ id, sha256, parents, fileId, contentVersion }) => ({
+            id,
+            sha256,
+            parents,
+            fileId,
+            contentVersion
+          }))
+          .sort((a, b) => a.id.localeCompare(b.id) || a.fileId.localeCompare(b.fileId))
+      );
+      const localRevision = await options.store.revision();
+      active(startedEpoch);
+      if (
+        checkpoint?.cloud === cloudKey &&
+        checkpoint.revision === localRevision &&
+        !pendingUpload &&
+        !submission
+      ) {
+        retryReadOnWake = false;
+        setStatus({
+          phase: 'synced',
+          message: 'Saved on this device and synced to Google Drive.',
+          lastSyncedAt: new Date().toISOString()
+        });
+        return;
+      }
+      let inspection = await merger.inspect(revisions);
+      for (const id of inspection.invalidIds)
+        for (const revision of revisions.filter((item) => item.id === id)) await remove(revision);
+      let history = { ...inspection, byId: new Map(revisions.map((item) => [item.id, item])) };
+      const headStates = new Map<string, PortableState>();
+      const commonStates = new Map<string, PortableState>();
+      // Removing a corrupt head may reveal a healthy predecessor. Recompute until
+      // all remaining heads/bases are valid, without discarding healthy descendants.
+      while (true) {
+        const before = revisions.length;
+        for (const head of history.heads) {
+          const state = await readValid(head);
+          if (state) headStates.set(head.id, state);
+          const commonId = history.common[head.id];
+          const common = commonId ? await readValid(history.byId.get(commonId)!) : null;
+          commonStates.set(head.id, common ?? emptyState());
+        }
+        if (before === revisions.length) break;
+        inspection = await merger.inspect(revisions);
+        history = { ...inspection, byId: new Map(revisions.map((item) => [item.id, item])) };
+      }
+      if (pendingUpload && history.byId.has(pendingUpload.revision.id)) pendingUpload = null;
       const local = await options.store.exportState();
-      const conflictKey = canonical({
-        heads: history.heads.map(({ id, sha256, parents, formatVersion }) => ({
-          id,
-          sha256,
-          parents,
-          formatVersion: formatVersion ?? 1
-        })),
-        local
-      });
+      const localFingerprint = await merger.fingerprint(local);
+      const conflictKey = `${cloudKey}:${localFingerprint}`;
+      const mergedHeads = history.heads.map((head) => head.id);
       const sameSession = resolutionSession?.key === conflictKey;
       if (!sameSession) resolutionSession = { key: conflictKey, choices: {} };
       const resolutions = resolutionSession!.choices;
@@ -302,23 +301,6 @@ export function createDriveSync(options: DriveSyncOptions) {
           resolutionGeneration: crypto.randomUUID()
         });
       };
-      lineage.add(local);
-      const lineageChoices = choicesFor('lineage:');
-      const recoveredLocal = lineage.recover(local, lineageChoices);
-      const lineageConflicts = [...recoveredLocal.conflicts];
-      for (const states of [headStates, commonStates]) {
-        for (const [id, state] of states) {
-          const recovered = lineage.recover(state, lineageChoices);
-          states.set(id, recovered.state);
-          lineageConflicts.push(...recovered.conflicts);
-        }
-      }
-      if (lineageConflicts.length) {
-        showConflicts(
-          lineageConflicts.map((conflict) => ({ ...conflict, id: `lineage:${conflict.id}` }))
-        );
-        return;
-      }
       let remote = emptyState();
       let conflicts: SyncConflict[] = [];
       for (const head of history.heads) {
@@ -336,12 +318,7 @@ export function createDriveSync(options: DriveSyncOptions) {
       }
       active(startedEpoch);
       const knownBase = baselineHeads.every((id) => history.byId.has(id)) ? baseline : emptyState();
-      const result = await merger.reconcile(
-        recoveredLocal.state,
-        remote,
-        knownBase,
-        choicesFor('device:')
-      );
+      const result = await merger.reconcile(local, remote, knownBase, choicesFor('device:'));
       conflicts = [
         ...conflicts,
         ...result.conflicts.map((conflict) => ({ ...conflict, id: `device:${conflict.id}` }))
@@ -351,22 +328,21 @@ export function createDriveSync(options: DriveSyncOptions) {
         return;
       }
       const state = await options.store.validateState(result.state);
-      if (canonical(state) !== canonical(local)) {
+      const stateFingerprint = await merger.fingerprint(state);
+      let replaced = false;
+      if (stateFingerprint !== localFingerprint) {
         active(startedEpoch);
         applying = true;
         try {
           await options.store.replaceState(state, local);
+          replaced = true;
         } finally {
           applying = false;
         }
       }
       active(startedEpoch);
       // Once data is safely local, quota/network failure can only delay its cloud publication.
-      if (
-        history.heads.length !== 1 ||
-        history.heads[0].formatVersion !== 2 ||
-        canonical(state) !== canonical(remote)
-      ) {
+      if (history.heads.length !== 1 || stateFingerprint !== (await merger.fingerprint(remote))) {
         if (revisions.length >= MAX_REVISIONS)
           throw new DriveError(
             'quota',
@@ -382,7 +358,6 @@ export function createDriveSync(options: DriveSyncOptions) {
         ) {
           pendingUpload = {
             revision: {
-              formatVersion: 2,
               id: crypto.randomUUID(),
               parents: mergedHeads,
               createdAt: new Date().toISOString(),
@@ -393,14 +368,33 @@ export function createDriveSync(options: DriveSyncOptions) {
         }
         const upload = pendingUpload;
         uploading = true;
-        await transport.upload(upload.revision, upload.bytes);
+        const publication = await transport.upload(upload.revision, upload.bytes);
         uploading = false;
         active(startedEpoch);
         baselineHeads = [upload.revision.id];
-        decoded.set(`2:${upload.revision.id}:${upload.revision.sha256}`, state);
+        const published = { ...upload.revision, ...publication };
+        decoded.set(revisionKey(published), state);
+        audited.add(revisionKey(published));
+        revisions.push(published);
         pendingUpload = null;
       } else baselineHeads = mergedHeads;
-      baseline = structuredClone(state);
+      baseline = state;
+      checkpoint = replaced
+        ? null
+        : {
+            cloud: canonical(
+              revisions
+                .map(({ id, sha256, parents, fileId, contentVersion }) => ({
+                  id,
+                  sha256,
+                  parents,
+                  fileId,
+                  contentVersion
+                }))
+                .sort((a, b) => a.id.localeCompare(b.id) || a.fileId.localeCompare(b.fileId))
+            ),
+            revision: localRevision
+          };
       resolutionSession = null;
       retryReadOnWake = false;
       setStatus({
@@ -465,6 +459,8 @@ export function createDriveSync(options: DriveSyncOptions) {
     pendingUpload = null;
     resolutionSession = null;
     decoded.clear();
+    audited.clear();
+    checkpoint = null;
     clearTimeout(debounce);
     clearTimeout(expiryTimer);
     setStatus({

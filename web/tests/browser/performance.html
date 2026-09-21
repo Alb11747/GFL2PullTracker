@@ -1,0 +1,5 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; worker-src 'self' blob:; connect-src 'self' ws://127.0.0.1:14194; style-src 'self' 'unsafe-inline'">
+<title>Archive performance fixture</title><style>body{font:16px system-ui;max-width:1100px;margin:2rem auto;padding:0 1rem}pre{white-space:pre-wrap;font:13px monospace}button{padding:.6rem 1rem}#summary{font-weight:bold}</style></head>
+<body><h1>Archive performance fixture</h1><p>Synthetic 1,000, 10,000 and 30,000 record archives with three profiles and overlapping imports. Measures production worker and IndexedDB requests; these are worker timings, separate from rendered application interactions.</p><button id="run">Run benchmarks</button><p id="summary" role="status">Ready</p><pre id="results"></pre><script type="module" src="/performance.ts"></script></body></html>

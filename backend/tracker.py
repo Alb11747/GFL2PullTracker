@@ -1,5 +1,5 @@
 """Validated snapshots, occurrence merging, and a shared filtered history view."""
-from collections import Counter, defaultdict
+from collections import Counter, OrderedDict, defaultdict
 from datetime import UTC, datetime
 import hashlib
 import json
@@ -189,6 +189,8 @@ class Tracker:
     def __init__(self, sessions, catalog_path=None):
         self.sessions = sessions
         self.lock = RLock()
+        self._history_cache = OrderedDict()
+        self._reward_cache = {}
         path = Path(catalog_path or Path(__file__).with_name("catalog.json"))
         self.catalog = {item["id"]: item for item in json.loads(path.read_text(encoding="utf-8"))["items"]} if path.exists() else {}
 
@@ -238,9 +240,17 @@ class Tracker:
     def snapshot_public(snapshot):
         return {key: getattr(snapshot, key) for key in ("id", "profile_id", "record_count", "added_count", "complete", "imported_at")}
 
-    def history(self, profile_id, filters):
-        with self.sessions() as session:
+    def _annotated_history(self, profile_id):
+        with self.lock, self.sessions() as session:
             profile = require_profile(session, profile_id)
+            # Snapshots are immutable. Every supported pull/order mutation adds
+            # one, including imports from a second local tracker process.
+            revision = tuple(session.scalars(select(Snapshot.id).where(
+                Snapshot.profile_id == profile_id).order_by(Snapshot.id)))
+            cached = self._history_cache.get(profile_id)
+            if cached is not None and cached[0] == revision:
+                self._history_cache.move_to_end(profile_id)
+                return cached[1]
             endpoint_host = profile.endpoint_host
             documents = []
             for snapshot in session.scalars(select(Snapshot).where(Snapshot.profile_id == profile_id)):
@@ -256,20 +266,32 @@ class Tracker:
                 document["_coverage_empty_pages"] = empty_pages
                 documents.append(document)
             pulls = list(session.scalars(select(Pull).where(Pull.profile_id == profile_id).order_by(Pull.timestamp.desc(), Pull.timestamp_order, Pull.type_id, Pull.id)))
-        groups = Counter((p.type_id, p.pool_id, p.timestamp) for p in pulls)
-        all_rows = []
-        for pull in pulls:
-            item = self.catalog.get(pull.item_id, {})
-            row = dict(id=pull.id, item_id=pull.item_id, name=item.get("name", f"Unknown item #{pull.item_id}"),
-                       kind=item.get("kind", "unknown"), rarity=item.get("rarity", "Unknown"), region=item.get("region"),
-                       type_id=pull.type_id, pool_id=pull.pool_id, timestamp=pull.timestamp, timestamp_order=pull.timestamp_order, quantity=pull.quantity,
-                       source_page=pull.source_page, record_key=pull.record_key, occurrence=pull.occurrence, estimated_group_size=groups[(pull.type_id, pull.pool_id, pull.timestamp)])
-            all_rows.append(row)
-        annotate_history(all_rows, documents, endpoint_host)
+            groups = Counter((p.type_id, p.pool_id, p.timestamp) for p in pulls)
+            all_rows = []
+            for pull in pulls:
+                item = self.catalog.get(pull.item_id, {})
+                row = dict(id=pull.id, item_id=pull.item_id, name=item.get("name", f"Unknown item #{pull.item_id}"),
+                           kind=item.get("kind", "unknown"), rarity=item.get("rarity", "Unknown"), region=item.get("region"),
+                           type_id=pull.type_id, pool_id=pull.pool_id, timestamp=pull.timestamp, timestamp_order=pull.timestamp_order, quantity=pull.quantity,
+                           source_page=pull.source_page, record_key=pull.record_key, occurrence=pull.occurrence, estimated_group_size=groups[(pull.type_id, pull.pool_id, pull.timestamp)])
+                all_rows.append(row)
+            annotate_history(all_rows, documents, endpoint_host)
+            for row in all_rows:
+                row.pop("record_key")
+                row.pop("occurrence")
+            self._history_cache[profile_id] = (revision, all_rows)
+            self._history_cache.move_to_end(profile_id)
+            self._reward_cache.pop(profile_id, None)
+            # Bound retained profiles while keeping the active profile hot.
+            while len(self._history_cache) > 8:
+                expired, _ = self._history_cache.popitem(last=False)
+                self._reward_cache.pop(expired, None)
+            return all_rows
+
+    def history(self, profile_id, filters):
+        all_rows = self._annotated_history(profile_id)
         result = []
         for row in all_rows:
-            row.pop("record_key")
-            row.pop("occurrence")
             if filters.get("q") and filters["q"].casefold() not in f'{row["name"]} {row["item_id"]}'.casefold():
                 continue
             if any(value is not None and value != "" and row[key] not in
@@ -281,8 +303,63 @@ class Tracker:
                 continue
             if filters.get("date_to") and row["timestamp"][:10] > filters["date_to"]:
                 continue
-            result.append(row)
+            result.append(dict(row))
         return result
+
+    def rewards(self, profile_id, type_id=None, rarities=None, offset=0, limit=100):
+        with self.lock:
+            rows = self._annotated_history(profile_id)
+            scopes = self._reward_cache.get(profile_id)
+            if scopes is None:
+                grouped = defaultdict(list)
+                # History already follows descending timestamps and source order.
+                for row in rows:
+                    grouped[row["type_id"]].append(row)
+                scopes = {}
+                for recruitment, scoped in grouped.items():
+                    counts = Counter(row["rarity"] for row in scoped)
+                    elites = [row for row in scoped if row["rarity"] == "Elite"]
+                    known = [row for row in elites if not row["pity_uncertain"]]
+                    latest = scoped[0]
+                    summary = dict(
+                        currentPity=latest["pity"] if latest["rarity"] != "Elite" else 0,
+                        currentUncertain=latest["rarity"] != "Elite" and latest["pity_uncertain"],
+                        average=sum(row["pity"] for row in known) / len(known) if known else None,
+                        lastElite=elites[0] if elites else None,
+                        breakdown=[dict(rarity=rarity, count=counts[rarity], percent=counts[rarity] / len(scoped) * 100)
+                                   for rarity in ("Elite", "Standard", "Retired", "Unknown")
+                                   if rarity != "Unknown" or counts[rarity]])
+                    scopes[recruitment] = dict(rows=scoped, counts=counts, summary=summary, selections=OrderedDict())
+                self._reward_cache[profile_id] = scopes
+            types = sorted(scopes)
+            selected_type = type_id if type_id in scopes else (3 if 3 in scopes else next(iter(types), None))
+            scope = scopes.get(selected_type)
+            chosen = set(["Elite"] if rarities is None else rarities)
+            available = ["Elite", "Standard", "Retired"]
+            if "Unknown" in chosen or (scope and scope["counts"]["Unknown"]):
+                available.append("Unknown")
+            if scope:
+                key = tuple(sorted(chosen & scope["counts"].keys()))
+                selections = scope["selections"]
+                if key not in selections:
+                    selections[key] = [row for row in scope["rows"] if row["rarity"] in chosen]
+                selections.move_to_end(key)
+                while len(selections) > 16:
+                    selections.popitem(last=False)
+                selected = selections[key]
+                summary = scope["summary"]
+            else:
+                selected = []
+                summary = dict(currentPity=0, currentUncertain=False, average=None, lastElite=None,
+                               breakdown=[dict(rarity=rarity, count=0, percent=0)
+                                          for rarity in ("Elite", "Standard", "Retired")])
+            offset = max(0, offset)
+            limit = max(1, min(500, limit))
+            return dict(summary, types=types, selectedType=selected_type,
+                        lastElite=dict(summary["lastElite"]) if summary["lastElite"] else None,
+                        breakdown=[dict(row) for row in summary["breakdown"]],
+                        availableRarities=available, total=len(selected),
+                        items=[dict(row) for row in selected[offset:offset + limit]])
 
     def statistics(self, profile_id, rows):
         with self.sessions() as session:

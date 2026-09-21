@@ -15,6 +15,11 @@ added no duplicate pulls and preserved the existing archive count. Read-back
 was tested in the same browser with its local history retained; it is not proof
 of fresh-device recovery.
 
+Those results belong to the earlier versioned implementation. They do not
+validate the unversioned prerelease reset, invalid-file cleanup, or current sync
+performance. Record new live evidence against the deployed commit separately
+from synthetic transport and browser test results.
+
 Fresh-device restoration, two-device conflicts, revoked or expired authorization,
 interrupted uploads, and quota failures still need live testing. Existing
 automated coverage does not establish those Google runtime outcomes.
@@ -58,21 +63,38 @@ unresponsive even though the initial upload succeeded. Close the stalled chooser
 and, once local saving has completed, reload the tracker and reconnect. A popup
 failure alone does not mean the local archive or an earlier cloud backup was lost.
 
-## Archive version 2 and conflict resolution
+## Prerelease archive reset
 
-New backups and Drive revisions use version 2. Existing version 1 backups remain
-readable: their original checksums are verified before migration. Profiles and
-deletion markers retain earlier profile IDs so an offline device cannot silently
-restore deleted history after two profiles for the same account have merged.
-The first sync of legacy cloud history may read older revisions to recover those
-IDs. Later version 2 revisions retain them without rereading that ancestry.
+The tracker has not had a public release. Browser archives, downloaded backups,
+and Drive revisions now share one strict unversioned schema. The cutover starts
+with an empty browser archive and clears its old recovery copy, device exclusions,
+and stale profile/job references. Display preferences remain. IndexedDB retains
+its required database revision and closes older connections during the reset;
+refresh older tabs before continuing. Windows SQLite databases and original
+collector or Exilium exports are not reset.
 
-Refresh older tracker tabs before using an upgraded archive. Browser storage is
-upgraded transactionally together with its recovery copy and device exclusions;
-older clients cannot reopen the upgraded database or read new Drive revisions.
-Do not clear browser storage or delete Drive revisions to work around an upgrade
-error. Keep a downloadable backup and retain a version 2-capable client for
-recovery; downgrading to a version 1-only release is not a compatible rollback.
+Earlier versioned tracker backups have no reader or migration path. Reimport
+original collector or supported Exilium exports if you need the old history.
+The reset does not change those sources' independent format versions.
+
+Connecting Drive discovers both earlier tracker-tagged files and current files.
+Sync removes obsolete versioned files and files proven invalid by metadata,
+size, decompression, checksum, or schema checks. Healthy revisions remain.
+Network errors, expired authorization, quota failures, cancellation, and incomplete
+listings never establish that a file is invalid. An uncertain deletion is checked
+by listing again; incomplete cleanup is reported while local history remains intact.
+
+Healthy snapshots remain usable when a parent revision is missing or removed.
+Their merge base is unknown, so conflicting changes still need a decision.
+Profiles and deletion markers retain aliases for earlier profile IDs, preventing
+an offline device from silently restoring deleted history after account profiles
+merge. Device exclusions remain supported for current archives.
+
+There is no prerelease migration framework. Before the first public release,
+establish the versioned baseline and tested migrations in the
+[release checklist](PUBLICATION.md#first-public-release-checklist).
+
+## Conflict resolution and verification
 
 Conflict choices apply to the archive and alternatives shown in the dialog.
 Accepted choices are retained if resolving one conflict reveals another. New
@@ -85,12 +107,12 @@ device propagate; simultaneous different values require an explicit choice.
 Consent and server-feature preferences remain device-local. Once devices agree,
 unchanged syncs do not publish more revisions.
 
-`npm test` includes deterministic conflict, migration, integrity, and convergence
+Run `npm test` for deterministic conflict, reset, integrity, cleanup, and convergence
 regressions. From `web`, `npm run test:browser` starts the isolated synthetic
-browser harness described in `tests/browser/README.md`. It exercises the actual
-conflict dialog, workers, IndexedDB migration, and concurrent local writes with
-a simulated Drive transport; it does not establish authenticated Google runtime
-behavior.
+browser harness described in [browser tests](../web/tests/browser/README.md).
+Verify the actual conflict dialog, workers, IndexedDB reset, and concurrent local
+writes with its simulated Drive transport. These checks do not establish
+authenticated Google runtime behavior.
 
 ## Remaining live tests
 
@@ -98,6 +120,9 @@ Test using two browser profiles connected to the same Google account: import on
 each while offline, reconnect, then check occurrence counts and conflict
 resolution. Test a fresh profile restore, revoked consent, an expired token,
 interrupted upload, and a full quota before declaring live Drive sync verified.
+Check invalid-file cleanup with disposable app-data files, including a healthy
+snapshot whose parent is absent. Confirm that failed downloads never delete files
+and that unchanged sync lists metadata without rewriting the archive.
 Google authorization never grants access to the application's server backups.
 
 Revisions are immutable and retained, with a maximum of 2,000 revisions per cloud archive. Deleting a profile across devices changes the current archive; old Drive revisions may still contain its history. To erase historical copies, first download anything you want to keep, disconnect the app on all devices, and clear this app's data using Google Drive's app-management controls. Reconnecting devices that retain old histories can upload them again.

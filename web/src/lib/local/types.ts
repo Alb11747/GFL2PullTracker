@@ -23,7 +23,6 @@ export interface Deletion {
 }
 export interface PortableState {
   format: 'gfl2-pull-tracker';
-  version: 1 | 2;
   profiles: PortableProfile[];
   settings: Record<string, string | number | boolean>;
   tombstones: Deletion[];
@@ -47,10 +46,10 @@ export const OFFICIAL_HOSTS = new Set([
   'gf2-gacha-record-intl.haoplay.com'
 ]);
 export function emptyState(): PortableState {
-  return { format: 'gfl2-pull-tracker', version: 2, profiles: [], settings: {}, tombstones: [] };
+  return { format: 'gfl2-pull-tracker', profiles: [], settings: {}, tombstones: [] };
 }
 export const MAX_PROFILE_ALIASES = 10_000;
-/** Legacy input is supported only at the validated migration boundary. */
+/** Identity aliases survive reconciliation across devices. */
 export function profileIds(
   profile: Pick<PortableProfile, 'id'> & { aliases?: string[] }
 ): string[] {

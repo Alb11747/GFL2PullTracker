@@ -65,13 +65,6 @@ function state(name = 'Account'): PortableState {
     ]
   };
 }
-function legacy(value: PortableState): unknown {
-  const copy = structuredClone(value);
-  copy.version = 1;
-  for (const profile of copy.profiles) Reflect.deleteProperty(profile, 'aliases');
-  for (const deletion of copy.tombstones) Reflect.deleteProperty(deletion, 'aliases');
-  return copy;
-}
 function client() {
   const value = createLocalClient();
   clients.push(value);
@@ -90,9 +83,9 @@ async function clean() {
       reject(new Error('Test database remained open after worker shutdown.'));
   });
 }
-async function rawArchive(seed?: { current: unknown; recovery: unknown }) {
+async function rawArchive(seed?: { current: unknown; recovery: unknown }, version = 2) {
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(databaseName, seed ? 1 : undefined);
+    const request = indexedDB.open(databaseName, seed ? version : undefined);
     request.onupgradeneeded = () => request.result.createObjectStore('archive');
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
@@ -143,7 +136,7 @@ function choose(label: string) {
 }
 function cloud() {
   const files = new Map<string, { revision: Revision; bytes: Uint8Array }>();
-  const counts = { list: 0, download: 0, upload: 0, authorization: 0 };
+  const counts = { list: 0, download: 0, upload: 0, deletion: 0, authorization: 0 };
   let nextList: (() => Promise<void>) | undefined;
   const transport: RevisionTransport = {
     async list() {
@@ -158,13 +151,17 @@ function cloud() {
       assert(files.has(revision.id), 'Missing synthetic cloud revision');
       return files.get(revision.id)!.bytes.slice();
     },
+    async delete(fileId) {
+      counts.deletion++;
+      for (const [id, file] of files) if (file.revision.fileId === fileId) files.delete(id);
+    },
     async upload(revision, bytes) {
       counts.upload++;
       files.set(revision.id, {
-        revision: { ...revision, fileId: revision.id },
+        revision: { ...revision, fileId: revision.id, contentVersion: '1' },
         bytes: bytes.slice()
       });
-      return revision.id;
+      return { fileId: revision.id, contentVersion: '1' };
     }
   };
   return {
@@ -180,8 +177,8 @@ function cloud() {
         revision: {
           id,
           parents,
-          formatVersion: 2,
           fileId: id,
+          contentVersion: '1',
           createdAt: timestamp,
           sha256: await digest(bytes)
         },
@@ -260,64 +257,107 @@ async function applyAndWait(view: Awaited<ReturnType<typeof dialog>>) {
 
 const cases: [string, () => Promise<void>][] = [
   [
-    'v1 IndexedDB migration preserves recovery and exclusions',
+    'unchanged sync lists metadata without exporting, encoding, downloading or writing',
+    async () => {
+      const local = client(), remote = cloud();
+      await local.replaceState(state());
+      const calls = { exports: 0, encodes: 0, replacements: 0 };
+      const store: LocalClient = {
+        ...local,
+        exportState: () => { calls.exports++; return local.exportState(); },
+        encodeBackup: (value) => { calls.encodes++; return local.encodeBackup(value); },
+        replaceState: (value, expected) => { calls.replacements++; return local.replaceState(value, expected); }
+      };
+      const drive = createDriveSync({ clientId: 'synthetic-browser-client', store,
+        transport: remote.transport, authorize: async () => ({ token: 'synthetic-token', expiresIn: 3600 }),
+        intervalMs: 3_600_000 });
+      controllers.push(drive);
+      await drive.connect();
+      assert(drive.status.phase === 'synced', drive.status.message);
+      const previous = { ...calls, ...remote.counts };
+      for (let repeat = 0; repeat < 3; repeat++) await drive.sync();
+      assert(calls.exports === previous.exports && calls.encodes === previous.encodes &&
+        calls.replacements === previous.replacements, 'Unchanged sync serialized or rewrote the archive');
+      assert(remote.counts.download === previous.download && remote.counts.upload === previous.upload,
+        'Unchanged sync transferred immutable archive contents');
+      assert(remote.counts.list === previous.list + 3, 'Unchanged sync skipped metadata freshness checks');
+      log(`  Three unchanged syncs; mock-only counters ${JSON.stringify({ ...calls, ...remote.counts })}`);
+    }
+  ],
+  ...([1, 2] as const).map((version): [string, () => Promise<void>] => [
+    `IndexedDB ${version} resets prerelease history and recovery`,
     async () => {
       const original = state();
+      // Both obsolete archive formats are intentionally discarded, including
+      // malformed records that previously caused migration to reject startup.
+      const obsolete = { ...original, version, settings: { theme: 'dark' } };
+      obsolete.profiles[0].name = '';
+      localStorage.setItem('gfl2.browser-test-display', 'retained');
       await rawArchive({
         current: {
-          state: legacy(original),
-          revision: 7,
-          exclusions: [
-            { profile_id: 'browser-profile', identity: identityKey(original.profiles[0]) }
-          ]
+          state: obsolete, revision: 7,
+          exclusions: [{ profile_id: 'browser-profile', identity: identityKey(original.profiles[0]) }]
         },
-        recovery: legacy(state('Recovery'))
-      });
+        recovery: { ...state('Recovery'), version }
+      }, version);
       const local = client();
-      const migrated = await local.exportState();
-      assert(
-        migrated.version === 2 && migrated.profiles[0].aliases.includes('browser-profile'),
-        'Current state aliases not migrated'
-      );
-      const recovery = await local.recoverySnapshot();
-      assert(
-        recovery?.version === 2 && recovery.profiles[0].name === 'Recovery',
-        'Recovery not preserved and migrated'
-      );
+      const reset = await local.exportState();
+      assert(reset.profiles.length === 0 && reset.tombstones.length === 0,
+        'Obsolete history survived the prerelease reset');
+      assert(!('version' in reset), 'Portable archive retained a version marker');
+      assert(await local.recoverySnapshot() === null, 'Obsolete recovery survived reset');
+      assert(localStorage.getItem('gfl2.browser-test-display') === 'retained',
+        'Reset cleared unrelated display storage');
       const saved = await rawArchive();
-      assert(
-        saved.current.revision === 8 &&
-          saved.current.exclusions[0].aliases?.includes('browser-profile'),
-        'Migration did not atomically persist exclusions'
-      );
+      assert(!saved.current || saved.current.exclusions.length === 0,
+        'Obsolete device exclusions survived reset');
       const decoded = await local.decodeBackup(await local.exportBackup());
-      assert(
-        canonical(decoded) === canonical(migrated),
-        'Real gzip round trip changed migrated state'
-      );
+      assert(canonical(decoded) === canonical(reset), 'Real gzip round trip changed reset state');
+      let oldWriterRejected = false;
+      await new Promise<void>((resolve, reject) => {
+        const request = indexedDB.open(databaseName, version);
+        request.onerror = () => { oldWriterRejected = request.error?.name === 'VersionError'; resolve(); };
+        request.onsuccess = () => { request.result.close(); reject(new Error('Obsolete database writer reopened')); };
+      });
+      assert(oldWriterRejected, 'An obsolete worker can reopen the upgraded database');
+      localStorage.removeItem('gfl2.browser-test-display');
+    }
+  ]),
+  [
+    'device removal preserves exclusion aliases through cloud replacement',
+    async () => {
+      const local = client();
+      const original = state();
+      original.profiles[0].aliases.push('previous-profile');
+      await local.replaceState(original);
+      await local.deleteProfile('browser-profile', false);
+      const removed = await local.exportState();
+      assert(removed.profiles.length === 0 && removed.tombstones.length === 0,
+        'Device-only removal became an account deletion');
+      await local.replaceState(original, removed);
+      assert((await local.profiles()).length === 0, 'Cloud replacement restored an excluded profile');
+      const saved = await rawArchive();
+      assert(saved.current.exclusions.some((entry) => entry.aliases?.includes('previous-profile')),
+        'Device exclusion lost historical aliases');
     }
   ],
   [
-    'invalid v1 migration leaves current, recovery, and exclusions untouched',
+    'rejected replacement preserves archive, recovery and device exclusions',
     async () => {
-      const malformed = legacy(state()) as PortableState;
+      const local = client();
+      await local.replaceState(state());
+      await local.deleteProfile('browser-profile', false);
+      await local.createProfile('Retained profile');
+      const previous = await rawArchive();
+      const malformed = state();
       malformed.profiles[0].name = '';
-      const seed = {
-        current: { state: malformed, revision: 4, exclusions: [] },
-        recovery: legacy(state('Recovery'))
-      };
-      await rawArchive(seed);
       let rejected = false;
-      try {
-        await client().exportState();
-      } catch {
-        rejected = true;
-      }
-      assert(rejected, 'Invalid migration should reject');
-      assert(
-        canonical(await rawArchive()) === canonical(seed),
-        'Failed migration changed saved data'
-      );
+      try { await local.replaceState(malformed); } catch { rejected = true; }
+      assert(rejected, 'Invalid replacement was accepted');
+      assert(canonical(await rawArchive()) === canonical(previous),
+        'Rejected replacement changed saved archive, recovery or exclusions');
+      assert((await local.profiles())[0].name === 'Retained profile',
+        'Rejected replacement poisoned the worker cache');
     }
   ],
   [
@@ -493,3 +533,5 @@ runButton.addEventListener('click', async () => {
     runButton.disabled = false;
   }
 });
+
+if (new URLSearchParams(location.search).get('autorun') === '1') runButton.click();

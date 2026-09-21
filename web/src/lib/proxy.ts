@@ -48,7 +48,7 @@ export async function forward(
     ? /^\/api\/(health|public\/(config|statistics|backup|jobs\/[a-zA-Z0-9-]+(?:\/result)?))$/.test(
         path
       )
-    : /^\/api\/(health|profiles|history|overview|statistics|filters|imports|jobs\/[a-zA-Z0-9-]+)$/.test(
+    : /^\/api\/(health|profiles|history|overview|rewards|statistics|filters|imports|jobs\/[a-zA-Z0-9-]+)$/.test(
         path
       );
   const cancellation = hosted

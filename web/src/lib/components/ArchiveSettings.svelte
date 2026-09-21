@@ -3,7 +3,7 @@
   import DriveIcon from './DriveIcon.svelte';
   import type { Profile } from '$lib/api';
   import type { createLocalClient } from '$lib/local/client';
-  import { MAX_COMPRESSED_BYTES } from '$lib/local/backup';
+  import { MAX_COMPRESSED_BYTES } from '$lib/local/limits';
   import type { createDriveSync, SyncStatus } from '$lib/sync/controller';
   import type { PublicClient, PublicConfig } from '$lib/public-api';
   import { identityKey } from '$lib/local/types';

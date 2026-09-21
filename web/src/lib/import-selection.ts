@@ -1,9 +1,10 @@
-import { decodeBackup, MAX_COMPRESSED_BYTES } from './local/backup.ts';
+import { MAX_COMPRESSED_BYTES } from './local/limits.ts';
 
 /** Inspect bytes before routing: a renamed backup still belongs to archive restoration. */
 export async function classifyImportFiles(
   files: File[],
-  hosted: boolean
+  hosted: boolean,
+  decode?: (bytes: Uint8Array) => Promise<unknown>
 ): Promise<'export' | 'backup'> {
   if (!files.length) throw new Error('Choose an export or compressed tracker backup first.');
   const compressed = await Promise.all(
@@ -23,6 +24,9 @@ export async function classifyImportFiles(
     );
   if (files[0].size > MAX_COMPRESSED_BYTES)
     throw new Error('This archive exceeds the 16 MiB compressed limit.');
+  // The application supplies its worker decoder; standalone callers load it only
+  // after identifying a backup, so ordinary browsing never imports the engine.
+  const decodeBackup = decode ?? (await import('./local/backup.ts')).decodeBackup;
   await decodeBackup(new Uint8Array(await files[0].arrayBuffer()));
   return 'backup';
 }

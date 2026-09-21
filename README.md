@@ -4,11 +4,18 @@ A Girls' Frontline 2 pull-history tracker with a Windows local mode and a Docker
 
 ## Public website
 
+The site is in private prerelease testing at `https://gfl2.alb11747.com`; it has
+not had a public release. The performance overhaul deliberately starts with an
+empty browser archive and removes obsolete versioned Drive files when connected.
+Display preferences, Windows SQLite databases, and source exports are retained.
+Old tracker backups cannot be restored. See the [prerelease reset](docs/GOOGLE_DRIVE.md#prerelease-archive-reset)
+and [first-release checklist](docs/PUBLICATION.md#first-public-release-checklist).
+
 Public mode stores personal histories in IndexedDB and processes archives in a Web Worker. It supports multiple game profiles, compressed downloads and restores, and optional two-way Google Drive sync. No website account is required. The interface includes profile management, import guidance, backup controls, privacy information, and community statistics.
 
 Use [the Docker hosting guide](docs/HOSTING.md) and [.env.example](.env.example). Configure a real HTTPS origin and keep the API private. [Google Drive setup](docs/GOOGLE_DRIVE.md) requires your own OAuth client. Original source is MIT licensed; game data and fonts retain their [third-party notices](THIRD_PARTY_NOTICES.md).
 
-**Release gates:** This release has no enabled production game-account ownership verifier. Server backup, recovery, and verified contributions fail closed until an audited provider adapter establishes credential-to-account binding. The bounded server relay works without those features. Decoding token metadata or accepting a supplied UID is insufficient proof. Each deployment needs real Google OAuth and authenticated upstream import tests. The hosted site passed Google authorization, upload, automatic sync after import, and reconnect read-back; [fresh-device recovery and other live Drive cases remain unverified](docs/GOOGLE_DRIVE.md#live-validation).
+**Release gates:** This release has no enabled production game-account ownership verifier. Server backup, recovery, and verified contributions fail closed until an audited provider adapter establishes credential-to-account binding. The bounded server relay works without those features. Decoding token metadata or accepting a supplied UID is insufficient proof. Each deployment needs real Google OAuth and authenticated upstream import tests. The earlier hosted build passed Google authorization, upload, automatic sync after import, and reconnect read-back; that evidence does not validate the new unversioned sync. See [live validation limits](docs/GOOGLE_DRIVE.md#live-validation).
 
 Browser-only imports contact the official game API directly. Choosing server features or the explicit relay fallback sends the capture through server memory; captures are never retained. Server-backup and contribution choices are independent and initially on, with unavailable features identified before submission. See [data and privacy](docs/PRIVACY.md), [import formats](docs/IMPORTING.md), and [preparing a publication copy](docs/PUBLICATION.md).
 
@@ -73,6 +80,9 @@ The overview shows the full selected profile; its recruitment selector scopes th
 "Collection complete" means the collector finished its configured scan of accessible history. It does not establish lifetime coverage or prove that every possible API type exists within that scan. Unknown items and pools remain visible by ID. Rarity statistics include known dolls and weapons; unknown rewards are counted separately. Pity counts appear in the full-width reward history and record log; guarantees are not implemented. Counts use the stable source-order assumption and are separate for each API type, not verified shared banner families. `pity_uncertain` marks intervals crossing a gap or an unknown-rarity reward. Saved source adjacency establishes continuous history; a later bridging import can clear a gap. Each known Elite resets the count and uncertainty for subsequent pulls. Counts before the first Elite are uncertain unless the oldest record falls on the publisher’s UTC launch date (Darkwinter: 2024-12-03; Haoplay: 2024-12-05). The interface displays uncertainty as a superscript question mark and excludes uncertain intervals from average pity. Exilium aggregate imports are assumed continuous internally; gaps already lost before export cannot be recovered.
 
 ## Data and development
+
+See the [performance reference](docs/PERFORMANCE.md) for measured browser timings,
+archive-cache invariants, and repeatable production fixtures.
 
 Personal data defaults to `data/`, excluded from Git. Set `GFL2_DATA_DIR` to an absolute directory to keep it elsewhere. Back up that entire directory while the services are stopped. Original CLI exports are preserved. Imported snapshot documents and provenance are also retained in SQLite.
 

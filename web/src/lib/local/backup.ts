@@ -1,7 +1,22 @@
-import { canonical, digest, MAX_STATE_BYTES, object, validateState } from './engine.ts';
+import {
+  canonical,
+  digest,
+  InvalidArchiveError,
+  MAX_STATE_BYTES,
+  object,
+  validateState
+} from './engine.ts';
 import type { PortableState } from './types.ts';
+import { MAX_COMPRESSED_BYTES } from './limits.ts';
+export { MAX_COMPRESSED_BYTES } from './limits.ts';
 
-export const MAX_COMPRESSED_BYTES = 16 * 1024 * 1024;
+/** Distinguishes rejected content from interrupted workers or other operational failures. */
+export class InvalidBackupError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InvalidBackupError';
+  }
+}
 async function readBounded(
   stream: ReadableStream<Uint8Array>,
   maximum: number
@@ -36,7 +51,6 @@ export async function encodeBackup(input: PortableState): Promise<Uint8Array> {
   const state = await validateState(input);
   const envelope = {
     format: 'gfl2-pull-tracker-backup',
-    version: 2,
     sha256: await digest(state),
     state
   };
@@ -47,45 +61,49 @@ export async function encodeBackup(input: PortableState): Promise<Uint8Array> {
     MAX_COMPRESSED_BYTES
   );
 }
-export async function decodeBackup(
-  bytes: Uint8Array,
-  expectedVersion?: 1 | 2
-): Promise<PortableState> {
+export async function decodeBackup(bytes: Uint8Array): Promise<PortableState> {
   if (!(bytes instanceof Uint8Array) || bytes.byteLength > MAX_COMPRESSED_BYTES)
-    throw new Error('Backup exceeds the 16 MiB compressed limit.');
+    throw new InvalidBackupError('Backup exceeds the 16 MiB compressed limit.');
   if (bytes[0] !== 0x1f || bytes[1] !== 0x8b)
-    throw new Error('Expected a gzip-compressed tracker backup.');
+    throw new InvalidBackupError('Expected a gzip-compressed tracker backup.');
+  // Platform support failures are operational; only decoding rejects the content.
+  const stream = new Blob([new Uint8Array(bytes).buffer])
+    .stream()
+    .pipeThrough(new DecompressionStream('gzip'));
   let expanded: Uint8Array;
   try {
-    expanded = await readBounded(
-      new Blob([new Uint8Array(bytes).buffer])
-        .stream()
-        .pipeThrough(new DecompressionStream('gzip')),
-      MAX_STATE_BYTES
-    );
-  } catch {
-    throw new Error('Backup is damaged or exceeds the expanded size limit.');
+    expanded = await readBounded(stream, MAX_STATE_BYTES);
+  } catch (cause) {
+    if (
+      cause instanceof RangeError ||
+      (cause instanceof DOMException && cause.name === 'AbortError')
+    )
+      throw cause;
+    throw new InvalidBackupError('Backup is damaged or exceeds the expanded size limit.');
   }
+  const decoder = new TextDecoder('utf-8', { fatal: true });
   let envelope: Record<string, unknown>;
   try {
-    envelope = object(
-      JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(expanded)),
-      'backup'
-    );
-  } catch {
-    throw new Error('Backup does not contain valid JSON.');
+    envelope = object(JSON.parse(decoder.decode(expanded)), 'backup');
+  } catch (cause) {
+    if (!(
+      cause instanceof SyntaxError ||
+      cause instanceof TypeError ||
+      cause instanceof InvalidArchiveError
+    ))
+      throw cause;
+    throw new InvalidBackupError('Backup does not contain valid JSON.');
   }
-  if (
-    envelope.format !== 'gfl2-pull-tracker-backup' ||
-    ![1, 2].includes(envelope.version as number)
-  )
-    throw new Error('Unsupported compressed backup format or version.');
-  if (expectedVersion !== undefined && envelope.version !== expectedVersion)
-    throw new Error('Drive revision metadata and backup versions do not match.');
-  if (object(envelope.state, 'archive').version !== envelope.version)
-    throw new Error('Backup envelope and archive versions do not match.');
-  // Verify the original wire version before adding aliases or changing its version.
-  const state = await validateState(envelope.state, { preserveVersion: true });
-  if (envelope.sha256 !== (await digest(state))) throw new Error('Backup integrity check failed.');
-  return state.version === 1 ? validateState(state) : state;
+  if (envelope.format !== 'gfl2-pull-tracker-backup' || 'version' in envelope)
+    throw new InvalidBackupError('Unsupported compressed backup format.');
+  let state: PortableState;
+  try {
+    state = await validateState(envelope.state);
+  } catch (cause) {
+    if (cause instanceof InvalidArchiveError) throw new InvalidBackupError(cause.message);
+    throw cause;
+  }
+  if (envelope.sha256 !== (await digest(state)))
+    throw new InvalidBackupError('Backup integrity check failed.');
+  return state;
 }

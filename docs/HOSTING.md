@@ -96,6 +96,9 @@ start the previous images. Do not use `down -v` as an upgrade or rollback step.
 
 ## Release gates
 
+- Before the first public release, establish a versioned archive baseline and
+  tested migrations using the [publication checklist](PUBLICATION.md#first-public-release-checklist).
+  The current unversioned reset is limited to prerelease testing.
 - Provide a real HTTPS origin and Google OAuth client before testing Drive.
 - This release intentionally ships without enabled provider verifiers, so
   server backup, game-account recovery, and community contribution remain

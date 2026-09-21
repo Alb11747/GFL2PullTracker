@@ -49,6 +49,49 @@ test('overview uses the local read-only proxy and cannot expose hosted archives'
   assert.deepEqual(calls, ['http://127.0.0.1:8000/api/overview?profile_id=p']);
 });
 
+test('rewards preserves bounded query selections through the local read-only proxy', async () => {
+  const calls: string[] = [];
+  const fetcher = fakeFetch(async (input) => {
+    calls.push(String(input));
+    return Response.json({ items: [], total: 0 });
+  });
+  await createClient(fetcher).rewards('profile one', 6, ['Elite', 'Standard'], 50, 100);
+  const query = 'profile_id=profile+one&rarity=Elite&rarity=Standard&type_id=6&offset=50&limit=100';
+  assert.deepEqual(calls, [`/api/rewards?${query}`]);
+  calls.length = 0;
+  const local = new Request(`http://127.0.0.1:3000/api/rewards?${query}`, {
+    headers: { host: '127.0.0.1:3000' }
+  });
+  const result = await forward(local, 'http://127.0.0.1:8000', fetcher);
+  assert.equal(result.status, 200);
+  assert.equal(result.headers.get('cache-control'), 'no-store');
+  const hosted = new Request('https://tracker.example/api/rewards?profile_id=p', {
+    headers: { host: 'tracker.example' }
+  });
+  assert.equal(
+    (
+      await forward(hosted, 'http://backend:8000', fetcher, {
+        mode: 'public',
+        publicOrigin: 'https://tracker.example',
+        allowedBackends: ['http://backend:8000']
+      })
+    ).status,
+    404
+  );
+  for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+    const mutation = new Request('http://127.0.0.1:3000/api/rewards?profile_id=p', {
+      method,
+      headers: { host: '127.0.0.1:3000', 'content-type': 'application/json' },
+      body: '{}'
+    });
+    assert.equal((await forward(mutation, 'http://127.0.0.1:8000', fetcher)).status, 404);
+  }
+  assert.deepEqual(calls, [`http://127.0.0.1:8000/api/rewards?${query}`]);
+  calls.length = 0;
+  await createClient(fetcher).rewards('p', null, [], 0, 100);
+  assert.deepEqual(calls, ['/api/rewards?profile_id=p&rarity=__none__&offset=0&limit=100']);
+});
+
 function file(path: string, text = '{}', size = new TextEncoder().encode(text).length): ExportFile {
   return {
     name: path.split('/').at(-1)!,

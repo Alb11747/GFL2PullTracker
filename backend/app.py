@@ -105,6 +105,25 @@ class HistoryItem(BaseModel):
     estimated_group_size: int
 
 
+class RarityBreakdown(BaseModel):
+    rarity: str
+    count: int
+    percent: float
+
+
+class RewardsOutput(BaseModel):
+    types: list[int]
+    selectedType: int | None
+    currentPity: int
+    currentUncertain: bool
+    average: float | None
+    lastElite: HistoryItem | None
+    breakdown: list[RarityBreakdown]
+    availableRarities: list[str]
+    total: int
+    items: list[HistoryItem]
+
+
 class HistoryOutput(BaseModel):
     items: list[HistoryItem]
     total: int
@@ -271,6 +290,12 @@ def create_app(data_dir=None, *, catalog_path=None, client_factory=None):
     def history(selected: dict = Depends(filters), page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200), store: Tracker = Depends(tracker)):
         rows = store.history(selected["profile_id"], selected)
         return dict(items=rows[(page-1)*page_size:page*page_size], total=len(rows), page=page, page_size=page_size, pages=max(1, math.ceil(len(rows)/page_size)))
+
+    @application.get("/api/rewards", response_model=RewardsOutput)
+    def rewards(profile_id: str, type_id: int | None = None, rarity: list[str] | None = Query(None),
+                offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=500),
+                store: Tracker = Depends(tracker)):
+        return store.rewards(profile_id, type_id, selection(rarity), offset, limit)
 
     @application.get("/api/overview", response_model=list[HistoryItem])
     def overview(profile_id: str, store: Tracker = Depends(tracker)):

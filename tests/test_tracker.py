@@ -401,3 +401,111 @@ def test_pity_gap_bridge_survives_filters_and_restart(client):
     from backend.tracker import Tracker
     tracker = Tracker(client.app.state.tracker.sessions)
     assert not tracker.history(p, {"rarity": "Elite"})[0]["pity_uncertain"]
+
+
+def test_rewards_are_bounded_and_keep_whole_recruitment_summaries(client):
+    p = profile(client)
+    other = profile(client, "Other")
+    load(client, other, document([record(1015)]))
+    source = [record(item, time=1784800600 - i) for i, item in enumerate(
+        [1001, 1013, 1008, 1009, 1015, 1001, 1021, 10131, 999999])]
+    source.extend([record(1013, type_id=6), record(1001, type_id=1)])
+    assert load(client, p, document(source)).status_code == 201
+    rows = [r for r in client.get("/api/overview", params={"profile_id": p}).json() if r["type_id"] == 3]
+    elites = [r for r in rows if r["rarity"] == "Elite"]
+    known = [r for r in elites if not r["pity_uncertain"]]
+    response = client.get("/api/rewards", params={"profile_id": p, "limit": 1, "offset": 1})
+    assert response.status_code == 200
+    result = response.json()
+    assert result["types"] == [1, 3, 6]
+    assert result["selectedType"] == 3
+    assert result["items"] == elites[1:2]
+    assert result["total"] == len(elites)
+    assert result["lastElite"] == elites[0]
+    assert result["currentPity"] == rows[0]["pity"]
+    assert result["currentUncertain"] == rows[0]["pity_uncertain"]
+    assert result["average"] == sum(r["pity"] for r in known) / len(known)
+    assert result["availableRarities"] == ["Elite", "Standard", "Retired", "Unknown"]
+    assert sum(r["count"] for r in result["breakdown"]) == len(rows)
+    assert sum(r["percent"] for r in result["breakdown"]) == pytest.approx(100)
+    filtered = client.get("/api/rewards", params=[("profile_id", p), ("rarity", "Standard"),
+        ("rarity", "Retired"), ("limit", 2)]).json()
+    assert filtered["items"] == [r for r in rows if r["rarity"] in ("Standard", "Retired")][:2]
+    for key in ("currentPity", "currentUncertain", "average", "breakdown", "lastElite"):
+        assert filtered[key] == result[key]
+    empty = client.get("/api/rewards", params={"profile_id": p, "rarity": "__none__"}).json()
+    assert empty["items"] == [] and empty["total"] == 0
+    assert empty["breakdown"] == result["breakdown"]
+    beyond = client.get("/api/rewards", params={"profile_id": p, "offset": 100}).json()
+    assert beyond["items"] == [] and beyond["total"] == len(elites)
+    assert not {"record_key", "occurrence", "raw_record"} & result["items"][0].keys()
+
+
+def test_rewards_defaults_empty_profiles_and_request_bounds(client):
+    p = profile(client)
+    empty = client.get("/api/rewards", params={"profile_id": p, "rarity": "Unknown"}).json()
+    assert empty["selectedType"] is None
+    assert empty["currentPity"] == 0 and empty["currentUncertain"] is False
+    assert empty["average"] is None and empty["lastElite"] is None
+    assert empty["total"] == 0 and empty["items"] == []
+    assert empty["availableRarities"] == ["Elite", "Standard", "Retired", "Unknown"]
+    assert [r["rarity"] for r in empty["breakdown"]] == ["Elite", "Standard", "Retired"]
+    load(client, p, document([record(1013, type_id=6), record(1015, type_id=1)]))
+    for selected in (None, 0, 3, 999):
+        params = {"profile_id": p, **({"type_id": selected} if selected is not None else {})}
+        result = client.get("/api/rewards", params=params).json()
+        assert result["selectedType"] == 1
+        assert result["currentPity"] == 0 and result["currentUncertain"] is False
+    assert client.get("/api/rewards", params={"profile_id": p, "type_id": 6}).json()["selectedType"] == 6
+    for key, value in (("limit", 0), ("limit", 501), ("offset", -1)):
+        assert client.get("/api/rewards", params={"profile_id": p, key: value}).status_code == 422
+    assert client.get("/api/rewards", params={"profile_id": "missing"}).status_code == 404
+
+
+def test_history_cache_reuses_annotations_and_refreshes_only_changed_profiles(client, monkeypatch):
+    from backend import tracker as tracker_module
+    p, other = profile(client), profile(client, "Other")
+    first = document([record(1013), record(1001)])
+    load(client, p, first)
+    load(client, other, first)
+    original = tracker_module.annotate_history
+    calls = []
+    def annotate(rows, documents, endpoint):
+        calls.append(len(rows))
+        return original(rows, documents, endpoint)
+    monkeypatch.setattr(tracker_module, "annotate_history", annotate)
+    store = client.app.state.tracker
+    original_rows = store.history(p, {})
+    store.history(other, {})
+    store.history(p, {"rarity": "Elite"})
+    store.rewards(p, 3, ["Elite"], 0, 1)
+    store.rewards(p, 3, ["Standard"], 1, 1)
+    assert calls == [2, 2]
+    original_rows[0]["pity"] = -100  # Callers cannot poison cached annotations.
+    assert store.history(p, {})[0]["pity"] >= 0
+    assert load(client, p, first).json()["duplicate"]
+    store.history(p, {})
+    assert calls == [2, 2]
+    # A second tracker has its own cache/lock but commits into the same archive.
+    writer = tracker_module.Tracker(store.sessions)
+    writer.import_snapshot(p, document([record(1015), record(1013), record(1001)]))
+    assert [r["item_id"] for r in store.history(p, {})] == [1015, 1013, 1001]
+    assert store.rewards(p, 3, ["Elite"])["total"] == 2
+    store.history(other, {})
+    assert calls == [2, 2, 3]
+
+
+def test_history_cache_survives_failed_import(client):
+    store = client.app.state.tracker
+    p = profile(client)
+    load(client, p, document([record(1013)]))
+    before = store.rewards(p)
+    def fail_insert(*args):
+        raise RuntimeError("Simulated storage failure")
+    event.listen(Pull, "before_insert", fail_insert)
+    try:
+        with pytest.raises(RuntimeError, match="Simulated storage failure"):
+            store.import_snapshot(p, document([record(1015), record(1013)]))
+    finally:
+        event.remove(Pull, "before_insert", fail_insert)
+    assert store.rewards(p) == before

@@ -12,10 +12,15 @@ older exports. A partial capture cannot prove the start of a pity interval.
 
 Select a compressed tracker backup by itself; it cannot be combined with JSON
 exports or other backups. The picker recognizes gzip content rather than trusting
-the filename, then checks the backup format, version, integrity, schema, and size
+the filename, then checks the backup format, integrity, unversioned schema, and size
 limits before opening **Backup & sync** with the file retained. Selecting it does
 not restore automatically. **Restore a tracker backup** opens the same controls
 without requiring a selection in the import panel.
+
+Earlier versioned tracker backups are unsupported after the deliberate
+[prerelease reset](GOOGLE_DRIVE.md#prerelease-archive-reset). Reimport original
+collector or supported Exilium exports to rebuild history. Their independent
+source format versions are unchanged by the tracker archive reset.
 
 Backups restore their contained profiles into the browser archive, rather than
 putting every profile's history into the currently selected profile. Each newly
