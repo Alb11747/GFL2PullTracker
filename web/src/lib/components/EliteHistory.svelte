@@ -27,6 +27,7 @@
   let selectedId: number | null = null;
   const windowLimit = 200;
   let visibleBatches = 1;
+  let showAll = false;
   let offset = 0;
   let mounted = false;
   let pending = false;
@@ -35,7 +36,12 @@
   let requestId = 0;
   let activeContext = '';
   let overview: ProfileOverview | null = null;
-  // Keep query controls mounted while discarding the previous context's data.
+  let stale = false;
+  let loadedProfile = '';
+  let loadedTitle = '';
+  let pagination: HTMLDivElement | undefined;
+  let paginationHeight = 0;
+  // Keep query controls mounted while loading another context.
   let types: number[] = [];
   let lastSelectedType: number | null = null;
   let availableRarityKeys: string[] = [];
@@ -61,10 +67,11 @@
     });
 
   // A context change invalidates details and pagination before dispatching a query.
-  // The query result carries only one bounded window and precomputed summaries.
+  // Queries stay bounded, including when the user explicitly expands all rewards.
   $: context = JSON.stringify([profileId, revision, selectedType, selectedRarities]);
   $: resetContext(context);
-  $: limit = offset > 0 ? windowLimit : Math.min(windowLimit, previewLimit * visibleBatches);
+  $: limit =
+    showAll || offset > 0 ? windowLimit : Math.min(windowLimit, previewLimit * visibleBatches);
   $: void load(
     mounted && !loading,
     query,
@@ -74,9 +81,15 @@
     selectedRarities,
     offset,
     limit,
+    showAll,
     retry
   );
   $: busy = loading || pending;
+  // Rarity filters and pagination only affect reward cards, not recruitment statistics.
+  $: summaryStale =
+    stale &&
+    (loadedProfile !== profileId ||
+      (selectedType !== null && selectedType !== overview?.selectedType));
   $: failure = error || queryError;
   $: shown = overview?.items ?? [];
   $: selected = busy || failure ? undefined : shown.find((row) => row.id === selectedId);
@@ -85,6 +98,9 @@
       rarity.key !== 'Unknown' ||
       selectedRarities.includes('Unknown') ||
       availableRarityKeys.includes('Unknown')
+  );
+  $: allRaritiesSelected = availableRarities.every((rarity) =>
+    selectedRarities.includes(rarity.key)
   );
   $: historyTitle = selectedRarities.length
     ? `${rewardRarities
@@ -108,6 +124,7 @@
     rarities: string[],
     start: number,
     count: number,
+    all: boolean,
     _retry: number
   ) {
     const id = ++requestId;
@@ -117,6 +134,7 @@
     }
     if (!profile) {
       overview = null;
+      stale = false;
       types = [];
       pending = false;
       queryError = '';
@@ -127,7 +145,27 @@
     try {
       const result = await fetchOverview(profile, type, [...rarities], start, count);
       if (!mounted || id !== requestId) return;
+      if (all) {
+        // Read sequential pages so Show all works in both browser and local-server mode.
+        // Context changes or Show fewer cancel the remaining reads and discard stale results.
+        while (result.items.length < result.total) {
+          const page = await fetchOverview(
+            profile,
+            result.selectedType,
+            [...rarities],
+            result.items.length,
+            windowLimit
+          );
+          if (!mounted || id !== requestId) return;
+          if (!page.items.length || page.total !== result.total)
+            throw new Error('Reward history changed while loading. Please try again.');
+          result.items.push(...page.items);
+        }
+      }
       overview = result;
+      loadedProfile = profile;
+      stale = false;
+      loadedTitle = historyTitle;
       types = result.types;
       lastSelectedType = result.selectedType;
       availableRarityKeys = result.availableRarities;
@@ -139,6 +177,8 @@
       }
     } catch (cause) {
       if (!mounted || id !== requestId) return;
+      if (stale) overview = null;
+      stale = false;
       queryError = cause instanceof Error ? cause.message : 'Could not load recruitment history.';
     } finally {
       if (mounted && id === requestId) pending = false;
@@ -184,10 +224,14 @@
   function resetContext(next: string) {
     if (activeContext === next) return;
     activeContext = next;
-    overview = null;
+    // Keep the previous geometry during loading, but hide its data until the
+    // new context succeeds. Clearing it here collapses the page between queries.
+    if (!stale) paginationHeight = pagination?.getBoundingClientRect().height ?? 0;
+    stale = overview !== null;
     focusWindow = false;
     selectedId = null;
     visibleBatches = 1;
+    showAll = false;
     offset = 0;
   }
   function moveWindow(direction: -1 | 1) {
@@ -202,6 +246,13 @@
       : rewardRarities
           .filter((rarity) => rarity.key === key || selectedRarities.includes(rarity.key))
           .map((rarity) => rarity.key);
+    persistRarities();
+  }
+  function toggleAllRarities() {
+    selectedRarities = allRaritiesSelected ? [] : availableRarities.map((rarity) => rarity.key);
+    persistRarities();
+  }
+  function persistRarities() {
     try {
       localStorage.setItem(REWARD_RARITIES_KEY, JSON.stringify(selectedRarities));
     } catch {
@@ -218,8 +269,13 @@
   }
 </script>
 
-<section class="elite-overview" aria-label="Recruitment overview" aria-busy={busy}>
-  {#if busy}<p class="state" role="status">Loading recruitment history…</p>{/if}
+<section
+  class="elite-overview"
+  class:stale
+  class:summary-stale={summaryStale}
+  aria-label="Recruitment overview"
+  aria-busy={busy}
+>
   {#if failure}
     <p class="state error" role="alert">{failure}</p>
     <button on:click={() => retry++}>Retry recruitment history</button>
@@ -274,24 +330,31 @@
     <section class="elite-history" aria-label={historyTitle}>
       <div class="section-heading">
         <h2 bind:this={historyHeading} tabindex="-1">
-          {historyTitle}
+          {overview ? loadedTitle : historyTitle}
           {#if overview}<span>{overview.total.toLocaleString()} rewards</span>{/if}
         </h2>
-        <span>Newest first</span>
+        <div class="history-tools">
+          <span class="sort-order">Newest first</span>
+          <fieldset class="rarity-controls">
+            <legend>Show rarities</legend>
+            {#each availableRarities as rarity}
+              <label class:chosen={selectedRarities.includes(rarity.key)}>
+                <input
+                  type="checkbox"
+                  checked={selectedRarities.includes(rarity.key)}
+                  on:change={() => toggleRarity(rarity.key)}
+                />
+                <span>{rarity.label}</span>
+              </label>
+            {/each}
+            <button
+              class="all-rarities"
+              aria-pressed={allRaritiesSelected}
+              on:click={toggleAllRarities}>All</button
+            >
+          </fieldset>
+        </div>
       </div>
-      <fieldset class="rarity-controls">
-        <legend>Show rarities</legend>
-        {#each availableRarities as rarity}
-          <label class:chosen={selectedRarities.includes(rarity.key)}>
-            <input
-              type="checkbox"
-              checked={selectedRarities.includes(rarity.key)}
-              on:change={() => toggleRarity(rarity.key)}
-            />
-            {rarity.label}
-          </label>
-        {/each}
-      </fieldset>
       <div class="portrait-grid" use:measureRows>
         {#each shown as row (row.id)}
           <button
@@ -330,21 +393,35 @@
         {/each}
       </div>
       {#if overview?.total}
-        <div class="history-pagination">
-          {#if offset === 0 && limit < windowLimit && shown.length < overview.total}
+        <div
+          class="history-pagination"
+          bind:this={pagination}
+          style:height={stale ? `${paginationHeight}px` : undefined}
+        >
+          {#if !showAll && offset === 0 && limit < windowLimit && shown.length < overview.total}
             <button disabled={busy} on:click={() => (visibleBatches += 1)}>Show more</button>
           {/if}
-          {#if offset > 0}
-            <button disabled={busy} on:click={() => moveWindow(-1)}>Previous rewards</button>
-          {/if}
-          {#if limit === windowLimit && offset + shown.length < overview.total}
-            <button disabled={busy} on:click={() => moveWindow(1)}>Next rewards</button>
-          {/if}
-          {#if visibleBatches > 1 || offset > 0}
+          {#if !showAll && (offset > 0 || shown.length < overview.total)}
             <button
               disabled={busy}
               on:click={() => {
+                offset = 0;
+                showAll = true;
+              }}>Show all</button
+            >
+          {/if}
+          {#if !showAll && offset > 0}
+            <button disabled={busy} on:click={() => moveWindow(-1)}>Previous rewards</button>
+          {/if}
+          {#if !showAll && limit === windowLimit && offset + shown.length < overview.total}
+            <button disabled={busy} on:click={() => moveWindow(1)}>Next rewards</button>
+          {/if}
+          {#if showAll || visibleBatches > 1 || offset > 0}
+            <button
+              disabled={loading || (pending && !showAll)}
+              on:click={() => {
                 visibleBatches = 1;
+                showAll = false;
                 offset = 0;
                 selectedId = null;
               }}>Show fewer</button
@@ -488,8 +565,17 @@
 
 <style>
   .elite-overview {
+    position: relative;
     margin-block: 24px;
     min-width: 0;
+  }
+  /* Hidden content keeps its dimensions and is excluded from focus and the
+     accessibility tree, so old account data is never relabeled as new data. */
+  .stale :is(.section-heading h2, .portrait-grid, .history-pagination, .empty) {
+    visibility: hidden;
+  }
+  .summary-stale :is(.current-pity, .metrics, .rarity-breakdown) {
+    visibility: hidden;
   }
   .overview-toolbar {
     display: flex;
@@ -562,10 +648,10 @@
   }
   .section-heading {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     justify-content: space-between;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: 16px 24px;
     margin-bottom: 18px;
   }
   h2 {
@@ -580,7 +666,14 @@
     margin-left: 10px;
     color: var(--muted);
   }
-  .section-heading > span {
+  .history-tools {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px 20px;
+    margin-left: auto;
+  }
+  .sort-order {
     color: var(--muted);
     font-size: 0.9rem;
   }
@@ -679,38 +772,90 @@
   }
   .rarity-controls {
     display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
     border: 0;
     padding: 0;
-    margin: 0 0 20px;
+    margin: 0;
+    min-width: 0;
   }
-  .rarity-controls legend {
-    margin-bottom: 8px;
-    color: var(--muted);
-    font-size: 0.9rem;
+  .rarity-controls legend,
+  .rarity-controls input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
   .rarity-controls label {
+    position: relative;
     display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
-    border: 1px solid var(--control-line);
-    border-radius: 3px;
     cursor: pointer;
   }
-  .rarity-controls label:hover {
+  .rarity-controls label span,
+  .all-rarities {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 64px;
+    min-height: 44px;
+    padding: 8px 14px;
+    border: 1px solid var(--control-line);
+    border-radius: 0;
+    color: var(--muted);
+    font-size: 0.95rem;
+    font-weight: 600;
+  }
+  .rarity-controls label:not(:first-of-type) span,
+  .all-rarities {
+    border-left: 0;
+  }
+  .rarity-controls label:first-of-type span {
+    border-radius: 3px 0 0 3px;
+  }
+  .all-rarities {
+    border-radius: 0 3px 3px 0;
+    font-weight: 400;
+  }
+  .rarity-controls label:hover span,
+  .all-rarities:hover {
     background: var(--surface-hover);
   }
-  .rarity-controls label.chosen {
-    border-color: var(--accent-text);
+  .rarity-controls label.chosen span,
+  .all-rarities[aria-pressed='true'] {
+    background: var(--ink);
+    color: var(--white);
+    border-color: var(--ink);
   }
-  .rarity-controls input {
-    margin: 0;
-    width: 16px;
-    height: 16px;
-    accent-color: var(--accent-text);
+  .rarity-controls input:focus-visible + span,
+  .all-rarities:focus-visible {
+    position: relative;
+    z-index: 1;
+    outline: 2px solid var(--accent-text);
+    outline-offset: 3px;
+  }
+  @media (max-width: 600px) {
+    .history-tools {
+      width: 100%;
+      justify-content: space-between;
+    }
+    .rarity-controls {
+      flex: 1 0 100%;
+    }
+    .rarity-controls label,
+    .all-rarities {
+      flex: 1;
+    }
+    .rarity-controls label span {
+      width: 100%;
+    }
+    .rarity-controls label span,
+    .all-rarities {
+      min-width: 44px;
+      padding-inline: 6px;
+      font-size: 0.875rem;
+    }
   }
   .reward-dialog {
     width: min(700px, calc(100vw - 32px));

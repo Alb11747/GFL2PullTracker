@@ -24,6 +24,22 @@ were recorded. Initial navigation to the empty history paint opportunity took
 Pending synthetic network work does not measure full sync CPU contention or
 authenticated Google latency.
 
+## Reward loading follow-up
+
+The production fixture was rerun against `731635c` on the same reference device,
+adding separate query/reply timing and rarity-selection interactions. Across
+1,000, 10,000, and 30,000 records, rarity queries took 4.7–7.5 ms and the next
+paint-opportunity estimate was 33.2–33.9 ms. Recruitment queries took 9.3–15.4 ms
+within 33.2–33.5 ms interactions. Each action was repeated three times per size.
+Time after the reply includes UI updates and animation-frame scheduling, not
+solely rendering CPU time.
+
+The reward spinner tracked only the pending query and was removed before Svelte's
+result update and paint. Its usual lifetime was shorter than one frame, making
+the animation unhelpful despite passing an artificially held-query animation test.
+It has been removed; pending queries retain `aria-busy`, stable layout space, and
+the current recruitment statistics while rarity filters change.
+
 ## Archive worker
 
 The separately optimized worker fixture includes IndexedDB and worker round trips,

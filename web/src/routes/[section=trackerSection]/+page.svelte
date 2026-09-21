@@ -857,17 +857,6 @@
       ><span class="wordmark-sub">PULL TRACKER</span></span
     ></a
   >
-  {#if hosted}
-    <nav class="archive-nav" aria-label="Tracker navigation">
-      {#each trackerPages as item}
-        <a
-          href={`/${item.slug}`}
-          class:chosen={section === item.slug}
-          aria-current={section === item.slug ? 'page' : undefined}>{item.label}</a
-        >
-      {/each}
-    </nav>
-  {/if}
   <div class="header-controls">
     <label class="profile-select"
       ><span>Profile</span><select
@@ -892,6 +881,17 @@
       >Import history</button
     >
   </div>
+  {#if hosted}
+    <nav class="archive-nav" aria-label="Tracker navigation">
+      {#each trackerPages as item}
+        <a
+          href={`/${item.slug}`}
+          class:chosen={section === item.slug}
+          aria-current={section === item.slug ? 'page' : undefined}>{item.label}</a
+        >
+      {/each}
+    </nav>
+  {/if}
 </header>
 
 <main>

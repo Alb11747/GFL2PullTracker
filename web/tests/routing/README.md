@@ -53,10 +53,12 @@ pagination, search, recruitment selection, profile switches, and route navigatio
 All measured browsing goes through production controls and components.
 
 Each action records event-to-render/next-paint-opportunity time, first worker-query
-dispatch delay, time after query dispatch, DOM mutation count, and whether background
+dispatch delay, query round-trip time, time after the reply, time after query dispatch,
+DOM mutation count, and whether background
 sync was pending. Completion uses actual worker replies, DOM readiness, and animation
 frames; it does not include the ordinary regression suite's fixed polling delay.
 Two frames approximate a paint opportunity, not an exact hardware presentation time.
+Time after a reply includes UI updates and frame scheduling; it is not pure rendering CPU time.
 Search reports include the intentional 100 ms debounce and are separated from the
 other warm actions' maximum, p95, and 200 ms target. Long tasks and import times are
 reported separately. Results remain visible and in `window.routingPerformanceResults`.

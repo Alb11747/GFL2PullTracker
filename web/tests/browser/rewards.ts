@@ -87,6 +87,13 @@ async function reload(seed = rows) {
 const cards = () => [
   ...fixture.querySelectorAll<HTMLButtonElement>('button[aria-haspopup="dialog"]')
 ];
+function previousDataIsHidden() {
+  return [
+    ...fixture.querySelectorAll(
+      '.current-pity, .portrait-grid, .history-pagination, .metrics, .rarity-breakdown, .section-heading h2'
+    )
+  ].every((node) => getComputedStyle(node).visibility === 'hidden');
+}
 const dialog = () => fixture.querySelector<HTMLDialogElement>('dialog')!;
 function checkboxes() {
   return [...fixture.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
@@ -186,6 +193,34 @@ run.onclick = async () => {
             'Empty selection guidance'
           );
       }
+    });
+    await test('All toggles all available rarities and none, with persistent selection', async () => {
+      await choose(1);
+      button('All').click();
+      await settle();
+      assert(
+        checkboxes().every((input) => input.checked),
+        'All selects every available rarity'
+      );
+      assert(button('All').getAttribute('aria-pressed') === 'true', 'All selected state');
+      await reload();
+      assert(
+        checkboxes().every((input) => input.checked),
+        'All preference persists'
+      );
+      button('All').click();
+      await settle();
+      assert(
+        checkboxes().every((input) => !input.checked),
+        'All clears every rarity'
+      );
+      assert(button('All').getAttribute('aria-pressed') === 'false', 'All cleared state');
+      assert(cards().length === 0, 'Clearing all empties history');
+      await reload();
+      assert(
+        checkboxes().every((input) => !input.checked),
+        'Cleared preference persists'
+      );
     });
     await test('Selection persists, including none; corrupt or unavailable storage falls back to 5★', async () => {
       await choose(6);
@@ -318,7 +353,7 @@ run.onclick = async () => {
       await settle();
       assert(!dialog().open, 'Removed record left stale dialog');
     });
-    await test('Large histories stay bounded across expansion, paging and collapse', async () => {
+    await test('Large histories support bounded paging, Show all, and collapse', async () => {
       localStorage.setItem(REWARD_RARITIES_KEY, JSON.stringify(['Elite']));
       const large = Array.from({ length: 601 }, (_, index) => ({
         ...rows[0],
@@ -358,6 +393,23 @@ run.onclick = async () => {
         cards().length === 200 && cards()[0].textContent?.includes('Large reward 401'),
         'Previous window failed'
       );
+      const summaryBefore = statistics();
+      button('Show all').click();
+      await settle();
+      assert(cards().length === 601, 'Show all must include every reward beyond the page limit');
+      assert(
+        cards()[0].textContent?.includes('Large reward 1') &&
+          cards()[600].textContent?.includes('Large reward 601'),
+        'Show all must start at the beginning and retain recorded order'
+      );
+      assert(statistics() === summaryBefore, 'Show all must not change recruitment statistics');
+      cards()[600].click();
+      await settle();
+      assert(
+        dialog().open && dialog().textContent?.includes('Large reward 601'),
+        'Last reward details unavailable'
+      );
+      dialog().close();
       button('Show fewer').click();
       await settle();
       assert(
@@ -369,18 +421,103 @@ run.onclick = async () => {
         'Query exceeded bounded payload'
       );
     });
+    await test('Show fewer cancels an in-flight Show all expansion', async () => {
+      const large = Array.from({ length: 601 }, (_, index) => ({
+        ...rows[0],
+        id: index + 1,
+        name: `Cancel reward ${index + 1}`,
+        timestamp_order: index
+      }));
+      await reload(large);
+      const previewCount = cards().length;
+      mounted!.deferQueries();
+      button('Show all').click();
+      await settle();
+      mounted!.finishQuery();
+      await settle();
+      assert(mounted!.pendingCount() === 1, 'Expected a pending second page');
+      button('Show fewer').click();
+      await settle();
+      mounted!.finishQuery(1);
+      await settle();
+      const requestCount = mounted!.requests.length;
+      mounted!.finishQuery();
+      await settle();
+      assert(cards().length === previewCount, 'A stale Show all page replaced the preview');
+      assert(mounted!.requests.length === requestCount, 'Cancelled expansion kept fetching pages');
+    });
+    await test('Loading selections preserve layout without exposing stale rewards', async () => {
+      for (const selection of ['rarity', 'recruitment', 'profile', 'expanded rarity']) {
+        localStorage.setItem(REWARD_RARITIES_KEY, JSON.stringify(keys));
+        await reload();
+        if (selection === 'expanded rarity') {
+          button('Show all').click();
+          await settle();
+        }
+        const geometry = () =>
+          [
+            ...fixture.querySelectorAll(
+              '.elite-overview, .overview-toolbar, .section-heading, .portrait-grid, .history-pagination, .metrics, .rarity-breakdown'
+            )
+          ].map((node) => {
+            const rect = node.getBoundingClientRect();
+            return [rect.top, rect.left, rect.width, rect.height];
+          });
+        const before = geometry();
+        const summaryBefore = statistics();
+        mounted!.deferQueries();
+        if (selection.includes('rarity')) checkboxes()[0].click();
+        else if (selection === 'recruitment') {
+          const select = fixture.querySelector('select')!;
+          select.value = '1';
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+        } else mounted!.changeProfile();
+        await settle();
+        const after = geometry();
+        assert(
+          before.length === after.length &&
+            before.every((rect, i) =>
+              rect.every((value, j) => Math.abs(value - after[i][j]) < 0.5)
+            ),
+          `${selection} loading moved the recruitment layout`
+        );
+        if (selection.includes('rarity')) {
+          assert(statistics() === summaryBefore, 'Rarity loading changed recruitment statistics');
+          for (const selector of ['.current-pity', '.metrics', '.rarity-breakdown']) {
+            const node = fixture.querySelector(selector)!;
+            assert(
+              getComputedStyle(node).visibility === 'visible',
+              `${selector} disappeared during rarity loading`
+            );
+          }
+          assert(
+            getComputedStyle(fixture.querySelector('.portrait-grid')!).visibility === 'hidden',
+            'Pending rarity filter exposed old rewards'
+          );
+        } else assert(previousDataIsHidden(), `${selection} loading exposed stale data`);
+        assert(
+          fixture.querySelector('.elite-overview[aria-busy="true"]'),
+          'Pending query is not marked busy'
+        );
+        assert(
+          !fixture.querySelector('.spinner, .loading-state, .loading-slot'),
+          'Transient spinner returned'
+        );
+        mounted!.finishQuery();
+        await settle();
+        assert(
+          !fixture.querySelector('.elite-overview[aria-busy="true"]'),
+          'Busy state remained after completion'
+        );
+      }
+      localStorage.setItem(REWARD_RARITIES_KEY, JSON.stringify(keys));
+    });
     await test('Late async results cannot replace a newer profile revision', async () => {
       await reload();
       mounted!.deferQueries();
       mounted!.changeProfile();
       await settle();
-      assert(cards().length === 0, 'Pending profile retained previous rewards');
-      assert(
-        !fixture.querySelector(
-          '.current-pity, .metrics, .rarity-breakdown, .section-heading h2 span'
-        ),
-        'Pending profile retained previous counts or summary'
-      );
+      assert(previousDataIsHidden(), 'Pending profile exposed previous rewards or summary');
       mounted!.replaceRows([{ ...rows[0], name: 'Newest revision reward' }]);
       await settle();
       assert(mounted!.pendingCount() === 2, 'Expected one request per changed context');
@@ -404,16 +541,7 @@ run.onclick = async () => {
       const inputs = checkboxes();
       mounted!.changeProfile();
       await settle();
-      assert(
-        cards().length === 0 && !fixture.textContent?.includes(previousName),
-        'Pending profile relabeled previous reward data'
-      );
-      assert(
-        !fixture.querySelector(
-          '.current-pity, .metrics, .rarity-breakdown, .section-heading h2 span'
-        ),
-        'Pending profile relabeled previous summary data'
-      );
+      assert(previousDataIsHidden(), 'Pending profile exposed previous rewards or summary');
       assert(
         fixture.querySelector('select') === select &&
           !select.disabled &&
@@ -447,7 +575,7 @@ run.onclick = async () => {
     });
     localStorage.setItem(REWARD_RARITIES_KEY, JSON.stringify(keys));
     await reload();
-    summary.textContent = 'PASS: 10 reward-history browser regression groups';
+    summary.textContent = 'PASS: 13 reward-history browser regression groups';
     results.textContent +=
       'Manual check: activate a reward using Enter/Space, cycle Tab/Shift+Tab inside the modal, press Escape, and verify focus returns. Synthetic key events do not invoke native browser default actions.\n';
   } catch (error) {
@@ -459,4 +587,10 @@ run.onclick = async () => {
 };
 document.querySelector<HTMLButtonElement>('#reload')!.onclick = () => void reload();
 document.querySelector<HTMLButtonElement>('#profile')!.onclick = () => mounted?.changeProfile();
-void reload();
+void reload().then(() => {
+  // A reproducible held request for desktop/mobile visual loading-state review.
+  if (new URLSearchParams(location.search).get('loading') === '1') {
+    mounted!.deferQueries();
+    checkboxes()[0].click();
+  }
+});

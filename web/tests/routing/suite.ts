@@ -322,7 +322,8 @@
     !document.querySelector('.elite-overview[aria-busy="true"]') &&
     !document.querySelector('.history-title')?.textContent?.includes('Loading records');
   type Interaction = { action: string; eventToPaintMs: number; queryDispatchDelayMs: number | null;
-    afterQueryDispatchMs: number | null; mutations: number; duringHeldDriveSync: boolean };
+    afterQueryDispatchMs: number | null; queryRoundTripMs: number | null;
+    afterQueryReplyMs: number | null; mutations: number; duringHeldDriveSync: boolean };
   async function interaction(action: string, invoke: () => void, check: () => unknown, method?: string): Promise<Interaction> {
     const first = queryTimings.length;
     let mutations = 0;
@@ -343,6 +344,8 @@
       return { action, eventToPaintMs: rounded(end - start),
         queryDispatchDelayMs: firstQuery ? rounded(firstQuery.issued - start) : null,
         afterQueryDispatchMs: firstQuery ? rounded(end - firstQuery.issued) : null,
+        queryRoundTripMs: firstQuery?.completed !== undefined ? rounded(firstQuery.completed - firstQuery.issued) : null,
+        afterQueryReplyMs: firstQuery?.completed !== undefined ? rounded(end - firstQuery.completed) : null,
         mutations, duringHeldDriveSync };
     } finally { observer.disconnect(); }
   }
@@ -432,6 +435,8 @@
           const recruitment = required(document.querySelector<HTMLSelectElement>('.recruitment-select select'), 'recruitment selection');
           const next = required([...recruitment.options].find((option) => option.value !== recruitment.value), 'other recruitment');
           timings.push(await interaction('recruitment', () => input(recruitment, next.value), historySettled, 'rewards'));
+          const allRarities = required(document.querySelector<HTMLButtonElement>('.all-rarities'), 'all rarity selection');
+          timings.push(await interaction('reward rarity selection', () => allRarities.click(), historySettled, 'rewards'));
           const other = profiles[(profiles.indexOf(profile) + 1) % profiles.length];
           timings.push(await interaction('profile switch away', () => input(activeProfile(), other.id), historySettled, 'history'));
           timings.push(await interaction('profile switch back', () => input(activeProfile(), profile.id), historySettled, 'history'));

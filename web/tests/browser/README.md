@@ -19,3 +19,15 @@ The controlled baseline reconstructs the current engine separately for history, 
 Open http://127.0.0.1:14194/rewards.html and press **Run tests** for production reward-history component coverage using synthetic records, local artwork, production styles and fonts. The suite verifies all rarity combinations, selection persistence/corruption, two-row pagination, unchanged statistics, recorded ordering, detail facts/focus return, unavailable and failed artwork, and stale selections across profile/recruitment/data changes. It modifies only the reward-display preference on this isolated origin and retains an interactive fixture after completion.
 
 For native keyboard behavior, focus a reward and use Enter/Space, Tab/Shift+Tab, and Escape; verify focus stays inside the dialog while open and returns to its trigger afterward. Check the retained fixture at desktop and narrow mobile widths. These require trusted browser input: dispatched keyboard events do not trigger native dialog defaults.
+
+Append `?loading=1` to the reward fixture URL to hold a rarity query for visual
+inspection of unchanged pity and reserved layout space. Reload fixture
+or Run tests exits the held preview.
+The brief query wait has no spinner; the region exposes its pending state through
+`aria-busy` without adding a transient visual indicator.
+
+Reward expansion includes **Show more**, **Show all**, and **Show fewer**. Ordinary
+expansion and paging render at most 200 cards; Show all explicitly expands every
+matching reward using sequential queries of at most 200 records. Show fewer can
+cancel a pending full expansion. The suite checks full ordering, final-item details,
+unchanged summaries, and cancellation without allowing stale pages to replace the preview.
