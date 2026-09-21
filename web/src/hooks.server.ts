@@ -5,8 +5,10 @@ import { backendUrl } from '$lib/proxy';
 import { reportServerError } from '$lib/telemetry/server';
 import { requestTelemetryAllowed } from '$lib/telemetry/server-policy';
 
-export const handleError: HandleServerError = ({ error, event }) => {
-  reportServerError(error, 'request', requestTelemetryAllowed(event.request.headers));
+export const handleError: HandleServerError = ({ error, event, status }) => {
+  // SvelteKit also calls this hook for expected failures such as unmatched routes.
+  if (status >= 500)
+    reportServerError(error, 'request', requestTelemetryAllowed(event.request.headers));
   return { message: 'The tracker could not complete this request.' };
 };
 
