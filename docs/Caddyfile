@@ -8,5 +8,8 @@
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "no-referrer"
 	}
-	reverse_proxy web:3000
+	reverse_proxy web:3000 {
+		# Replace any browser-supplied identity with the direct peer address.
+		header_up X-Real-IP {http.request.remote.host}
+	}
 }

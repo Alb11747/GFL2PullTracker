@@ -5,7 +5,8 @@ import { forward, backendUrl } from '../src/lib/proxy.ts';
 const options = {
   mode: 'public' as const,
   publicOrigin: 'https://tracker.example',
-  allowedBackends: ['http://api:8000']
+  allowedBackends: ['http://api:8000'],
+  clientAddress: '192.0.2.10'
 };
 function request(path: string, method = 'GET', headers: Record<string, string> = {}) {
   return new Request(`https://tracker.example/api/${path}`, {
@@ -41,6 +42,8 @@ test('public proxy forwards only its own session, preserves CSRF and session ren
     request('public/fetch', 'POST', {
       cookie: 'other=secret; gfl2_session=abc-123_DEF',
       authorization: 'private',
+      'x-gfl2-client-ip': '203.0.113.99',
+      'x-forwarded-for': '203.0.113.99',
       'x-csrf-token': 'a'.repeat(32)
     }),
     'http://api:8000',
@@ -48,6 +51,8 @@ test('public proxy forwards only its own session, preserves CSRF and session ren
       const headers = new Headers(init?.headers);
       assert.equal(headers.get('cookie'), 'gfl2_session=abc-123_DEF');
       assert.equal(headers.has('authorization'), false);
+      assert.equal(headers.get('x-gfl2-client-ip'), '192.0.2.10');
+      assert.equal(headers.has('x-forwarded-for'), false);
       assert.equal(headers.get('x-csrf-token'), 'a'.repeat(32));
       return new Response('{}', {
         headers: { 'set-cookie': 'gfl2_session=new; HttpOnly; Secure; SameSite=Strict' }
@@ -58,6 +63,43 @@ test('public proxy forwards only its own session, preserves CSRF and session ren
   assert.equal(response.status, 200);
   assert.match(response.headers.get('set-cookie')!, /HttpOnly/);
   assert.equal(response.headers.get('cache-control'), 'no-store');
+});
+test('public proxy requires a strict adapter address without forwarding forged browser identity', async () => {
+  let calls = 0;
+  const fetcher: typeof fetch = async () => {
+    calls++;
+    return Response.json({});
+  };
+  for (const clientAddress of [
+    undefined,
+    '',
+    'unknown',
+    '192.0.2.1,192.0.2.2',
+    '192.0.2.1:80',
+    '[::1]',
+    'fe80::1%eth0'
+  ]) {
+    const result = await forward(
+      request('public/config', 'GET', {
+        'x-real-ip': '192.0.2.1',
+        'x-gfl2-client-ip': '192.0.2.1'
+      }),
+      'http://api:8000',
+      fetcher,
+      { ...options, clientAddress }
+    );
+    assert.equal(result.status, 400);
+  }
+  assert.equal(calls, 0);
+  assert.equal(
+    (
+      await forward(request('public/config'), 'http://api:8000', fetcher, {
+        ...options,
+        clientAddress: '2001:db8::1'
+      })
+    ).status,
+    200
+  );
 });
 test('public cancellation permits only POST and preserves session, CSRF and origin boundaries', async () => {
   let calls = 0;

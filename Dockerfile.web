@@ -16,5 +16,5 @@ COPY --from=build --chown=node:node /app/web/package.json ./package.json
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD node -e "require('http').get({hostname:'127.0.0.1',port:3000,path:'/api/health',headers:{host:new URL(process.env.ORIGIN).host,origin:process.env.ORIGIN},timeout:3000},r=>{r.resume();if(r.statusCode!==200)process.exit(1)}).on('timeout',()=>process.exit(1)).on('error',()=>process.exit(1))"
+    CMD node -e "require('http').get({hostname:'127.0.0.1',port:3000,path:'/api/health',headers:{host:new URL(process.env.ORIGIN).host,origin:process.env.ORIGIN,'x-real-ip':'127.0.0.1'},timeout:3000},r=>{r.resume();if(r.statusCode!==200)process.exit(1)}).on('timeout',()=>process.exit(1)).on('error',()=>process.exit(1))"
 CMD ["node", "build"]

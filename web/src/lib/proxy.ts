@@ -1,9 +1,13 @@
+import { isIP } from 'node:net';
+
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
 const MAX_BODY = 64 * 1024 * 1024;
 export interface ProxyOptions {
   mode?: 'local' | 'public';
   publicOrigin?: string;
   allowedBackends?: string[];
+  /** Adapter-provided address from the trusted, overwriting ingress. */
+  clientAddress?: string;
 }
 export function backendUrl(configured: string, allowedBackends?: string[]): URL {
   const url = new URL(configured);
@@ -71,8 +75,13 @@ export async function forward(
     return failure('Use the tracker from the same local origin.', 403);
   const headers = new Headers();
   if (hosted) {
-    // Only the tracker session crosses this trust boundary; game and Google
-    // credentials must never be forwarded from ambient browser headers.
+    const address = options.clientAddress;
+    if (!address || address.includes('%') || !isIP(address))
+      return failure('A valid trusted client address is required.', 400);
+    // Never copy this internal header from the browser. The private API trusts
+    // the frontend, whose adapter uses an ingress-overwritten address header.
+    headers.set('x-gfl2-client-ip', address);
+    // Game and Google credentials must never cross in ambient browser headers.
     const cookie = request.headers
       .get('cookie')
       ?.split(';')

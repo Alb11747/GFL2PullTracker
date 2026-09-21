@@ -55,7 +55,7 @@ jobs:
           PUBLIC_ORIGIN: https://tracker.example.com
         run: |
           docker compose up -d --wait --wait-timeout 90
-          curl --fail --silent --show-error -H 'Host: tracker.example.com' -H 'Origin: https://tracker.example.com' http://127.0.0.1:3000/api/health
+          curl --fail --silent --show-error -H 'X-Real-IP: 127.0.0.1' -H 'Host: tracker.example.com' -H 'Origin: https://tracker.example.com' http://127.0.0.1:3000/api/health
           docker compose -f compose.yaml -f compose.https.yaml run --rm --no-deps proxy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
       - name: Stop test containers
         if: always()

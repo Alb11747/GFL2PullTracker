@@ -30,6 +30,7 @@ services:
       GFL2_MODE: public
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN}
       ORIGIN: ${PUBLIC_ORIGIN}
+      ADDRESS_HEADER: x-real-ip
       GFL2_FRONTEND_ORIGIN: ${PUBLIC_ORIGIN}
       GFL2_API_URL: http://api:8000
       GFL2_API_ALLOWED_ORIGINS: http://api:8000

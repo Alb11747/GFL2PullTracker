@@ -1,0 +1,14 @@
+title = "GFL2 tracker secret scanning"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "generic-api-key"
+
+[[rules.allowlists]]
+description = "Public localStorage preference name, not an API credential"
+condition = "AND"
+paths = ['''(^|/)web/src/lib/reward-history\.ts$''']
+regexTarget = "secret"
+regexes = ['''^gfl2\.reward-rarities$''']

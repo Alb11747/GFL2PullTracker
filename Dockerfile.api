@@ -14,5 +14,5 @@ COPY scripts/fetch_pull_history.py scripts/backup_database.py ./scripts/
 USER 10001:10001
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD python -c "import os, urllib.request, urllib.parse; origin=os.environ['PUBLIC_ORIGIN']; request=urllib.request.Request('http://127.0.0.1:8000/api/health', headers={'Host':urllib.parse.urlsplit(origin).netloc,'Origin':origin}); urllib.request.urlopen(request, timeout=3)"
+    CMD python -c "import os, urllib.request, urllib.parse; origin=os.environ['PUBLIC_ORIGIN']; request=urllib.request.Request('http://127.0.0.1:8000/api/health', headers={'Host':urllib.parse.urlsplit(origin).netloc,'Origin':origin,'X-GFL2-Client-IP':'127.0.0.1'}); urllib.request.urlopen(request, timeout=3)"
 CMD ["uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-access-log", "--no-proxy-headers", "--timeout-graceful-shutdown", "15"]

@@ -1,0 +1,10 @@
+# One-off maintenance only, after stopping API writers and copying the backup.
+# Never use this override for `up`; restore itself uses the base service as UID 10001.
+services:
+  api:
+    user: "0:0"
+    cap_add: [CHOWN]
+    command:
+      - sh
+      - -c
+      - chmod 0600 /app/data/restore-source.sqlite3 && chown 10001:10001 /app/data/restore-source.sqlite3

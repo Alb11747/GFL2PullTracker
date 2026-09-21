@@ -50,6 +50,8 @@ class FakeGame:
 
 
 def initialize(client):
+    # Represents the trusted frontend on the otherwise unpublished API network.
+    client.headers.setdefault('X-GFL2-Client-IP', '192.0.2.10')
     response = client.get('/api/public/config')
     assert response.status_code == 200, response.text
     client.headers.update({'Origin': ORIGIN, 'X-CSRF-Token': response.json()['csrf_token']})
@@ -163,6 +165,45 @@ def test_invalid_capture_attempts_are_rate_limited(client):
     for _ in range(10):
         assert client.post('/api/public/fetch', json={'capture':'invalid'}).status_code == 422
     assert client.post('/api/public/fetch', json={'capture':'invalid'}).status_code == 429
+
+
+@pytest.mark.parametrize('address', ['', 'unknown', '192.0.2.1, 192.0.2.2', '192.0.2.1:1234',
+                                     '[2001:db8::1]', 'fe80::1%eth0', ' 192.0.2.1'])
+def test_internal_client_address_requires_one_bare_ip(client, address):
+    response = client.get('/api/public/config', headers={'X-GFL2-Client-IP': address,
+                                                       'X-Forwarded-For': '192.0.2.20'})
+    assert response.status_code == 400
+
+
+def test_missing_and_duplicate_internal_addresses_fail_closed(client):
+    del client.headers['X-GFL2-Client-IP']
+    assert client.get('/api/public/config', headers={'X-Real-IP': '192.0.2.20'}).status_code == 400
+    assert client.get('/api/public/config', headers=[('X-GFL2-Client-IP', '192.0.2.1'),
+                                                    ('X-GFL2-Client-IP', '192.0.2.2')]).status_code == 400
+
+
+def test_new_session_limits_are_per_client_and_ignore_forwarded_headers(client):
+    # The fixture consumed one of this address's 120 session creations.
+    for _ in range(119):
+        client.cookies.clear()
+        assert client.get('/api/public/config').status_code == 200
+    client.cookies.clear()
+    assert client.get('/api/public/config', headers={'X-Forwarded-For': '192.0.2.20'}).status_code == 429
+    assert client.get('/api/public/config', headers={'X-GFL2-Client-IP': '192.0.2.20'}).status_code == 200
+
+
+def test_statistics_limits_are_per_client_and_ipv6_is_canonical(client):
+    for _ in range(30):
+        assert client.get('/api/public/statistics', headers={'X-GFL2-Client-IP': '2001:db8::1'}).status_code == 200
+    assert client.get('/api/public/statistics', headers={'X-GFL2-Client-IP': '2001:0db8:0:0:0:0:0:1'}).status_code == 429
+    assert client.get('/api/public/statistics').status_code == 200
+
+
+def test_global_request_limit_remains_independent_of_client_identity(client):
+    # The fixture's initial configuration request consumed one global slot.
+    for index in range(599):
+        assert client.get('/api/health', headers={'X-GFL2-Client-IP': f'2001:db8::{index + 1:x}'}).status_code == 200
+    assert client.get('/api/health', headers={'X-GFL2-Client-IP': '192.0.2.99'}).status_code == 429
 
 
 def test_upstream_failures_do_not_echo_secrets(tmp_path):

@@ -10,6 +10,7 @@ from collections import deque
 from contextlib import asynccontextmanager
 import hashlib
 import hmac
+from ipaddress import ip_address
 import os
 from pathlib import Path
 import re
@@ -67,11 +68,7 @@ class ContributionInput(Strict):
 
 
 class RateLimit:
-    """Bounded process-local limiter; proxy must rate-limit its real client IPs.
-
-    Never trusts user-supplied X-Forwarded-For. Behind the frontend proxy the
-    network bucket protects the entire relay, and session buckets add fairness.
-    """
+    """Bounded process-local limiter with distinct client and global buckets."""
     def __init__(self):
         self.events = {}
         self.lock = RLock()
@@ -90,6 +87,22 @@ class RateLimit:
             if len(queue) >= maximum:
                 raise HTTPException(429, 'Too many requests; retry later')
             queue.append(now)
+
+
+def proxy_client_address(request):
+    """Accept only the frontend's overwritten identity on the private API network.
+
+    This is not a public authentication header: the API port must remain
+    unpublished, and only the frontend may connect through the backend network.
+    Never fall back to forwarded headers or the frontend container's address.
+    """
+    values = request.headers.getlist('x-gfl2-client-ip')
+    try:
+        if len(values) != 1 or '%' in values[0]:
+            raise ValueError
+        return str(ip_address(values[0]))
+    except ValueError:
+        raise HTTPException(400, 'A valid trusted client address is required') from None
 
 
 def public_origin(value):
@@ -128,8 +141,9 @@ def create_public_app(data_dir=None, *, origin=None, client_factory=None, identi
         try:
             if request.url.query and re.search(r'(?:capture|token|authorization|uid|openid)=', request.url.query, re.I):
                 raise HTTPException(400, 'Credentials must never be supplied in API URLs')
-            ip = request.client.host if request.client else 'unknown'
-            limiter.take('network:' + ip, 600, 60)
+            request.state.client_address = proxy_client_address(request)
+            # Preserve the relay-wide request budget independently of fairness.
+            limiter.take('global:requests', 600, 60)
             if request.method in ('POST', 'PUT', 'PATCH', 'DELETE'):
                 if request.headers.get('origin') != origin or request.headers.get('sec-fetch-site') == 'cross-site':
                     raise HTTPException(403, 'An exact same-origin request is required')
@@ -199,7 +213,7 @@ def create_public_app(data_dir=None, *, origin=None, client_factory=None, identi
     def config(request: Request, response: Response):
         token = request.cookies.get(COOKIE)
         if request.app.state.store.session(token) is None:
-            limiter.take('new-session:' + (request.client.host if request.client else 'unknown'), 120, 3600)
+            limiter.take('new-session:' + request.state.client_address, 120, 3600)
             token = secrets.token_urlsafe(32)
             csrf = digest(token + ':csrf')
             request.app.state.store.create_session(token, csrf, time.time()+SESSION_SECONDS)
@@ -277,7 +291,7 @@ def create_public_app(data_dir=None, *, origin=None, client_factory=None, identi
 
     @application.get('/api/public/statistics')
     def statistics(request: Request):
-        limiter.take('statistics:' + (request.client.host if request.client else 'unknown'), 30, 60)
+        limiter.take('statistics:' + request.state.client_address, 30, 60)
         return request.app.state.store.statistics()
 
     return application

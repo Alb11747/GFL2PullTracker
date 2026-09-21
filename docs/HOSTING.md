@@ -16,7 +16,20 @@ remote host. The Windows collector and launcher remain a separate local mode.
 
 The web service listens on `127.0.0.1:3000` by default. Put your existing HTTPS
 reverse proxy in front of it, preserving the original Origin header. Do not
-publish the API port. To use the included Caddy configuration instead, point DNS
+publish the API port. The ingress must overwrite `X-Real-IP` with a single trusted
+client IP, never pass through a browser-supplied value. Compose fixes SvelteKit's
+`ADDRESS_HEADER=x-real-ip`; missing or malformed identities fail closed. The web
+service validates the adapter address and creates `X-GFL2-Client-IP` for the
+private API, replacing any browser-supplied internal header. Only the frontend
+and operational probes may access the backend network; this internal header is
+not authentication for an exposed API. Keep Uvicorn proxy-header handling off.
+
+If your reverse proxy sits behind a CDN, restrict real-IP processing to
+the CDN's trusted CIDRs and keep them current. Never trust arbitrary
+forwarding sources. The included Caddy example uses the direct peer IP
+and requires direct DNS, without another CDN or proxy in front of Caddy.
+
+To use the included Caddy configuration instead, point DNS
 at this host, allow inbound ports 80 and 443, and run:
 
 ```sh
@@ -32,6 +45,12 @@ bodies/query strings to proxy, tracing, or error-monitoring logs.
 exactly in `GFL2_API_ALLOWED_ORIGINS`. The internal API uses Docker DNS at
 `http://api:8000`. The backend network needs outbound HTTPS to the allowlisted
 game APIs; no inbound API port is mapped. Do not add wildcard origins.
+
+New sessions are limited to 120/hour and statistics to 30/minute per client IP.
+The relay also retains its separate global 600-requests/minute limit and bounded
+job pool. Health probes consume the global request budget. Direct loopback web
+probes must supply `X-Real-IP: 127.0.0.1`; direct private API probes must supply
+`X-GFL2-Client-IP: 127.0.0.1`. Public probes use the ingress normally.
 
 The API deliberately runs one process against SQLite with WAL. Do not scale API
 replicas or point multiple hosts at this database. The bounded collection pool
@@ -77,9 +96,16 @@ delete them while a database writer may still be running.
 ```sh
 docker compose stop api
 docker compose cp ./backup-20260920.sqlite3 api:/app/data/restore-source.sqlite3
+docker compose -f compose.yaml -f compose.restore-permissions.yaml run --rm --no-deps api
 docker compose run --rm --no-deps api python scripts/backup_database.py restore /app/data/restore-source.sqlite3 /app/data/public.sqlite3 --service-stopped
 docker compose up -d --wait api
 ```
+
+`docker compose cp` creates a root-owned destination. The one-off ownership step
+keeps the backup at mode `0600` and grants the normal service UID 10001 access.
+The maintenance override adds only the `CHOWN` capability and root UID for that
+fixed permission command. Never use it with `up`; restore and normal service
+startup use the base Compose configuration as the unprivileged service user.
 
 Restoring an old database can restore withdrawn contributions or deleted backups.
 Reconcile deletion requests before making a restored service public. Verify
@@ -96,9 +122,10 @@ start the previous images. Do not use `down -v` as an upgrade or rollback step.
 
 ## Release gates
 
-- Before the first public release, establish a versioned archive baseline and
-  tested migrations using the [publication checklist](PUBLICATION.md#first-public-release-checklist).
-  The current unversioned reset is limited to prerelease testing.
+- Validate the stable version 1 archive baseline using the
+  [publication checklist](PUBLICATION.md#first-public-release-checklist). Stable
+  storage is separate from prerelease archives, which remain untouched. Later
+  format changes require tested migrations; unsupported formats must fail closed.
 - Provide a real HTTPS origin and Google OAuth client before testing Drive.
 - This release intentionally ships without enabled provider verifiers, so
   server backup, game-account recovery, and community contribution remain
