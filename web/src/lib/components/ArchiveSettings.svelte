@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick, untrack } from 'svelte';
   import type { Profile } from '$lib/api';
   import type { createLocalClient } from '$lib/local/client';
   import { MAX_COMPRESSED_BYTES } from '$lib/local/backup';
@@ -17,7 +18,12 @@
     onrecover,
     publicApi,
     publicConfig,
-    section = 'all'
+    section = 'all',
+    importBusy = false,
+    pendingRestoreFile = null,
+    restoreRequest = 0,
+    onrestoreaccepted,
+    onbusychange
   }: {
     local: ReturnType<typeof createLocalClient>;
     profiles: Profile[];
@@ -30,6 +36,11 @@
     publicApi?: PublicClient;
     publicConfig?: PublicConfig | null;
     section?: 'profiles' | 'backup' | 'privacy' | 'all';
+    importBusy?: boolean;
+    pendingRestoreFile?: File | null;
+    restoreRequest?: number;
+    onrestoreaccepted?: () => void;
+    onbusychange?: (busy: boolean) => void;
   } = $props();
 
   let busy = $state(false),
@@ -43,6 +54,26 @@
   let restoreFile = $state<File | null>(null),
     replace = $state(false);
   let confirmReplace = $state(false);
+  let restoreHeading = $state<HTMLHeadingElement>();
+  let acceptedRestoreRequest = -1;
+  $effect(() => {
+    const request = restoreRequest;
+    const heading = restoreHeading;
+    if (!request || !heading || request === acceptedRestoreRequest) return;
+    acceptedRestoreRequest = request;
+    // Acknowledgement clears the parent handoff; it must not retrigger selection or focus.
+    untrack(() => {
+      if (pendingRestoreFile) {
+        restoreFile = pendingRestoreFile;
+        replace = false;
+        confirmReplace = false;
+        error = '';
+        notice = '';
+      }
+      onrestoreaccepted?.();
+    });
+    void tick().then(() => heading.focus());
+  });
   let decisions = $state<Record<string, 'local' | 'remote'>>({});
   let serverAccount = $state(''),
     serverAction = $state<'backup' | 'contribution' | ''>('');
@@ -72,8 +103,10 @@
   );
 
   async function run(action: () => Promise<void>) {
-    if (busy) return;
+    if (busy || importBusy) return;
     busy = true;
+    const notifyBusy = onbusychange;
+    notifyBusy?.(true);
     error = '';
     notice = '';
     try {
@@ -85,6 +118,7 @@
           : 'The action could not finish. Your saved archive is still available.';
     } finally {
       busy = false;
+      notifyBusy?.(false);
     }
   }
   function download(bytes: Uint8Array, name: string) {
@@ -160,7 +194,10 @@
   }
 </script>
 
-<div class="settings" aria-busy={busy}>
+<fieldset class="settings" disabled={importBusy || busy} aria-busy={busy}>
+  {#if importBusy}<p class="availability" role="status">
+      Profile and archive changes are unavailable while an import is collecting or saving history.
+    </p>{/if}
   {#if section === 'profiles' || section === 'all'}
     <section aria-labelledby="profiles-heading">
       <header>
@@ -310,17 +347,25 @@
               >Export selected profile</button
             >
           </div>
-          <h3>Restore an archive</h3>
+          <h3 id="restore-heading" bind:this={restoreHeading} tabindex="-1">Restore an archive</h3>
+          <p>
+            A tracker backup restores its contained profiles into this browser’s archive. It does
+            not import every profile’s history into the currently selected profile.
+          </p>
           <label
             >Compressed tracker backup<input
               type="file"
               accept=".gz,.gzip,application/gzip"
               onchange={(event) => {
                 restoreFile = event.currentTarget.files?.[0] ?? null;
+                replace = false;
                 confirmReplace = false;
               }}
             /></label
           >
+          {#if restoreFile}<p class="selected-file">
+              Selected backup: <strong>{restoreFile.name}</strong>
+            </p>{/if}
           <label class="check"
             ><input
               type="checkbox"
@@ -469,7 +514,11 @@
             Bring older history into your selected game profile. External imports merge with your
             saved pulls, preserving repeated records without counting the same history twice.
           </p>
-          <p><a href="/guides/exilium" target="_blank" rel="noreferrer">Exilium migration guide (opens in a new tab)</a></p>
+          <p>
+            <a href="/guides/exilium" target="_blank" rel="noreferrer"
+              >Exilium migration guide (opens in a new tab)</a
+            >
+          </p>
         </div>
       </div>
     </section>
@@ -590,12 +639,18 @@
   {/if}
   {#if error}<p class="feedback error" role="alert">{error}</p>{/if}
   {#if notice}<p class="feedback" role="status">{notice}</p>{/if}
-</div>
+</fieldset>
 
 <style>
   .settings {
+    border: 0;
     border-top: 2px solid var(--ink);
-    padding-top: 24px;
+    padding: 24px 0 0;
+    margin: 0;
+    min-width: 0;
+  }
+  .selected-file {
+    overflow-wrap: anywhere;
   }
   section + section {
     margin-top: 40px;

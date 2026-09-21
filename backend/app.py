@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from backend.database import Job, Profile, Snapshot, open_database
+from backend.database import Profile, Snapshot, open_database
 from backend.jobs import Jobs
 from backend.tracker import Tracker, now, public, require_profile
 
@@ -75,7 +75,7 @@ class FetchInput(StrictModel):
 class JobOutput(BaseModel):
     id: str
     profile_id: str
-    status: Literal["queued", "running", "completed", "partial", "failed", "interrupted"]
+    status: Literal["queued", "running", "cancelling", "cancelled", "completed", "partial", "failed", "interrupted"]
     message: str
     records: int
     pages: int
@@ -83,6 +83,7 @@ class JobOutput(BaseModel):
     import_id: str | None
     created_at: str
     updated_at: str
+    import_result: ImportResult | None = None
 
 
 class HistoryItem(BaseModel):
@@ -239,13 +240,12 @@ def create_app(data_dir=None, *, catalog_path=None, client_factory=None):
         return request.app.state.jobs.start(body.profile_id, body.capture, body.server)
 
     @application.get("/api/jobs/{job_id}", response_model=JobOutput)
-    def job_status(job_id: str, store: Tracker = Depends(tracker)):
-        with store.sessions() as session:
-            job = session.get(Job, job_id)
-            if job is None:
-                raise HTTPException(404, "Job not found")
-            require_profile(session, job.profile_id)
-            return public(job)
+    def job_status(job_id: str, request: Request):
+        return request.app.state.jobs.get(job_id)
+
+    @application.post("/api/jobs/{job_id}/cancel", response_model=JobOutput)
+    def cancel_job(job_id: str, request: Request):
+        return request.app.state.jobs.cancel(job_id)
 
     @application.get("/api/history", response_model=HistoryOutput)
     def history(selected: dict = Depends(filters), page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200), store: Tracker = Depends(tracker)):

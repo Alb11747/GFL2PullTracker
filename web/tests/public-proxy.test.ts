@@ -59,3 +59,69 @@ test('public proxy forwards only its own session, preserves CSRF and session ren
   assert.match(response.headers.get('set-cookie')!, /HttpOnly/);
   assert.equal(response.headers.get('cache-control'), 'no-store');
 });
+test('public cancellation permits only POST and preserves session, CSRF and origin boundaries', async () => {
+  let calls = 0;
+  const fetcher: typeof fetch = async (input, init) => {
+    calls++;
+    assert.equal(String(input), 'http://api:8000/api/public/jobs/job-1/cancel');
+    assert.equal(init?.method, 'POST');
+    const headers = new Headers(init?.headers);
+    assert.equal(headers.get('cookie'), 'gfl2_session=own-session');
+    assert.equal(headers.get('x-csrf-token'), 'a'.repeat(32));
+    assert.equal(headers.get('origin'), 'https://tracker.example');
+    assert.equal(headers.has('authorization'), false);
+    return Response.json({ status: 'cancelling' });
+  };
+  const headers = {
+    cookie: 'foreign=secret; gfl2_session=own-session',
+    authorization: 'secret',
+    'x-csrf-token': 'a'.repeat(32)
+  };
+  assert.equal(
+    (
+      await forward(
+        request('public/jobs/job-1/cancel', 'POST', headers),
+        'http://api:8000',
+        fetcher,
+        options
+      )
+    ).status,
+    200
+  );
+  for (const method of ['GET', 'PUT', 'DELETE', 'PATCH'])
+    assert.equal(
+      (
+        await forward(
+          request('public/jobs/job-1/cancel', method),
+          'http://api:8000',
+          fetcher,
+          options
+        )
+      ).status,
+      404
+    );
+  for (const path of ['public/jobs/job-1/cancel/extra', 'jobs/job-1/cancel'])
+    assert.equal(
+      (await forward(request(path, 'POST'), 'http://api:8000', fetcher, options)).status,
+      404
+    );
+  const rejectedHeadersCases: Record<string, string>[] = [
+    { origin: 'https://evil.example' },
+    { origin: '' },
+    { 'sec-fetch-site': 'cross-site' },
+    { host: 'evil.example' }
+  ];
+  for (const rejectedHeaders of rejectedHeadersCases)
+    assert.equal(
+      (
+        await forward(
+          request('public/jobs/job-1/cancel', 'POST', rejectedHeaders),
+          'http://api:8000',
+          fetcher,
+          options
+        )
+      ).status,
+      403
+    );
+  assert.equal(calls, 1);
+});

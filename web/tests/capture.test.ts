@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { collectCapture, CaptureError } from '../src/lib/capture.ts';
+import { collectCapture, CaptureError, validateCapture } from '../src/lib/capture.ts';
 import { createPublicClient, PublicApiError } from '../src/lib/public-api.ts';
 import { validateDocument } from '../src/lib/local/engine.ts';
 
@@ -205,4 +205,37 @@ test('public mutation disconnect is uncertain and never automatically retried', 
       !error.message.includes('secret diagnostic')
   );
   assert.equal(calls, 1);
+});
+
+test('local capture validation does not fetch or retain a parsed credential', () => {
+  assert.equal(validateCapture(capture()), undefined);
+  assert.throws(() => validateCapture(capture(), 'bad'), /server/);
+  assert.throws(() => validateCapture('invalid'), /raw POST/);
+});
+
+test('stopping after a validated page preserves only partial history without offering relay fallback', async () => {
+  const controller = new AbortController();
+  let calls = 0;
+  await assert.rejects(
+    collectCapture(capture(), 'original-profile', {
+      signal: controller.signal,
+      fetcher: (async (_url, init) => {
+        calls++;
+        if (calls === 1) return response([row], 'next-page');
+        controller.abort();
+        throw new DOMException('Stopped', 'AbortError');
+      }) as typeof fetch
+    }),
+    (cause: unknown) => {
+      assert.ok(cause instanceof CaptureError);
+      assert.equal(cause.code, 'cancelled');
+      assert.equal(cause.canUseServerFallback, false);
+      assert.equal(cause.partial?.profile_id, 'original-profile');
+      assert.equal(cause.partial?.manifest?.complete, false);
+      assert.equal((cause.partial?.records_document.records as unknown[]).length, 1);
+      assert.ok(!JSON.stringify(cause.partial).includes(account));
+      return true;
+    }
+  );
+  assert.equal(calls, 2);
 });

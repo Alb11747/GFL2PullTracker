@@ -59,11 +59,15 @@ class PublicJobs:
     def cleanup(self):
         with self.lock:
             self.jobs = {key: value for key, value in self.jobs.items()
-                         if value['expires'] > time.time() or value['status'] in ('queued', 'running')}
+                         if value['expires'] > time.time() or value['status'] in ('queued', 'running', 'cancelling')}
             self.threads = [thread for thread in self.threads if thread.is_alive()]
 
     def close(self):
         self.stopping.set()
+        with self.lock:
+            for job in self.jobs.values():
+                if not job.get('finalizing') and job.get('cancel_event') is not None:
+                    job['cancel_event'].set()
         for thread in self.threads:
             thread.join(timeout=12)
         self.maintenance.join(timeout=1)
@@ -80,21 +84,24 @@ class PublicJobs:
             scope = account_key(prepared_identity(prepared))
             if self.stopping.is_set() or len(self.jobs) >= 8:
                 raise HTTPException(503, 'Relay capacity reached. Try again after existing results expire.')
-            if any((job['owner'] == owner or job['scope'] == scope) and job['status'] in ('queued', 'running') for job in self.jobs.values()):
+            if any((job['owner'] == owner or job['scope'] == scope) and job['status'] in ('queued', 'running', 'cancelling') for job in self.jobs.values()):
                 raise HTTPException(409, 'A collection is already active for this session or account')
             if not self.slots.acquire(blocking=False):
                 raise HTTPException(429, 'Collection workers are busy; retry later with a fresh capture')
             identifier = str(uuid4())
             job = dict(id=identifier, owner=owner, scope=scope, status='queued', message='Waiting to collect', records=0,
-                       pages=0, expires=time.time()+RESULT_TTL, result=None)
+                       pages=0, expires=time.time()+RESULT_TTL, result=None, cancel_event=Event(), finalizing=False)
             self.jobs[identifier] = job
-            backup_version = self.store.backup_version(account_id) if account_id and save_backup else None
-            thread = Thread(target=self.run, args=(identifier, prepared, account_id, save_backup, contribute, backup_version), daemon=True)
-            self.threads.append(thread)
+            thread = None
             try:
+                backup_version = self.store.backup_version(account_id) if account_id and save_backup else None
+                thread = Thread(target=self.run, args=(identifier, prepared, account_id, save_backup, contribute, backup_version), daemon=True)
+                self.threads.append(thread)
                 thread.start()
-            except RuntimeError:
+            except Exception:
                 self.jobs.pop(identifier)
+                if thread in self.threads:
+                    self.threads.remove(thread)
                 self.slots.release()
                 raise HTTPException(503, 'Worker could not start. Submit a fresh capture to retry.') from None
             return self.public(job)
@@ -106,24 +113,39 @@ class PublicJobs:
             if not job or job['owner'] != digest(token):
                 raise HTTPException(404, 'Collection not found or expired. Interrupted jobs require a fresh capture.')
             if result:
-                if job['status'] in ('queued', 'running'):
+                if job['status'] in ('queued', 'running', 'cancelling'):
                     raise HTTPException(409, 'Collection is still running')
                 if not job['result']:
                     raise HTTPException(404, 'No collection result is available; submit a fresh capture')
                 return job['result']
             return self.public(job)
 
+    def cancel(self, token, identifier):
+        with self.lock:
+            self.get(token, identifier)
+            job = self.jobs[identifier]
+            if job['status'] in ('queued', 'running', 'cancelling') and not job['finalizing']:
+                job['cancel_event'].set()
+                job.update(status='cancelling', message='Stopping collection and preserving partial history')
+            return self.public(job)
+
     def update(self, identifier, **changes):
         with self.lock:
             if identifier in self.jobs:
+                if self.jobs[identifier]['status'] == 'cancelling' and changes.get('status', 'running') == 'running':
+                    changes.pop('status', None)
+                    changes.pop('message', None)
                 self.jobs[identifier].update(changes)
 
     def run(self, identifier, prepared, account_id, save_backup, contribute, backup_version):
         manager = self
         deadline = time.monotonic() + JOB_SECONDS
         writer = None
+        event = self.jobs[identifier]['cancel_event']
 
         def budget():
+            if event.is_set():
+                raise collector.CancelledError('Collection stopped by the user.')
             if manager.stopping.is_set() or time.monotonic() >= deadline:
                 raise collector.FetchError('Public collection time limit reached')
 
@@ -142,7 +164,8 @@ class PublicJobs:
                     if 'message' in entry:
                         entry['message'] = 'The provider could not supply this source type.'
                 for error in self.manifest['errors']:
-                    error['message'] = 'Collection stopped; submit a fresh capture to retry.'
+                    error['message'] = ('Collection stopped by the user.' if error['kind'] == 'cancelled'
+                                        else 'Collection stopped; submit a fresh capture to retry.')
                 super().checkpoint()
                 manager.update(identifier, records=len(self.records), pages=sum(t['pages'] for t in self.manifest['types'].values()))
 
@@ -154,7 +177,8 @@ class PublicJobs:
                 writer = BoundedWriter(Path(temp), prepared, start_type=1, consecutive_misses=10, max_type=1000,
                                        timeout=10, retries=0)
                 inner = self.client_factory(prepared, timeout=10, retries=0, max_response_bytes=2*1024*1024,
-                                            max_total_bytes=MAX_RESULT_BYTES, max_requests=1000, max_seconds=JOB_SECONDS)
+                                            max_total_bytes=MAX_RESULT_BYTES, max_requests=1000, max_seconds=JOB_SECONDS,
+                                            cancel_event=event)
 
                 class BoundedClient:
                     def __init__(self):
@@ -172,9 +196,19 @@ class PublicJobs:
                 try:
                     collector.PullHistoryCollector(BoundedClient(), writer, start_type=1, consecutive_misses=10,
                                                    max_type=1000, baseline={}).run()
+                except collector.CancelledError:
+                    pass
                 except Exception:
                     failed = True
                     writer.fail_run('collection', 'Collection stopped; submit a fresh capture to retry.')
+                # Close the cancellation window before snapshot validation and
+                # persistence. A stop accepted first must force incomplete coverage.
+                with self.lock:
+                    cancelled = event.is_set()
+                    self.jobs[identifier]['finalizing'] = True
+                    self.update(identifier, message='Saving collected history')
+                if cancelled:
+                    writer.fail_run('cancelled', 'Collection stopped by the user.')
                 document = json.loads((writer.run_dir / 'records.json').read_text(encoding='utf-8'))
                 manifest = json.loads((writer.run_dir / 'manifest.json').read_text(encoding='utf-8'))
                 pages = {p.relative_to(writer.run_dir).as_posix(): p.read_text(encoding='utf-8') for p in writer.run_dir.glob('raw/**/*.json')}
@@ -185,7 +219,7 @@ class PublicJobs:
                 validate_document(document, manifest, pages)
                 if len(canonical(result).encode()) > MAX_RESULT_BYTES:
                     raise collector.FetchError('Collection result exceeded the size limit')
-                status = 'partial' if failed and document['records'] else 'failed' if failed else 'completed'
+                status = 'cancelled' if cancelled else 'partial' if failed and document['records'] else 'failed' if failed else 'completed'
                 persistence_error = False
                 if status != 'failed' and account_id:
                     identity = prepared_identity(prepared)
@@ -197,6 +231,7 @@ class PublicJobs:
                     except HTTPException:
                         persistence_error = True
                 message = ('Collection complete. Accessible history may not include lifetime pulls.' if status == 'completed'
+                           else 'Collection stopped by you. Any collected partial history is available to import.' if cancelled
                            else 'Collection stopped. Import the available partial history and use a fresh capture to retry.')
                 if persistence_error:
                     message += ' Server storage failed; download this result to preserve it.'
@@ -206,4 +241,7 @@ class PublicJobs:
             self.update(identifier, status='failed', message='Collection could not complete safely. Submit a fresh capture to retry.',
                         expires=time.time()+RESULT_TTL)
         finally:
+            with self.lock:
+                if identifier in self.jobs:
+                    self.jobs[identifier]['cancel_event'] = None
             self.slots.release()

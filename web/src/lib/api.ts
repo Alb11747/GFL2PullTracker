@@ -72,12 +72,21 @@ export interface ImportResult {
 export interface Job {
   id: string;
   profile_id: string;
-  status: 'queued' | 'running' | 'completed' | 'partial' | 'failed' | 'interrupted';
+  status:
+    | 'queued'
+    | 'running'
+    | 'cancelling'
+    | 'cancelled'
+    | 'completed'
+    | 'partial'
+    | 'failed'
+    | 'interrupted';
   message: string;
   records: number;
   pages: number;
   type_id: number | null;
   import_id: string | null;
+  import_result?: ImportResult | null;
   created_at: string;
   updated_at: string;
 }
@@ -93,6 +102,14 @@ export interface ImportInput {
   manifest?: Record<string, unknown>;
   raw_pages?: Record<string, string>;
 }
+export class ApiError extends Error {
+  readonly status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
 
 /** Empty numeric/date filters must be omitted rather than sent as invalid empty values. */
 export function queryString(filters: Partial<Filters>): string {
@@ -102,7 +119,7 @@ export function queryString(filters: Partial<Filters>): string {
   return query.toString();
 }
 export function createClient(fetcher: typeof fetch = fetch) {
-  async function request<T>(path: string, body?: unknown): Promise<T> {
+  async function request<T>(path: string, body?: unknown, uncertainMessage?: string): Promise<T> {
     let response: Response;
     try {
       // A disconnected mutation may have completed, so never automatically retry it.
@@ -120,17 +137,20 @@ export function createClient(fetcher: typeof fetch = fetch) {
       throw new Error(
         body === undefined
           ? 'The local tracker is unavailable. Check that both services are running.'
-          : 'The connection ended before the result was confirmed. Check the archive before submitting again. Fetching requires a fresh capture.'
+          : (uncertainMessage ??
+              'The connection ended before the result was confirmed. Check the archive before submitting again. Fetching requires a fresh capture.')
       );
     }
     const data = await response.json().catch(() => null);
     if (!response.ok)
-      throw new Error(
+      throw new ApiError(
         typeof data?.detail === 'string'
           ? data.detail
-          : 'The local tracker could not complete this request.'
+          : 'The local tracker could not complete this request.',
+        response.status
       );
-    if (data === null) throw new Error('The local tracker returned an unreadable response.');
+    if (data === null)
+      throw new Error(uncertainMessage ?? 'The local tracker returned an unreadable response.');
     return data as T;
   }
   return {
@@ -158,6 +178,13 @@ export function createClient(fetcher: typeof fetch = fetch) {
     },
     job(id: string) {
       return request<Job>(`jobs/${encodeURIComponent(id)}`);
+    },
+    cancelJob(id: string) {
+      return request<Job>(
+        `jobs/${encodeURIComponent(id)}/cancel`,
+        {},
+        'The stop request could not be confirmed. Keep checking this job for its current status.'
+      );
     }
   };
 }

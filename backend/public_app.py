@@ -242,6 +242,10 @@ def create_public_app(data_dir=None, *, origin=None, client_factory=None, identi
     def result(identifier: str, request: Request):
         return request.app.state.jobs.get(session_token(request), identifier, result=True)
 
+    @application.post('/api/public/jobs/{identifier}/cancel')
+    def cancel_job(identifier: str, request: Request):
+        return request.app.state.jobs.cancel(session_token(request), identifier)
+
     @application.get('/api/public/backup')
     def backup(account_id: str, request: Request):
         owned(request, account_id)

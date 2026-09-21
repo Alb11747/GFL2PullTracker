@@ -89,6 +89,10 @@ class FetchError(CollectorError):
     """A request or response failed unexpectedly."""
 
 
+class CancelledError(CollectorError):
+    """Intentional collection stop, distinct from provider or network failure."""
+
+
 @dataclass(frozen=True)
 class Capture:
     scheme: str
@@ -406,6 +410,7 @@ class GachaClient:
         max_total_bytes: int = 64 * 1024 * 1024,
         max_requests: int = 2000,
         max_seconds: float = 600,
+        cancel_event=None,
     ) -> None:
         self.prepared = prepared
         self.timeout = timeout
@@ -418,6 +423,11 @@ class GachaClient:
         self.deadline = time.monotonic() + max_seconds
         self.total_bytes = 0
         self.request_count = 0
+        self.cancel_event = cancel_event
+
+    def check_cancelled(self):
+        if self.cancel_event is not None and self.cancel_event.is_set():
+            raise CancelledError("Collection stopped by the user.")
 
     def _target_for(self, type_id: int, next_cursor: str | None) -> str:
         pairs = [
@@ -446,16 +456,20 @@ class GachaClient:
             timeout=timeout,
         )
         try:
+            self.check_cancelled()
             connection.request("POST", target, body=body, headers=headers)
+            self.check_cancelled()
             response = connection.getresponse()
             # Bound upstream data even without Content-Length. A slow stream
             # cannot reserve a public worker forever by trickling bytes.
             chunks = []
             length = 0
             while True:
+                self.check_cancelled()
                 if time.monotonic() >= self.deadline:
                     raise FetchError("Collection time limit reached")
                 chunk = response.read1(min(65536, self.max_response_bytes + 1 - length))
+                self.check_cancelled()
                 if not chunk:
                     break
                 length += len(chunk)
@@ -487,6 +501,7 @@ class GachaClient:
         target = self._target_for(type_id, next_cursor)
         last_problem = "request failed"
         for attempt in range(self.retries + 1):
+            self.check_cancelled()
             if time.monotonic() >= self.deadline or self.request_count >= self.max_requests:
                 raise FetchError("Collection request or time limit reached")
             self.request_count += 1
@@ -498,6 +513,7 @@ class GachaClient:
                     self.prepared.body,
                     min(self.timeout, max(0.1, self.deadline - time.monotonic())),
                 )
+                self.check_cancelled()
                 self.total_bytes += len(response.body)
                 if len(response.body) > self.max_response_bytes or self.total_bytes > self.max_total_bytes:
                     raise FetchError("Collection response size limit reached")
@@ -509,7 +525,12 @@ class GachaClient:
                 last_problem = f"HTTP {response.status}"
 
             if attempt < self.retries:
-                self._sleep(self._retry_delay(response, attempt))
+                delay = self._retry_delay(response, attempt)
+                if self.cancel_event is None:
+                    self._sleep(delay)
+                else:
+                    self.cancel_event.wait(delay)
+                    self.check_cancelled()
 
         raise FetchError(f"{last_problem} after {self.retries + 1} attempts")
 

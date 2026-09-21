@@ -150,6 +150,11 @@ function parseCapture(text: string, serverOverride?: string): ParsedCapture {
     secrets: [authorization, account, encodeURIComponent(account), original]
   };
 }
+/** Validate locally before a form discards its memory-only capture. */
+export function validateCapture(text: string, server?: string): void {
+  parseCapture(text, server);
+}
+
 async function boundedText(response: Response, budget: number): Promise<string> {
   const limit = Math.min(MAX_PAGE_BYTES, budget);
   if (Number(response.headers.get('content-length')) > limit)

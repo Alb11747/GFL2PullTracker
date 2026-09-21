@@ -286,11 +286,12 @@ def test_fetch_gate_and_identity_validation_before_network(tmp_path):
         assert client.post("/api/fetch", json={"profile_id": p, "capture": mismatched}).status_code == 409
 
 
-def test_restart_marks_active_jobs_interrupted(tmp_path):
+@pytest.mark.parametrize('status', ['queued', 'running', 'cancelling'])
+def test_restart_marks_active_jobs_interrupted(tmp_path, status):
     with TestClient(create_app(tmp_path), base_url="http://127.0.0.1:8000") as client:
         p = profile(client)
         with client.app.state.tracker.sessions.begin() as session:
-            session.add(Job(id="unfinished", profile_id=p, status="running", message="Collecting", records=5, pages=1, created_at=now(), updated_at=now()))
+            session.add(Job(id="unfinished", profile_id=p, status=status, message="Collecting", records=5, pages=1, created_at=now(), updated_at=now()))
     with TestClient(create_app(tmp_path), base_url="http://127.0.0.1:8000") as client:
         job = client.get("/api/jobs/unfinished").json()
         assert job["status"] == "interrupted" and job["records"] == 5 and "fresh capture" in job["message"]

@@ -51,9 +51,14 @@ export async function forward(
     : /^\/api\/(health|profiles|history|statistics|filters|imports|jobs\/[a-zA-Z0-9-]+)$/.test(
         path
       );
-  const writable = hosted
-    ? /^\/api\/public\/(verify|fetch|backup|contribution)$/.test(path)
-    : /^\/api\/(profiles|imports|fetch)$/.test(path);
+  const cancellation = hosted
+    ? /^\/api\/public\/jobs\/[a-zA-Z0-9-]+\/cancel$/.test(path)
+    : /^\/api\/jobs\/[a-zA-Z0-9-]+\/cancel$/.test(path);
+  const writable =
+    (hosted
+      ? /^\/api\/public\/(verify|fetch|backup|contribution)$/.test(path)
+      : /^\/api\/(profiles|imports|fetch)$/.test(path)) ||
+    (method === 'POST' && cancellation);
   const writeMethod = hosted ? ['POST', 'PUT', 'DELETE'].includes(method) : method === 'POST';
   if ((method !== 'GET' || !readable) && (!writeMethod || !writable))
     return failure('API route not found.', 404);

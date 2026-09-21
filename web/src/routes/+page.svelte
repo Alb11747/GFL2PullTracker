@@ -1,15 +1,25 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { client as serverClient } from '$lib/api';
+  import { onMount, tick } from 'svelte';
+  import { client as serverClient, ApiError } from '$lib/api';
   import { createLocalClient } from '$lib/local/client';
   import { createDriveSync } from '$lib/sync/controller';
-  import { collectCapture, CaptureError } from '$lib/capture';
-  import { createPublicClient } from '$lib/public-api';
+  import { collectCapture, CaptureError, validateCapture } from '$lib/capture';
+  import { createPublicClient, PublicApiError } from '$lib/public-api';
   import ArchiveSettings from '$lib/components/ArchiveSettings.svelte';
   import CommunityStatistics from '$lib/components/CommunityStatistics.svelte';
   import ImportGuide from '$lib/components/ImportGuide.svelte';
   import { readExport, inspectExiliumProfiles } from '$lib/import-files';
-  import type { Filters, Profile, History, Statistics, FilterOptions, Job } from '$lib/api';
+  import { classifyImportFiles } from '$lib/import-selection';
+  import { serverCapabilities, savedServerChoices } from '$lib/import-policy';
+  import type {
+    ImportResult,
+    Filters,
+    Profile,
+    History,
+    Statistics,
+    FilterOptions,
+    Job
+  } from '$lib/api';
   let { data } = $props();
   const hosted = $derived(data.mode === 'public');
   let local = $state<ReturnType<typeof createLocalClient>>();
@@ -21,15 +31,75 @@
   let drive = $state<ReturnType<typeof createDriveSync>>();
   let publicConfig = $state<Awaited<ReturnType<typeof publicApi.config>>>();
   let section = $state<'tracker' | 'profiles' | 'backup' | 'statistics' | 'privacy'>('tracker');
-  let saveBackup = $state(true),
-    contribute = $state(true),
+  let saveBackup = $state(false),
+    contribute = $state(false),
     recovery = $state(false);
+  const capabilities = $derived(serverCapabilities(publicConfig));
+  type Operation = Readonly<{ id: number; profileId: string }>;
+  let operation = $state<Operation | null>(null);
+  let operationSequence = 0;
+  const importBusy = $derived(operation !== null);
+  let settingsBusy = $state(false);
+  let stopping = $state(false),
+    saving = $state(false),
+    inspecting = $state(false);
+  let polling = false;
+  let pendingRestoreFile = $state<File | null>(null);
+  let restoreRequest = $state(0);
   let relayFallback = $state(false);
-  let abortCapture: AbortController | undefined;
+  const owns = (op: Operation) => !disposed && operation?.id === op.id;
+  function beginOperation(profileId: string): Operation {
+    const op = Object.freeze({ id: ++operationSequence, profileId });
+    operation = op;
+    stopping = false;
+    saving = false;
+    relayFallback = false;
+    return op;
+  }
+  function finishOperation(op: Operation) {
+    if (!owns(op)) return;
+    operation = null;
+    stopping = false;
+    saving = false;
+    abortCapture = undefined;
+  }
+  async function openRestore(file: File | null = null) {
+    if (importBusy) return;
+    if (!hosted) {
+      importState = 'error';
+      message =
+        'Compressed tracker backups restore browser archives in the hosted tracker. Use collector JSON exports in local-server mode.';
+      return;
+    }
+    pendingRestoreFile = file;
+    restoreRequest++;
+    section = 'backup';
+    await tick();
+    document.getElementById('restore-heading')?.focus();
+  }
+  async function viewHistory() {
+    section = 'tracker';
+    importOpen = false;
+    await tick();
+    document.getElementById('history-title')?.focus();
+    document.getElementById('history-title')?.scrollIntoView({ block: 'start' });
+  }
+  function summary(result: ImportResult): string {
+    return (
+      `${number(result.record_count)} records read · ${number(result.added_count)} added · ${number(result.total)} in this profile. ` +
+      (result.duplicate ? 'This snapshot was already imported. ' : '') +
+      (result.complete === null
+        ? 'Collection completeness is unknown because no manifest was provided.'
+        : result.complete
+          ? 'All accessible pages in this collection were read; lifetime coverage is not implied.'
+          : 'Partial history preserved; accessible pages may be missing.')
+    );
+  }
+  let abortCapture = $state<AbortController>();
   let unsubscribeArchive: (() => void) | undefined;
   async function archiveChanged() {
     profiles = await client.profiles();
-    if (!profiles.some((p) => p.id === filters.profile_id))
+    if (!importBusy && !profiles.some((p) => p.id === filters.profile_id))
       filters.profile_id = profiles[0]?.id || '';
     await refresh();
   }
@@ -56,7 +126,9 @@
     profileName = $state(''),
     createOpen = $state(false);
   let selectedFiles = $state<File[]>([]),
-    importState = $state<'idle' | 'running' | 'complete' | 'partial' | 'error'>('idle'),
+    importState = $state<'idle' | 'running' | 'complete' | 'partial' | 'cancelled' | 'error'>(
+      'idle'
+    ),
     message = $state(''),
     expanded = $state<number | null>(null),
     loading = $state(true),
@@ -65,12 +137,22 @@
     sourceProfile = $state('');
   let fileSelection = 0;
   async function chooseFiles(files: File[]) {
+    if (importBusy) return;
     const selection = ++fileSelection;
+    inspecting = true;
     selectedFiles = files;
     sourceProfiles = [];
     sourceProfile = '';
     importState = 'idle';
+    message = '';
     try {
+      const format = await classifyImportFiles(files, hosted);
+      if (selection !== fileSelection) return;
+      if (format === 'backup') {
+        selectedFiles = [];
+        await openRestore(files[0]);
+        return;
+      }
       const choices = local
         ? await local.inspectExiliumProfiles(files)
         : await inspectExiliumProfiles(files);
@@ -81,6 +163,9 @@
       if (selection !== fileSelection) return;
       importState = 'error';
       message = failure(cause);
+      selectedFiles = [];
+    } finally {
+      if (selection === fileSelection) inspecting = false;
     }
   }
   let job = $state<Job | null>(null),
@@ -184,13 +269,16 @@
               error = failure(cause);
             });
         });
-        saveBackup = remembered('gfl2.server-backup') !== 'false';
-        contribute = remembered('gfl2.contribute') !== 'false';
         try {
           publicConfig = await publicApi.config();
         } catch {
           /* Local archives remain available when server features are offline. */
         }
+        ({ saveBackup, contribute } = savedServerChoices(
+          publicConfig,
+          remembered('gfl2.server-backup'),
+          remembered('gfl2.contribute')
+        ));
       }
       profiles = await client.profiles();
       const saved = remembered(PROFILE_KEY);
@@ -203,7 +291,7 @@
       const jobId = remembered(jobKey(filters.profile_id));
       if (jobId) {
         importOpen = true;
-        await pollJob(jobId);
+        await pollJob(jobId, beginOperation(filters.profile_id));
       }
     } catch (e) {
       error = failure(e);
@@ -229,6 +317,10 @@
     searchTimer = setTimeout(() => void refresh(true), 180);
   }
   async function profileChanged() {
+    if (operation) {
+      filters.profile_id = operation.profileId;
+      return;
+    }
     clearTimeout(pollTimer);
     clearSelection();
     capture = '';
@@ -239,7 +331,7 @@
     const id = remembered(jobKey(filters.profile_id));
     if (id) {
       importOpen = true;
-      await pollJob(id);
+      await pollJob(id, beginOperation(filters.profile_id));
     }
   }
   function clearSelection() {
@@ -272,7 +364,7 @@
     ].filter(Boolean).length
   );
   async function addProfile() {
-    if (!profileName.trim() || creating || importState === 'running') return;
+    if (!profileName.trim() || creating || importBusy || settingsBusy) return;
     creating = true;
     profileError = '';
     try {
@@ -289,147 +381,319 @@
       creating = false;
     }
   }
-  async function pollJob(id: string) {
-    if (disposed) return;
-    const profileId = filters.profile_id;
+  async function pollJob(id: string, op: Operation) {
+    if (!owns(op) || polling) return;
+    clearTimeout(pollTimer);
+    polling = true;
     try {
       const next = hosted
-        ? ({ ...(await publicApi.job(id)), profile_id: profileId } as Job)
+        ? ({ ...(await publicApi.job(id)), profile_id: op.profileId } as Job)
         : await serverClient.job(id);
-      if (disposed || next.profile_id !== filters.profile_id) return;
+      if (!owns(op)) return;
+      if (next.profile_id !== op.profileId) throw new Error('This job belongs to another profile.');
       job = next;
       message = next.message;
-      if (next.status === 'queued' || next.status === 'running') {
+      if (['queued', 'running', 'cancelling'].includes(next.status)) {
         importState = 'running';
-        remember(jobKey(next.profile_id), id);
-        pollTimer = setTimeout(() => void pollJob(id), 1000);
-      } else {
-        if (hosted && (next.status === 'completed' || next.status === 'partial')) {
-          const result = await publicApi.result(id);
-          await client.importRecords({ ...result, profile_id: profileId });
-        }
-        remember(jobKey(next.profile_id), null);
-        importState =
-          next.status === 'completed'
-            ? 'complete'
-            : next.status === 'partial'
-              ? 'partial'
-              : 'error';
-        if (next.status === 'interrupted')
-          message =
-            'The previous fetch was interrupted. Saved records remain available. Submit a fresh capture to try again.';
-        await refresh();
+        stopping = stopping || next.status === 'cancelling';
+        remember(jobKey(op.profileId), id);
+        pollTimer = setTimeout(() => void pollJob(id, op), 1000);
+        return;
       }
-    } catch (e) {
-      if (disposed || profileId !== filters.profile_id) return;
-      importState = 'error';
+      let result = next.import_result;
+      if (
+        hosted &&
+        (next.status === 'completed' ||
+          next.status === 'partial' ||
+          (next.status === 'cancelled' && next.records > 0))
+      ) {
+        saving = true;
+        message = 'Saving collected history…';
+        const snapshot = await publicApi.result(id);
+        if (!owns(op)) return;
+        result = await client.importRecords({ ...snapshot, profile_id: op.profileId });
+        if (!owns(op)) return;
+      }
+      importState =
+        next.status === 'completed'
+          ? 'complete'
+          : next.status === 'partial'
+            ? 'partial'
+            : next.status === 'cancelled'
+              ? 'cancelled'
+              : 'error';
       message =
-        failure(e) + ' The saved job can be checked again without submitting a new capture.';
+        (next.status === 'cancelled' ? 'Collection stopped. ' : '') +
+        (result
+          ? summary(result) + (hosted ? ` ${next.message}` : '')
+          : next.status === 'cancelled'
+            ? 'No new records were saved.'
+            : next.message);
+      remember(jobKey(op.profileId), null);
+      await refresh(true);
+      finishOperation(op);
+    } catch (e) {
+      if (!owns(op)) return;
+      saving = false;
+      importState = 'error';
+      if ((e instanceof PublicApiError || e instanceof ApiError) && e.status === 404) {
+        remember(jobKey(op.profileId), null);
+        message =
+          'This collection has expired or is no longer available. Saved history remains intact; use a fresh capture to collect again.';
+        finishOperation(op);
+        return;
+      }
+      message = failure(e) + ' Check the saved job without submitting another capture.';
+      // Retain ownership while a job or its local persistence is uncertain.
+    } finally {
+      polling = false;
+    }
+  }
+  async function checkJob() {
+    const profileId = operation?.profileId ?? filters.profile_id;
+    const id = remembered(jobKey(profileId));
+    if (id) await pollJob(id, operation ?? beginOperation(profileId));
+  }
+  async function stopImport() {
+    const op = operation;
+    if (!op || stopping || saving) return;
+    stopping = true;
+    message = 'Stopping collection; validated history will be saved…';
+    if (abortCapture) {
+      abortCapture.abort();
+      return;
+    }
+    if (!job) return; // Submission must return its job ID before it can be stopped.
+    try {
+      if (hosted) await publicApi.cancelJob(job.id);
+      else await serverClient.cancelJob(job.id);
+      if (!owns(op)) return;
+      await pollJob(job.id, op);
+    } catch (cause) {
+      if (!owns(op)) return;
+      message =
+        failure(cause) + ' The stop was not confirmed. Check the saved job before trying again.';
+      importState = 'error';
+      stopping = false;
     }
   }
   async function runImport(forceRelay = false) {
-    let submittedCapture = capture;
-    capture = '';
-    if (importState === 'running') return;
-    message = '';
-    job = null;
+    if (importBusy || settingsBusy || inspecting || creating) return;
+    // Freeze every input before the first await; callbacks cannot redirect this import.
     const profileId = filters.profile_id;
+    const mode = importMode;
+    const files = [...selectedFiles];
+    const source = sourceProfile || undefined;
+    const serverId = server.trim() || undefined;
+    const recover = recovery;
+    const backup = saveBackup;
+    const contribution = contribute;
+    let submittedCapture = capture;
     try {
-      if (!filters.profile_id) throw new Error('Create or choose a profile before importing.');
-      importState = 'running';
-      if (importMode === 'file') {
-        message = 'Validating export files…';
-        const payload = local
-          ? await local.readExport(selectedFiles, profileId, sourceProfile || undefined)
-          : await readExport(selectedFiles, profileId, sourceProfile || undefined);
-        message = 'Merging records into the archive…';
-        const result = await client.importRecords(payload);
-        importState = result.complete === false ? 'partial' : 'complete';
-        message =
-          `${number(result.record_count)} records read · ${number(result.added_count)} added · ${number(result.total)} in this profile. ` +
-          (result.duplicate ? 'This snapshot was already imported. ' : '') +
-          (result.complete === null
-            ? 'Collection completeness is unknown because no manifest was provided.'
-            : result.complete
-              ? 'All accessible pages in this collection were read.'
-              : 'Partial collection preserved; some accessible pages may be missing.');
-        await refresh(true);
+      if (!profileId) throw new Error('Create or choose a profile before importing.');
+      if (mode === 'file') {
+        if (!files.length) throw new Error('Choose an export folder or files first.');
+        if (sourceProfiles.length > 1 && !source)
+          throw new Error('Choose the source profile from this Exilium backup.');
       } else {
         if (!submittedCapture.trim())
           throw new Error('Paste a captured HTTP request to fetch records.');
-        if (server.trim() && !/^\d+$/.test(server.trim()))
+        if (serverId && !/^\d+$/.test(serverId))
           throw new Error(
-            'Server ID must be a number, such as 10. Paste a fresh capture before retrying.'
+            'Server ID must be a number, such as 10. Your capture is still in the field.'
           );
-        message = 'Starting collection…';
-        if (hosted && recovery) {
-          const account = await publicApi.verify(submittedCapture, server.trim() || undefined);
-          publicConfig = await publicApi.config();
-          submittedCapture = '';
-          const backup = await publicApi.backup(account.account_id);
-          for (const snapshot of backup.snapshots)
-            await local!.importRecords({ ...snapshot, profile_id: profileId });
-          importState = 'complete';
-          message = 'Server backup recovered and merged into this browser.';
-          await archiveChanged();
-          return;
+        validateCapture(submittedCapture, serverId);
+        if (
+          hosted &&
+          (((recover || backup) && !capabilities.backup) ||
+            (contribution && !capabilities.contribution))
+        )
+          throw new Error('These server features are unavailable. Choose browser-only importing.');
+        if (forceRelay && (!capabilities.relay || backup || contribution || recover))
+          throw new Error('Server fallback is unavailable for these import choices.');
+      }
+    } catch (cause) {
+      importState = 'error';
+      message = failure(cause);
+      submittedCapture = '';
+      return;
+    }
+    const op = beginOperation(profileId);
+    if (mode === 'capture') capture = '';
+    message = '';
+    job = null;
+    importState = 'running';
+    let waitingForJob = false;
+    try {
+      if (mode === 'file') {
+        message = 'Validating export files…';
+        const payload = local
+          ? await local.readExport(files, profileId, source)
+          : await readExport(files, profileId, source);
+        if (!owns(op)) return;
+        saving = true;
+        message = 'Saving records into the archive…';
+        const result = await client.importRecords(payload);
+        if (!owns(op)) return;
+        importState = result.complete === false ? 'partial' : 'complete';
+        message = summary(result);
+        await refresh(true);
+      } else if (hosted && recover) {
+        message = 'Verifying account for recovery…';
+        const account = await publicApi.verify(submittedCapture, serverId);
+        submittedCapture = '';
+        if (!owns(op)) return;
+        publicConfig = await publicApi.config();
+        const restored = await publicApi.backup(account.account_id);
+        if (!owns(op)) return;
+        saving = true;
+        let read = 0,
+          added = 0,
+          total = 0;
+        for (const snapshot of restored.snapshots) {
+          const result = await client.importRecords({ ...snapshot, profile_id: profileId });
+          read += result.record_count;
+          added += result.added_count;
+          total = result.total;
         }
-        if (hosted && !saveBackup && !contribute && !forceRelay) {
-          abortCapture = new AbortController();
-          try {
-            const result = await collectCapture(submittedCapture, profileId, {
-              server: server.trim() || undefined,
-              signal: abortCapture.signal,
-              onProgress: (progress) => {
-                message = `Collecting type ${progress.typeId}: ${progress.records} records from ${progress.pages} pages…`;
-              }
-            });
-            await client.importRecords(result);
-            importState = result.manifest?.complete === false ? 'partial' : 'complete';
-            message = 'History saved in this browser. Connected Drive sync runs separately.';
-          } catch (e) {
-            if (e instanceof CaptureError) {
-              relayFallback = e.canUseServerFallback;
-              if (e.partial) {
-                await client.importRecords(e.partial);
-                importState = 'partial';
-                message = `${failure(e)} Partial history was preserved.`;
-                await refresh(true);
-                return;
-              }
+        if (!owns(op)) return;
+        importState = 'complete';
+        message = `Server backup recovered: ${number(read)} records read · ${number(added)} added · ${number(total)} in this profile.`;
+        await archiveChanged();
+      } else if (hosted && !backup && !contribution && !forceRelay) {
+        abortCapture = new AbortController();
+        message = 'Starting browser collection…';
+        try {
+          const payload = await collectCapture(submittedCapture, profileId, {
+            server: serverId,
+            signal: abortCapture.signal,
+            onProgress: (progress) => {
+              if (owns(op) && !stopping)
+                message = `Collecting history: ${number(progress.records)} records from ${number(progress.pages)} pages…`;
             }
-            throw e;
-          }
-          await refresh(true);
-          return;
+          });
+          if (!owns(op)) return;
+          saving = true;
+          message = 'Saving collected history…';
+          const result = await client.importRecords(payload);
+          if (!owns(op)) return;
+          importState = result.complete === false ? 'partial' : 'complete';
+          message =
+            summary(result) + ' Saved in this browser; connected Drive sync runs separately.';
+        } catch (cause) {
+          if (!owns(op)) return;
+          if (!(cause instanceof CaptureError)) throw cause;
+          relayFallback = cause.canUseServerFallback;
+          if (cause.partial) {
+            saving = true;
+            message = 'Saving partial history…';
+            const result = await client.importRecords(cause.partial);
+            if (!owns(op)) return;
+            importState = cause.code === 'cancelled' ? 'cancelled' : 'partial';
+            message =
+              (cause.code === 'cancelled' ? 'Collection stopped. ' : failure(cause) + ' ') +
+              summary(result);
+          } else if (cause.code === 'cancelled') {
+            importState = 'cancelled';
+            message = 'Collection stopped. No new records were saved.';
+          } else throw cause;
         }
-        job = hosted
+        await refresh(true);
+      } else {
+        message = 'Submitting collection…';
+        const submitted = hosted
           ? ({
               ...(await publicApi.fetchCapture({
                 capture: submittedCapture,
-                server: server.trim() || undefined,
-                save_backup: saveBackup,
-                contribute
+                server: serverId,
+                save_backup: backup,
+                contribute: contribution
               })),
               profile_id: profileId
             } as Job)
-          : await serverClient.fetchHistory(
-              profileId,
-              submittedCapture,
-              server.trim() || undefined
-            );
+          : await serverClient.fetchHistory(profileId, submittedCapture, serverId);
         submittedCapture = '';
-        remember(jobKey(profileId), job.id);
-        await pollJob(job.id);
+        if (!owns(op)) return;
+        job = submitted;
+        remember(jobKey(profileId), submitted.id);
+        waitingForJob = true;
+        await pollJob(submitted.id, op);
       }
-    } catch (e) {
+    } catch (cause) {
+      if (!owns(op)) return;
       importState = 'error';
-      message = failure(e);
+      message = failure(cause);
     } finally {
       submittedCapture = '';
+      if (!waitingForJob) finishOperation(op);
     }
   }
 </script>
+
+{#snippet importStatus()}
+  {#if importState !== 'idle'}
+    <div class="import-result" class:problem={importState === 'error' || importState === 'partial'}>
+      <div role={importState === 'error' ? 'alert' : 'status'} aria-atomic="true">
+        {#if importBusy}<progress aria-label="Import in progress"></progress>{/if}
+        <strong
+          >{saving
+            ? 'Saving history'
+            : stopping
+              ? 'Stopping collection'
+              : importState === 'error'
+                ? 'Import needs attention'
+                : importState === 'partial'
+                  ? 'Partial collection'
+                  : importState === 'complete'
+                    ? 'Import complete'
+                    : importState === 'cancelled'
+                      ? 'Collection stopped'
+                      : 'Import in progress'}</strong
+        >
+        <p>{message}</p>
+      </div>
+      <div class="import-actions">
+        {#if importBusy && (abortCapture || job) && !saving}
+          <button onclick={stopImport} disabled={stopping}
+            >{stopping ? 'Stopping…' : 'Stop collection'}</button
+          >
+        {/if}
+        {#if importState === 'error' && remembered(jobKey(operation?.profileId ?? filters.profile_id))}
+          <button onclick={checkJob}>Check saved job</button>
+        {/if}
+        {#if !importBusy && ['complete', 'partial', 'cancelled'].includes(importState)}
+          <button class="primary" onclick={viewHistory}>View history</button>
+        {/if}
+        {#if importBusy && (!importOpen || section !== 'tracker')}
+          <button
+            onclick={() => {
+              section = 'tracker';
+              importOpen = true;
+            }}>Show import</button
+          >
+        {/if}
+      </div>
+      {#if hosted && relayFallback && !importBusy}
+        <p class="small">
+          Browser access failed. Paste a fresh capture to explicitly fetch through the tracker
+          server. This fallback saves no server backup or contribution.
+        </p>
+        <button
+          onclick={() => {
+            section = 'tracker';
+            importOpen = true;
+            if (capture.trim()) void runImport(true);
+          }}
+          disabled={saveBackup || contribute || recovery || !capabilities.relay}
+        >
+          {capture.trim()
+            ? 'Fetch through server once'
+            : 'Enter a fresh capture for server fallback'}
+        </button>
+      {/if}
+    </div>
+  {/if}
+{/snippet}
 
 <svelte:head
   ><title>GFL2 Pull Tracker — Recruitment ledger</title><meta
@@ -449,7 +713,7 @@
       ><span>Profile</span><select
         bind:value={filters.profile_id}
         onchange={profileChanged}
-        disabled={importState === 'running'}
+        disabled={importBusy || settingsBusy}
         aria-label="Active profile"
         >{#each profiles as p}<option value={p.id}>{p.name}</option>{/each}</select
       ></label
@@ -485,6 +749,7 @@
 {/if}
 
 <main>
+  {#if !importOpen || section !== 'tracker'}{@render importStatus()}{/if}
   {#if hosted && section === 'statistics'}
     <CommunityStatistics />
   {:else if hosted && section !== 'tracker' && local}
@@ -496,13 +761,25 @@
       {drive}
       {publicApi}
       {publicConfig}
+      importBusy={importBusy || settingsBusy}
+      onbusychange={(busy) => {
+        settingsBusy = busy;
+      }}
+      {pendingRestoreFile}
+      {restoreRequest}
+      onrestoreaccepted={() => {
+        pendingRestoreFile = null;
+        restoreRequest = 0;
+      }}
       section={section as 'profiles' | 'backup' | 'privacy'}
       onchanged={archiveChanged}
       onselect={(id) => {
+        if (importBusy) return;
         filters.profile_id = id;
         void profileChanged();
       }}
       onrecover={() => {
+        if (importBusy || !capabilities.backup) return;
         recovery = true;
         importMode = 'capture';
         importOpen = true;
@@ -525,69 +802,84 @@
               >Import into<select
                 bind:value={filters.profile_id}
                 onchange={profileChanged}
-                disabled={importState === 'running'}
+                disabled={importBusy || settingsBusy}
                 >{#each profiles as p}<option value={p.id}>{p.name}</option>{/each}</select
               ></label
             ><button
               class="text-button"
-              disabled={importState === 'running'}
+              disabled={importBusy || settingsBusy}
               onclick={() => (createOpen = !createOpen)}
               aria-expanded={createOpen}>Create a profile</button
-            >{#if createOpen}<label
-                >Profile name<input
-                  bind:value={profileName}
-                  placeholder="e.g. Commander · Global"
-                /></label
-              ><button
-                onclick={addProfile}
-                disabled={!profileName.trim() || creating || importState === 'running'}
-                >{creating ? 'Creating…' : 'Create profile'}</button
-              >{/if}{#if profileError}<p class="small" role="alert">{profileError}</p>{/if}
+            >{#if createOpen}<form
+                onsubmit={(event) => {
+                  event.preventDefault();
+                  void addProfile();
+                }}
+              >
+                <label
+                  >Profile name<input
+                    bind:value={profileName}
+                    required
+                    maxlength="120"
+                    disabled={importBusy || creating}
+                    placeholder="e.g. Commander · Global"
+                  /></label
+                ><button type="submit" disabled={!profileName.trim() || creating || importBusy}
+                  >{creating ? 'Creating…' : 'Create profile'}</button
+                >
+              </form>{/if}{#if profileError}<p class="small" role="alert">{profileError}</p>{/if}
             <p class="small">
               Older exports need explicit profile assignment. Use a separate profile for each game
               account.
             </p>
           </div>
           <div class="import-source">
-            <div class="segmented" aria-label="Import method">
+            <div class="segmented" role="group" aria-label="Import method">
               <button
                 class:chosen={importMode === 'file'}
-                disabled={importState === 'running'}
+                aria-pressed={importMode === 'file'}
+                disabled={importBusy || settingsBusy}
                 onclick={() => {
                   importMode = 'file';
                   importState = 'idle';
+                  relayFallback = false;
                 }}>Saved export</button
               ><button
                 class:chosen={importMode === 'capture'}
-                disabled={importState === 'running'}
+                aria-pressed={importMode === 'capture'}
+                disabled={importBusy || settingsBusy}
                 onclick={() => {
                   importMode = 'capture';
                   importState = 'idle';
+                  relayFallback = false;
                 }}>Captured request</button
               >
             </div>
             {#if importMode === 'file'}<p>
-                Select the export folder, including records.json, the manifest, and raw pages.
+                Choose a collector export folder, supported Exilium JSON, or a compressed tracker
+                backup.
               </p>
               <div class="file-choices">
                 <label class="file-button"
                   >Choose export folder<input
                     type="file"
-                    disabled={importState === 'running'}
+                    disabled={importBusy || settingsBusy}
                     multiple
                     webkitdirectory
                     onchange={(e) => {
                       void chooseFiles(Array.from(e.currentTarget.files ?? []));
+                      e.currentTarget.value = '';
                     }}
                   /></label
                 ><label class="file-button secondary"
                   >Choose files<input
                     type="file"
-                    disabled={importState === 'running'}
+                    disabled={importBusy || settingsBusy}
                     multiple
-                    accept=".json"
+                    accept=".json,.gz,.gzip,application/json,application/gzip"
                     onchange={(e) => {
                       void chooseFiles(Array.from(e.currentTarget.files ?? []));
+                      e.currentTarget.value = '';
                     }}
                   /></label
                 >
@@ -595,11 +887,18 @@
               <p class="small">
                 {selectedFiles.length
                   ? `${selectedFiles.length} file${selectedFiles.length === 1 ? '' : 's'} selected`
-                  : 'Choose collector exports or an Exilium JSON backup. Compressed tracker backups are restored in Backup & sync.'}
+                  : 'Tracker backups open archive restoration; JSON exports merge into the selected profile.'}
               </p>
+              <button
+                class="text-button restore-link"
+                disabled={importBusy || settingsBusy || inspecting}
+                onclick={() => openRestore()}>Restore a tracker backup</button
+              >
               {#if sourceProfiles.length > 1}
                 <label
-                  >Profile from Exilium backup<select bind:value={sourceProfile}
+                  >Profile from Exilium backup<select
+                    bind:value={sourceProfile}
+                    disabled={importBusy || settingsBusy}
                     ><option value="">Choose a source profile</option
                     >{#each sourceProfiles as source}<option value={source.id}>{source.name}</option
                       >{/each}</select
@@ -612,13 +911,19 @@
               {/if}
             {:else}<label
                 >Captured HTTP request<textarea
-                  disabled={importState === 'running'}
+                  disabled={importBusy || settingsBusy}
                   bind:value={capture}
                   rows="4"
                   autocomplete="off"
                   spellcheck="false"
                   placeholder="Paste the full captured HTTPS request"></textarea></label
-              ><label>Server ID (optional)<input bind:value={server} placeholder="e.g. 10" /></label
+              ><label
+                >Server ID (optional)<input
+                  bind:value={server}
+                  disabled={importBusy || settingsBusy}
+                  inputmode="numeric"
+                  placeholder="e.g. 10"
+                /></label
               >
               <p class="small">
                 Credentials stay in memory and are cleared on submission. A fresh capture is
@@ -627,13 +932,18 @@
               {#if hosted}
                 <div class="capture-options">
                   <label class="check-control"
-                    ><input type="checkbox" bind:checked={recovery} /> Recover a private server backup</label
+                    ><input
+                      type="checkbox"
+                      bind:checked={recovery}
+                      disabled={importBusy || !capabilities.backup}
+                    /> Recover a private server backup</label
                   >
                   {#if !recovery}
                     <label class="check-control"
                       ><input
                         type="checkbox"
                         bind:checked={saveBackup}
+                        disabled={importBusy || !capabilities.backup}
                         onchange={() => remember('gfl2.server-backup', String(saveBackup))}
                       /> Save server backup</label
                     >
@@ -641,94 +951,53 @@
                       ><input
                         type="checkbox"
                         bind:checked={contribute}
+                        disabled={importBusy || !capabilities.contribution}
                         onchange={() => remember('gfl2.contribute', String(contribute))}
                       /> Contribute to community statistics</label
                     >
+                  {/if}
+                  {#if !capabilities.backup || !capabilities.contribution}
+                    <p class="small">
+                      {!capabilities.backup
+                        ? 'Server backup and recovery are unavailable. '
+                        : ''}{!capabilities.contribution
+                        ? 'Community contributions are unavailable. '
+                        : ''}Browser imports remain available; Drive sync is configured separately.
+                    </p>
                   {/if}
                   {#if recovery || saveBackup || contribute}
                     <p class="small">
                       This request sends your capture to the tracker server. Credentials are used in
                       memory and never saved. Only aggregate statistics are public.
                     </p>
-                    {#if !publicConfig?.identity_verification.available}
-                      <p class="small" role="status">
-                        Account verification is not enabled on this installation. Server backup,
-                        recovery, and contributions are unavailable. You can still import into your
-                        browser and sync with Drive.
-                      </p>
-                      <button
-                        type="button"
-                        onclick={() => {
-                          recovery = false;
-                          saveBackup = false;
-                          contribute = false;
-                          remember('gfl2.server-backup', 'false');
-                          remember('gfl2.contribute', 'false');
-                        }}>Use browser and Drive only</button
-                      >
-                    {/if}
-                  {:else}<p class="small">
+                  {:else}
+                    <p class="small">
                       The browser contacts official game servers directly. No capture or history is
                       sent to this tracker server.
-                    </p>{/if}
+                    </p>
+                  {/if}
                 </div>
-                <ImportGuide />
               {/if}
             {/if}
             <button
               class="primary"
               onclick={() => runImport()}
-              disabled={importState === 'running' ||
+              disabled={importBusy ||
+                settingsBusy ||
+                inspecting ||
                 creating ||
                 (hosted &&
                   importMode === 'capture' &&
                   (recovery || saveBackup || contribute) &&
                   !publicConfig?.identity_verification.available)}
-              >{importState === 'running'
+              >{importBusy
                 ? 'Working…'
                 : importMode === 'file'
                   ? 'Validate and import'
                   : 'Fetch accessible history'}</button
             >
-            {#if importState !== 'idle'}<div
-                class="import-result"
-                class:problem={importState === 'error' || importState === 'partial'}
-                role={importState === 'error' ? 'alert' : 'status'}
-              >
-                {#if importState === 'running'}<progress aria-label="Import in progress"
-                  ></progress>{/if}<strong
-                  >{importState === 'error'
-                    ? 'Import needs attention'
-                    : importState === 'partial'
-                      ? 'Partial collection'
-                      : importState === 'complete'
-                        ? 'Import complete'
-                        : 'Import in progress'}</strong
-                >
-                <p>{message}</p>
-                {#if hosted && relayFallback && importState !== 'running'}
-                  <p class="small">
-                    Browser access failed. Paste a fresh capture above to explicitly fetch through
-                    the tracker server. The server uses the credential in memory and keeps no
-                    private backup or contribution.
-                  </p>
-                  <button
-                    onclick={() => runImport(true)}
-                    disabled={!capture.trim() || saveBackup || contribute}
-                    >Fetch through server once</button
-                  >
-                {/if}
-                {#if job}<p>
-                    {number(job.records)} records · {number(job.pages)} pages{job.type_id !== null
-                      ? ` · Type ${job.type_id}`
-                      : ''}
-                  </p>{/if}{#if importState === 'error' && remembered(jobKey(filters.profile_id))}<button
-                    onclick={() => {
-                      const id = remembered(jobKey(filters.profile_id));
-                      if (id) void pollJob(id);
-                    }}>Check saved job</button
-                  >{/if}
-              </div>{/if}
+            {@render importStatus()}
+            {#if hosted && importMode === 'capture'}<ImportGuide />{/if}
           </div>
         </div>
       </section>
@@ -743,9 +1012,7 @@
         <div class="summary-total">
           <span title="One record = one pull. Item quantity is preserved separately."
             >{active ? 'Matching pulls' : 'Recorded pulls'}</span
-          ><strong
-            >{stats ? number(stats.total) : loading || error ? '—' : '0'}</strong
-          >
+          ><strong>{stats ? number(stats.total) : loading || error ? '—' : '0'}</strong>
         </div>
         <div>
           <span>Recorded range <small>UTC</small></span><strong class="date-range"
@@ -802,29 +1069,38 @@
         </div>
         <div class="type-chart">
           <div class="chart-title">
-            <h2>Source distribution</h2>
-            <span>API types</span>
+            <h2>What you recruited</h2>
+            <span>All retained records</span>
           </div>
           <div class="type-bars">
-            {#each stats?.types ?? [] as type}<div class="type-column">
-                <strong>{number(type.count)}</strong>
+            {#each ['doll', 'weapon', 'unknown'] as kind}
+              {@const count = stats?.kinds.find((entry) => entry.label === kind)?.count ?? 0}
+              <div class="type-column">
+                <strong>{stats ? number(count) : '—'}</strong>
                 <div class="column-track">
-                  <div
-                    style:transform={`scaleY(${stats?.total ? type.count / Math.max(...stats.types.map((x) => x.count)) : 0})`}
-                  ></div>
+                  <div style:transform={`scaleY(${stats?.total ? count / stats.total : 0})`}></div>
                 </div>
-                <span>Type {type.id}</span>
-              </div>{/each}
+                <span>{kind === 'doll' ? 'Dolls' : kind === 'weapon' ? 'Weapons' : 'Unknown'}</span>
+              </div>
+            {/each}
           </div>
-          <p class="chart-note">
-            {#if stats}
-              Pools: {#each stats.pools as pool, i}{i ? ' · ' : ''}{pool.id} ({number(
-                  pool.count
-                )}){/each}
-            {:else}
-              Pool distribution {loading ? 'loading…' : error ? 'unavailable.' : 'awaiting import.'}
-            {/if}
-          </p>
+          <details class="source-details">
+            <summary>Source details</summary>
+            <p class="small">
+              Recruitment category names are unverified. Original source IDs remain available here
+              and in record details.
+            </p>
+            <dl class="source-distribution">
+              {#each stats?.types ?? [] as type}<div>
+                  <dt>Source type {type.id}</dt>
+                  <dd>{number(type.count)}</dd>
+                </div>{/each}
+              {#each stats?.pools ?? [] as pool}<div>
+                  <dt>Pool {pool.id}</dt>
+                  <dd>{number(pool.count)}</dd>
+                </div>{/each}
+            </dl>
+          </details>
         </div>
       </div>
       <div class="coverage">
@@ -845,7 +1121,7 @@
     <section class="history" aria-labelledby="history-title">
       <div class="section-heading history-heading">
         <div class="history-title">
-          <h2 id="history-title">Pull history</h2>
+          <h2 id="history-title" tabindex="-1">Pull history</h2>
           <span
             >{loading
               ? 'Loading records…'
@@ -885,40 +1161,56 @@
               >{/each}</select
           ></label
         >
-        <label
-          >Item kind<select bind:value={filters.kind} onchange={() => refresh(true)}
-            ><option value="">All kinds</option>{#each options.kinds as kind}<option value={kind}
-                >{kind === 'unknown' ? 'Unknown' : kind === 'doll' ? 'Doll' : 'Weapon'}</option
-              >{/each}</select
-          ></label
-        >
-        <label
-          >API type<select bind:value={filters.type_id} onchange={() => refresh(true)}
-            ><option value="">All types</option>{#each options.types as type}<option
-                value={String(type)}>Type {type}</option
-              >{/each}</select
-          ></label
-        >
-        <label
-          >Pool ID<select bind:value={filters.pool_id} onchange={() => refresh(true)}
-            ><option value="">All pools</option>{#each options.pools as pool}<option
-                value={String(pool)}>{pool}</option
-              >{/each}</select
-          ></label
-        >
-        <label
-          >From (UTC)<input
-            type="date"
-            bind:value={filters.date_from}
-            onchange={() => refresh(true)}
-          /></label
-        ><label
-          >To (UTC)<input
-            type="date"
-            bind:value={filters.date_to}
-            onchange={() => refresh(true)}
-          /></label
-        >
+        <details class="more-filters">
+          <summary
+            >More filters{[
+              filters.kind,
+              filters.type_id,
+              filters.pool_id,
+              filters.date_from,
+              filters.date_to
+            ].filter(Boolean).length
+              ? ` (${[filters.kind, filters.type_id, filters.pool_id, filters.date_from, filters.date_to].filter(Boolean).length} active)`
+              : ''}</summary
+          >
+          <div class="advanced-filters">
+            <label
+              >Item kind<select bind:value={filters.kind} onchange={() => refresh(true)}
+                ><option value="">All kinds</option>{#each options.kinds as kind}<option
+                    value={kind}
+                    >{kind === 'unknown' ? 'Unknown' : kind === 'doll' ? 'Doll' : 'Weapon'}</option
+                  >{/each}</select
+              ></label
+            >
+            <label
+              >Source type<select bind:value={filters.type_id} onchange={() => refresh(true)}
+                ><option value="">All types</option>{#each options.types as type}<option
+                    value={String(type)}>Type {type}</option
+                  >{/each}</select
+              ></label
+            >
+            <label
+              >Pool ID<select bind:value={filters.pool_id} onchange={() => refresh(true)}
+                ><option value="">All pools</option>{#each options.pools as pool}<option
+                    value={String(pool)}>{pool}</option
+                  >{/each}</select
+              ></label
+            >
+            <label
+              >From (UTC)<input
+                type="date"
+                bind:value={filters.date_from}
+                onchange={() => refresh(true)}
+              /></label
+            ><label
+              >To (UTC)<input
+                type="date"
+                bind:value={filters.date_to}
+                onchange={() => refresh(true)}
+              /></label
+            >
+          </div>
+        </details>
       </form>
       {#if error}<div class="empty-state" role="alert">
           <h3>History could not load</h3>
@@ -958,10 +1250,9 @@
           <table>
             <thead
               ><tr
-                ><th>Item</th><th>Rarity / kind</th><th>Source</th><th
-                  >Recorded <small>UTC</small></th
-                ><th class="quantity">Qty.</th><th><span class="sr-only">Record details</span></th
-                ></tr
+                ><th>Item</th><th>Rarity / kind</th><th>Recorded <small>UTC</small></th><th
+                  class="quantity">Qty.</th
+                ><th><span class="sr-only">Record details</span></th></tr
               ></thead
             ><tbody
               >{#each history.items as row (row.id)}<tr class:unknown={row.kind === 'unknown'}
@@ -978,10 +1269,6 @@
                         : row.kind === 'doll'
                           ? 'Doll'
                           : 'Weapon'}</span
-                    ></td
-                  ><td
-                    ><span>Type {row.type_id}</span><span class="cell-secondary"
-                      >Pool {row.pool_id}</span
                     ></td
                   ><td
                     ><span>{date(row.timestamp)}</span><span class="cell-secondary"
@@ -1001,9 +1288,11 @@
                     ></td
                   ></tr
                 >{#if expanded === row.id}<tr class="detail-row"
-                    ><td colspan="6"
+                    ><td colspan="5"
                       ><div>
                         <span><strong>Original item ID</strong>{row.item_id}</span><span
+                          ><strong>Source type</strong>{row.type_id}</span
+                        ><span><strong>Pool ID</strong>{row.pool_id}</span><span
                           ><strong>Source page</strong>{row.source_page}</span
                         ><span><strong>Catalog region</strong>{row.region ?? 'Unknown'}</span><span
                           ><strong>Estimated timestamp group</strong>{row.estimated_group_size} records

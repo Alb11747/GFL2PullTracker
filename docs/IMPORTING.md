@@ -1,11 +1,29 @@
 # Importing a recruitment history
 
 Use **Import history → Saved export** to select a collector export folder or
-supported history files. Restore compressed tracker backups in **Backup & sync**.
+supported history files. **Choose files** accepts collector/Exilium JSON and
+compressed tracker backups (`.json.gz`, `.gz`, `.gzip`).
 An unidentified legacy import needs an explicit
 profile assignment. Import into a separate profile when account identity differs.
 The game can expose a limited retention window, so collect regularly and retain
 older exports. A partial capture cannot prove the start of a pity interval.
+
+## Restore a tracker backup
+
+Select a compressed tracker backup by itself; it cannot be combined with JSON
+exports or other backups. The picker recognizes gzip content rather than trusting
+the filename, then checks the backup format, version, integrity, schema, and size
+limits before opening **Backup & sync** with the file retained. Selecting it does
+not restore automatically. **Restore a tracker backup** opens the same controls
+without requiring a selection in the import panel.
+
+Backups restore their contained profiles into the browser archive, rather than
+putting every profile's history into the currently selected profile. Each newly
+selected backup defaults to **Merge archive**. Replacement requires a separate
+confirmation and downloads a recovery copy before replacing the archive.
+Compressed archive restoration is available in the hosted browser-local tracker;
+Windows local-server mode explains this limitation instead of treating gzip as a
+records export. JSON exports continue to merge into the selected destination.
 
 ## Move old history from Exilium
 
@@ -101,6 +119,20 @@ fetch fallback or run the local Python collector and import its export. Do not
 repeat an uncertain server submission automatically. An expired capture needs a
 fresh history request. For unsupported ownership providers, file import and
 browser-local storage remain usable while server recovery stays disabled.
+
+New users start with browser-only collection. Unavailable server choices show
+their reason beside the controls. Profile, capture, Server ID, and capability
+validation happens before the capture field is cleared; collection clears the
+credential from the form and never saves or automatically resubmits it.
+
+**Stop collection** works for browser, local-server, and hosted server fetching.
+Stopping is cooperative: allow the current request to finish or time out while
+validated partial history is preserved. A stop accepted before final saving marks
+the collection incomplete; an archive transaction already saving finishes
+normally. If the stop response is uncertain, check the saved job instead of
+submitting the capture again. Profile and archive changes remain locked until
+collection and saving finish. Progress stays available when navigating away from
+the import panel, and **View history** opens the resulting ledger.
 
 The workflow was compared with the [Exilium import flow](https://exilium.xyz/import);
 the instructions and interface here are maintained independently. Unsupported

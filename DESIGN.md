@@ -126,9 +126,9 @@ Headings use tight tracking and balanced wrapping. Ordinary body text retains na
 
 The desktop masthead and main content share a centered maximum width (1456px) and matching gutters. The main region begins with 42px top padding. A ruled summary strip uses three unequal columns (.85fr / 1.5fr / 1fr), followed by two equal chart columns with a 56px gap. The history is separated by a strong top rule, with filters above the full-width table. This describes the current surface, rather than requiring every future screen to reproduce its composition.
 
-Filters occupy seven columns at the widest layout. At 1150px and below, gutters become 32px, filters become four columns, and record secondary values stack beneath the name. At 1450px and above, shared gutters grow to 64px.
+Search and rarity occupy the two visible filter columns. **More filters** discloses item kind, source type, pool ID, and date bounds in five columns, with an active count in its summary even when collapsed. Reset clears both visible and disclosed values. At 1150px and below, gutters become 32px and record secondary values stack beneath the name. At 1450px and above, shared gutters grow to 64px.
 
-At 760px and below, gutters become 20px; the summary total spans both remaining columns; charts and import columns stack; filters become two columns with search spanning both. The header keeps the import action visible with the profile selector below it. The title rule disappears. Pagination stacks, and the footer wraps.
+At 760px and below, gutters become 20px; the summary total spans both remaining columns; charts and import columns stack; filters use two columns with search spanning both, and disclosed filters use two columns. The header keeps the import action visible with the profile selector below it. Pagination stacks, and the footer wraps.
 
 The mobile ledger retains a minimum table width (630px) inside its horizontal scroll region. Source also provides mobile table-navigation buttons. Page layout itself should fit the viewport. The import panel reaches the mobile content edges and preserves its internal padding.
 
@@ -156,19 +156,23 @@ Labels sit above white inputs with a 7px gap. Inputs, selects, and textareas use
 
 ### Import navigation
 
-Import methods are adjacent text buttons over a shared bottom divider. The chosen method gains a 2px burnt-orange underline, burnt-orange text, and semibold weight. These are method selectors inside the import region, not a global navigation system.
+Import methods are adjacent text buttons over a shared bottom divider. The chosen method gains a 2px burnt-orange underline, burnt-orange text, semibold weight, and a programmatic pressed state. These are method selectors inside the import region, not a global navigation system.
 
 ### Rarity labels and charts
 
 Rarity is a compact text label without a pill background. Elite uses burnt-orange, while other labels retain ink. Chart tracks show a cool gray remainder and numeric labels remain visible beside bars. Horizontal bars animate scaleX from the left edge; vertical columns animate scaleY from the bottom edge. Both use a transform transition over .5s with cubic-bezier(.16,1,.3,1). A zero count has zero visible fill.
 
+The secondary overview leads with **What you recruited**: Dolls, Weapons, and Unknown counts. **Source details** discloses technical source-type and pool distributions with an explicit note that recruitment category names are unverified. Do not infer banner names from those IDs.
+
 ### Ledger and details
 
-The ledger uses a charcoal header with white text, compact rows, and horizontal dividers. Hover gives the row a subtle tonal change. Expanded details use a cool gray surface and wrap their provenance fields. The disclosure SVG rotates over .2s. Unknown item names retain their textual identity and use lighter, italic treatment rather than disappearing.
+The ledger uses a charcoal header with white text, compact rows, and horizontal dividers. Hover gives the row a subtle tonal change. Expanded details use a cool gray surface and wrap their provenance fields, including raw source IDs. The disclosure SVG rotates over .2s. Unknown item names retain an explicit Unknown label and use lighter, italic treatment rather than disappearing.
 
 ### Import panel
 
-The import region is an inline tonal panel with a strong top rule. Its source uses a short clip-path reveal (.35s) and two columns (1fr / 2fr) on desktop. Progress and partial/error outcomes appear within the region. All authored transitions and animation are removed when prefers-reduced-motion is reduce.
+The import region is an inline tonal panel with a strong top rule. Its source uses a short clip-path reveal (.35s) and two columns (1fr / 2fr) on desktop. Submission and progress precede the long capture guide. Progress distinguishes collection, stopping, and saving; a compact status remains visible when the panel closes or navigation changes. Completion reports records read, added, and profile total, with coverage caveats and a **View history** action that focuses the ledger. Errors are alerts; progress and outcomes use status announcements. All authored transitions and animation are removed when prefers-reduced-motion is reduce.
+
+**Choose files** accepts JSON exports and individual compressed tracker backups alongside **Choose export folder** and the separate **Restore a tracker backup** action. A validated backup opens the existing restore controls, retains its filename, and focuses the restore heading. Each selection defaults to merging; replacement remains an explicit confirmed choice. Unavailable server choices explain their capability restriction beside the disabled control. Profile and archive controls stay disabled while collection or saving is active.
 
 The current system has no reusable elevated card component. The sidecar records actual buttons, fields, method navigation, rarity label, ledger header, and import panel instead.
 

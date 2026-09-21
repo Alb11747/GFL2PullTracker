@@ -15,7 +15,15 @@ export interface PublicConfig {
 }
 export interface PublicJob {
   id: string;
-  status: 'queued' | 'running' | 'completed' | 'partial' | 'failed' | 'interrupted';
+  status:
+    | 'queued'
+    | 'running'
+    | 'cancelling'
+    | 'cancelled'
+    | 'completed'
+    | 'partial'
+    | 'failed'
+    | 'interrupted';
   message: string;
   records: number;
   pages: number;
@@ -47,7 +55,12 @@ export class PublicApiError extends Error {
 /** One explicit request per mutation. A lost response never causes a resubmission. */
 export function createPublicClient(fetcher: typeof fetch = fetch) {
   let csrfToken = '';
-  async function request<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
+  async function request<T>(
+    path: string,
+    method = 'GET',
+    body?: unknown,
+    uncertainMessage?: string
+  ): Promise<T> {
     const mutation = method !== 'GET';
     if (mutation && !csrfToken)
       throw new PublicApiError('Initialize the public session before submitting.');
@@ -67,7 +80,8 @@ export function createPublicClient(fetcher: typeof fetch = fetch) {
     } catch {
       throw new PublicApiError(
         mutation
-          ? 'The connection ended before the result was confirmed. Check the saved state before submitting again; fetching requires a fresh capture.'
+          ? (uncertainMessage ??
+              'The connection ended before the result was confirmed. Check the saved state before submitting again; fetching requires a fresh capture.')
           : 'The public service is unavailable. Your local archive is still saved.',
         0,
         mutation
@@ -94,7 +108,7 @@ export function createPublicClient(fetcher: typeof fetch = fetch) {
     }
     if (data === null)
       throw new PublicApiError(
-        'The public service returned an unreadable response.',
+        uncertainMessage ?? 'The public service returned an unreadable response.',
         response.status,
         mutation
       );
@@ -121,6 +135,14 @@ export function createPublicClient(fetcher: typeof fetch = fetch) {
     },
     job(id: string) {
       return request<PublicJob>(`jobs/${encodeURIComponent(id)}`);
+    },
+    cancelJob(id: string) {
+      return request<PublicJob>(
+        `jobs/${encodeURIComponent(id)}/cancel`,
+        'POST',
+        {},
+        'The stop request could not be confirmed. Keep checking this job for its current status.'
+      );
     },
     result(id: string) {
       return request<PublicSnapshot>(`jobs/${encodeURIComponent(id)}/result`);

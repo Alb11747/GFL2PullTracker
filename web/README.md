@@ -19,9 +19,17 @@ npm run build
 
 `npm run format` formats maintained frontend source. Native TypeScript tests use Node's strip-types flag for compatibility with the documented minimum Node 22.12.
 
-The client stores only the selected profile ID and per-profile collection job IDs in localStorage. Captured HTTP requests are kept in memory, cleared on submission, and never automatically resubmitted after a network failure. The proxy restricts the backend to a loopback origin, checks incoming hosts/origins, bounds upload bodies, and forwards no browser cookies or authorization headers.
+The client stores the selected profile ID, per-profile collection job IDs, and optional server-feature preferences in localStorage. Captured HTTP requests are kept in memory, cleared when collection begins after prerequisite validation, and never automatically resubmitted after a network failure. The proxy restricts the backend to a loopback origin, checks incoming hosts/origins, bounds upload bodies, and forwards no browser cookies or authorization headers.
 
 Imports preserve raw page text and require one collector export folder; selecting records.json alone is supported and leaves collection completeness unknown without a manifest. Frontend tests cover these boundaries and the proxy's request restrictions. The backend remains responsible for record validation, profile identity isolation, and transactional merging.
+
+## Import and restore controls
+
+**Choose files** routes collector/Exilium JSON through existing export validation and recognizes gzip tracker backups by their bytes. A backup must be selected alone and pass format, version, checksum, schema, and size validation. In hosted mode, it opens **Backup & sync** with the selected file retained; the separate **Restore a tracker backup** link opens the same restore controls. Restoration defaults to merging the contained profiles, while replacement requires confirmation and downloads a recovery copy first. Windows local-server mode rejects compressed archives with an explanation; it does not interpret them as records JSON.
+
+Browser-only collection is the default for new users; saved server choices apply only when supported. Every import retains its operation and destination profile while profile/archive mutations are locked. **Stop collection** aborts browser requests or requests cooperative server cancellation, preserving validated partial history before releasing the lock. The local and public APIs expose idempotent `POST /api/jobs/{id}/cancel` and `POST /api/public/jobs/{id}/cancel`; the public route retains session ownership and CSRF checks. Accepted cancellation moves through `cancelling` to `cancelled`; already-finalizing jobs complete normally. An uncertain cancellation response leaves the job checkable without resubmitting credentials.
+
+Progress remains visible outside the import panel, distinguishes collection, stopping, and saving, and reports records read, added, and total on completion. **View history** focuses the ledger. See [importing](../docs/IMPORTING.md) for supported files and capture instructions.
 
 ## Dependency notes
 
