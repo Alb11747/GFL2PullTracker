@@ -1,4 +1,7 @@
 FROM caddy:2.10.2-alpine
+# Compose permits low ports without capabilities; remove the upstream file
+# capability so Caddy can execute with cap_drop: ALL and no-new-privileges.
+RUN setcap -r /usr/bin/caddy
 RUN addgroup -g 10001 tracker && adduser -D -u 10001 -G tracker tracker \
     && chown -R tracker:tracker /data /config
 COPY docs/Caddyfile /etc/caddy/Caddyfile
