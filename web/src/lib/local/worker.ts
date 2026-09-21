@@ -1,8 +1,13 @@
-import { canonical, LocalEngine } from './engine.ts';
+import { canonical, LocalEngine, validateState } from './engine.ts';
 import { decodeBackup, encodeBackup } from './backup.ts';
 import { readArchive, recoverySnapshot, writeArchive } from './storage.ts';
 import type { PortableState } from './types.ts';
-import { applyExclusions, removeFromDevice, restoreExclusions } from './device.ts';
+import {
+  applyExclusions,
+  removeFromDevice,
+  restoreExclusions,
+  retainExclusionAliases
+} from './device.ts';
 import { readExport, inspectExiliumProfiles } from '../import-files.ts';
 
 interface Request {
@@ -38,6 +43,7 @@ const allowed = new Set([
   'exportBackup',
   'encodeBackup',
   'decodeBackup',
+  'validateState',
   'preferences',
   'recoverySnapshot',
   'readExport',
@@ -59,9 +65,12 @@ async function dispatch(method: string, args: unknown[]): Promise<unknown> {
       : inspectExiliumProfiles(files);
   }
   if (method === 'encodeBackup') return encodeBackup(args[0] as PortableState);
-  if (method === 'decodeBackup') return decodeBackup(args[0] as Uint8Array);
+  if (method === 'decodeBackup')
+    return decodeBackup(args[0] as Uint8Array, args[1] as 1 | 2 | undefined);
+  if (method === 'validateState') return validateState(args[0]);
   if (method === 'recoverySnapshot') return recoverySnapshot();
   const stored = await readArchive();
+  const originalExclusions = canonical(stored.exclusions);
   const engine = new LocalEngine(stored.state);
   let result: unknown;
   let replacement = false;
@@ -77,9 +86,10 @@ async function dispatch(method: string, args: unknown[]): Promise<unknown> {
       throw new Error('The local archive changed during sync. Run sync again.');
     result = await engine.replaceState(args[0]);
     replacement = true;
-    if (args[1] !== undefined)
+    if (args[1] !== undefined) {
+      stored.exclusions = retainExclusionAliases(engine.exportState(), stored.exclusions);
       result = await engine.replaceState(applyExclusions(engine.exportState(), stored.exclusions));
-    else stored.exclusions = restoreExclusions(stored.exclusions, engine.exportState());
+    } else stored.exclusions = restoreExclusions(stored.exclusions, engine.exportState());
   } else if (method === 'deleteProfile' && args[1] === false) {
     const removed = removeFromDevice(engine.exportState(), args[0] as string, stored.exclusions);
     stored.exclusions = removed.exclusions;
@@ -106,6 +116,7 @@ async function dispatch(method: string, args: unknown[]): Promise<unknown> {
     const state = engine.exportState();
     if (
       canonical(state) === canonical(stored.state) &&
+      canonical(stored.exclusions) === originalExclusions &&
       method === 'replaceState' &&
       args[1] !== undefined
     )

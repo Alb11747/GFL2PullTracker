@@ -81,7 +81,8 @@
     phase: 'disconnected',
     message: 'Google Drive is not connected.',
     lastSyncedAt: null,
-    conflicts: []
+    conflicts: [],
+    resolutionGeneration: null
   });
   const active = $derived(profiles.find((profile) => profile.id === activeProfileId));
   const verifiedAccount = $derived(
@@ -98,7 +99,12 @@
   );
   $effect(() =>
     drive?.subscribe((status) => {
-      sync = status;
+      // subscribe emits synchronously. Reading sync here must not make the
+      // subscription effect depend on its own incoming status updates.
+      untrack(() => {
+        if (sync.resolutionGeneration !== status.resolutionGeneration) decisions = {};
+        sync = status;
+      });
     })
   );
 
@@ -474,9 +480,11 @@
                   <legend
                     >{conflict.profileName} · {conflict.kind === 'delete-edit'
                       ? 'Deletion and newer changes'
-                      : conflict.kind === 'rename'
-                        ? 'Different profile names'
-                        : 'Different account identities'}</legend
+                      : conflict.kind === 'setting'
+                        ? 'Different preferences'
+                        : conflict.kind === 'rename'
+                          ? 'Different profile names'
+                          : 'Different account identities'}</legend
                   ><label class="check"
                     ><input
                       type="radio"
@@ -484,7 +492,11 @@
                       checked={decisions[conflict.id] === 'local'}
                       onchange={() => (decisions = { ...decisions, [conflict.id]: 'local' })}
                     />
-                    {conflict.id.startsWith('branch:') ? 'Earlier cloud revision' : 'This device'}:
+                    {conflict.id.startsWith('lineage:')
+                      ? 'Earlier account binding'
+                      : conflict.id.startsWith('branch:')
+                        ? 'Earlier cloud revision'
+                        : 'This device'}:
                     {conflict.localLabel}</label
                   ><label class="check"
                     ><input
@@ -493,7 +505,11 @@
                       checked={decisions[conflict.id] === 'remote'}
                       onchange={() => (decisions = { ...decisions, [conflict.id]: 'remote' })}
                     />
-                    {conflict.id.startsWith('branch:') ? 'Other cloud revision' : 'Google Drive'}:
+                    {conflict.id.startsWith('lineage:')
+                      ? 'Other account binding'
+                      : conflict.id.startsWith('branch:')
+                        ? 'Other cloud revision'
+                        : 'Google Drive'}:
                     {conflict.remoteLabel}</label
                   >
                 </fieldset>{/each}
@@ -502,7 +518,10 @@
                 disabled={busy || sync.conflicts.some((conflict) => !decisions[conflict.id])}
                 onclick={() =>
                   run(async () => {
-                    await drive?.resolve(decisions);
+                    await drive?.resolve({
+                      generation: sync.resolutionGeneration,
+                      choices: { ...decisions }
+                    });
                     decisions = {};
                     await onchanged();
                   })}>Apply choices and sync</button

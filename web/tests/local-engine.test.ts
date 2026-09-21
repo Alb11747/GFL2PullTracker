@@ -10,7 +10,13 @@ import {
 import { decodeBackup, encodeBackup } from '../src/lib/local/backup.ts';
 import type { Filters, ImportInput } from '../src/lib/api.ts';
 import fixtures from './local-parity.json' with { type: 'json' };
-import { applyExclusions, removeFromDevice, restoreExclusions } from '../src/lib/local/device.ts';
+import {
+  applyExclusions,
+  removeFromDevice,
+  restoreExclusions,
+  retainExclusionAliases
+} from '../src/lib/local/device.ts';
+import { MAX_PROFILE_ALIASES } from '../src/lib/local/types.ts';
 
 export function record(
   item = 11007,
@@ -279,7 +285,7 @@ test('gzip round-trip preserves sources and rejects corruption, credentials, and
   corrupt[corrupt.length - 1] ^= 0xff;
   await assert.rejects(() => decodeBackup(corrupt));
   await assert.rejects(() => decodeBackup(new Uint8Array([1, 2, 3])), /gzip/);
-  await assert.rejects(() => validateState({ ...state, version: 2 }), /Unsupported/);
+  await assert.rejects(() => validateState({ ...state, version: 3 }), /Unsupported/);
   await assert.rejects(
     () => validateState({ ...state, settings: { access_token: 'private' } }),
     /credentials/
@@ -354,7 +360,11 @@ test('device removal purges history without publishing a deletion and blocks aut
   const removed = removeFromDevice(cloud, id, []);
   assert.equal(removed.state.profiles.length, 0);
   assert.equal(removed.state.tombstones.length, 0);
-  assert.deepEqual(Object.keys(removed.exclusions[0]).sort(), ['identity', 'profile_id']);
+  assert.deepEqual(Object.keys(removed.exclusions[0]).sort(), [
+    'aliases',
+    'identity',
+    'profile_id'
+  ]);
   assert.equal(applyExclusions(cloud, removed.exclusions).profiles.length, 0);
   // The same game identity arriving under a different device's profile ID is also excluded.
   const otherDevice = structuredClone(cloud);
@@ -380,4 +390,139 @@ test('duplicate account assignment and implicit resurrection cannot invalidate p
     /synced deletion/
   );
   await validateState(engine.exportState());
+});
+
+test('legacy gzip checks its original checksum before migrating without changing source hashes', async () => {
+  const { engine, id } = await setup();
+  await engine.importRecords({ profile_id: id, records_document: document([record()]) });
+  const original = engine.exportState();
+  const legacy = structuredClone(original) as unknown as Record<string, unknown>;
+  legacy.version = 1;
+  for (const profile of legacy.profiles as Record<string, unknown>[]) delete profile.aliases;
+  assert.deepEqual(await validateState(legacy, { preserveVersion: true }), legacy);
+  async function compressed(sha256: string) {
+    const envelope = { format: 'gfl2-pull-tracker-backup', version: 1, state: legacy, sha256 };
+    return new Uint8Array(
+      await new Response(
+        new Blob([canonical(envelope)]).stream().pipeThrough(new CompressionStream('gzip'))
+      ).arrayBuffer()
+    );
+  }
+  const legacyBytes = await compressed(await digest(legacy));
+  const migrated = await decodeBackup(legacyBytes);
+  await assert.rejects(() => decodeBackup(legacyBytes, 2), /metadata and backup versions/);
+  const v2Bytes = await encodeBackup(original);
+  await assert.rejects(() => decodeBackup(v2Bytes, 1), /metadata and backup versions/);
+  assert.deepEqual(migrated, original);
+  assert.deepEqual(migrated.profiles[0].snapshots, original.profiles[0].snapshots);
+  const migratedHash = await digest(original);
+  await assert.rejects(() => compressed(migratedHash).then(decodeBackup), /integrity/);
+  assert.throws(
+    () => new LocalEngine(legacy as unknown as typeof original),
+    /validated and migrated/
+  );
+});
+
+test('v2 rejects missing, duplicate, overlapping, oversized, and contradictory aliases', async () => {
+  const { engine } = await setup();
+  const original = engine.exportState();
+  for (const aliases of [
+    undefined,
+    [],
+    ['x'],
+    ['x', 'x'],
+    [
+      original.profiles[0].id,
+      ...Array.from({ length: MAX_PROFILE_ALIASES }, (_, i) => `alias-${i}`)
+    ].sort()
+  ]) {
+    const state = structuredClone(original);
+    (state.profiles[0] as unknown as Record<string, unknown>).aliases = aliases;
+    await assert.rejects(() => validateState(state));
+  }
+  const overlap = structuredClone(original);
+  overlap.profiles.push({
+    ...structuredClone(overlap.profiles[0]),
+    id: 'second',
+    aliases: [...overlap.profiles[0].aliases, 'second'].sort()
+  });
+  await assert.rejects(() => validateState(overlap), /Duplicate profile/);
+  const contradictory = structuredClone(original);
+  contradictory.tombstones.push({
+    profile_id: 'deleted',
+    aliases: ['deleted', ...original.profiles[0].aliases].sort(),
+    identity: null,
+    deleted_at: '2026-09-20T00:00:00Z'
+  });
+  await assert.rejects(() => validateState(contradictory), /both a profile and its deletion/);
+});
+
+test('merges and deletion retain every historical ID for offline partial profiles and exclusions', async () => {
+  const left = new LocalEngine();
+  const right = new LocalEngine();
+  const a = left.createProfile('Commander');
+  const b = right.createProfile('Commander');
+  const partial = right.exportState();
+  for (const [engine, id] of [
+    [left, a.id],
+    [right, b.id]
+  ] as const)
+    await engine.importRecords({
+      profile_id: id,
+      records_document: document([record()], {
+        schema_version: 2,
+        server: '10',
+        game_channel_id: '5'
+      })
+    });
+  await left.mergeState(right.exportState());
+  const merged = left.exportState();
+  assert.deepEqual(merged.profiles[0].aliases, [a.id, b.id].sort());
+  assert.equal(merged.profiles[0].id, [a.id, b.id].sort()[0]);
+  const removed = removeFromDevice(merged, merged.profiles[0].id, []);
+  assert.equal(applyExclusions(partial, removed.exclusions).profiles.length, 0);
+  const priorExclusion = [{ profile_id: a.id, identity: null }];
+  const learned = retainExclusionAliases(merged, priorExclusion);
+  assert.deepEqual(learned[0].aliases, [a.id, b.id].sort());
+  assert.equal(applyExclusions(partial, learned).profiles.length, 0);
+  assert.deepEqual(priorExclusion, [{ profile_id: a.id, identity: null }]);
+  left.deleteProfile(a.id);
+  assert.deepEqual(left.exportState().tombstones[0].aliases, [a.id, b.id].sort());
+  await assert.rejects(() => left.mergeState(partial), /conflicts with a deletion/);
+  await validateState(left.exportState());
+});
+
+test('v1 duplicate deletion records migrate to a valid v2 deletion without losing the latest date', async () => {
+  const legacy = {
+    format: 'gfl2-pull-tracker',
+    version: 1,
+    profiles: [],
+    settings: {},
+    tombstones: [
+      { profile_id: 'old', identity: null, deleted_at: '2026-09-19T00:00:00Z' },
+      { profile_id: 'old', identity: null, deleted_at: '2026-09-20T00:00:00Z' }
+    ]
+  };
+  assert.deepEqual(await validateState(legacy, { preserveVersion: true }), legacy);
+  const migrated = await validateState(legacy);
+  assert.equal(migrated.tombstones.length, 1);
+  assert.deepEqual(migrated.tombstones[0].aliases, ['old']);
+  assert.equal(migrated.tombstones[0].deleted_at, '2026-09-20T00:00:00Z');
+  assert.deepEqual(await validateState(migrated), migrated);
+});
+
+test('imports refresh history cached through a retained profile alias', async () => {
+  const { engine, id } = await setup();
+  const state = engine.exportState();
+  state.profiles[0].aliases = [id, 'retained-profile-id'].sort();
+  await engine.replaceState(state);
+  assert.equal(engine.history(filters('retained-profile-id')).total, 0);
+  const imported = await engine.importRecords({
+    profile_id: 'retained-profile-id',
+    records_document: document([record()])
+  });
+  assert.equal(imported.profile_id, id);
+  assert.equal(imported.added_count, 1);
+  assert.equal(engine.history(filters('retained-profile-id')).total, 1);
+  assert.deepEqual(engine.history(filters('retained-profile-id')), engine.history(filters(id)));
 });

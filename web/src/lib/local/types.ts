@@ -10,17 +10,20 @@ export interface SourceSnapshot {
   imported_at: string;
 }
 export interface PortableProfile extends Profile {
+  /** Every historical profile ID, including the canonical ID. */
+  aliases: string[];
   updated_at: string;
   snapshots: SourceSnapshot[];
 }
 export interface Deletion {
   profile_id: string;
+  aliases: string[];
   deleted_at: string;
   identity: string | null;
 }
 export interface PortableState {
   format: 'gfl2-pull-tracker';
-  version: 1;
+  version: 1 | 2;
   profiles: PortableProfile[];
   settings: Record<string, string | number | boolean>;
   tombstones: Deletion[];
@@ -44,7 +47,19 @@ export const OFFICIAL_HOSTS = new Set([
   'gf2-gacha-record-intl.haoplay.com'
 ]);
 export function emptyState(): PortableState {
-  return { format: 'gfl2-pull-tracker', version: 1, profiles: [], settings: {}, tombstones: [] };
+  return { format: 'gfl2-pull-tracker', version: 2, profiles: [], settings: {}, tombstones: [] };
+}
+export const MAX_PROFILE_ALIASES = 10_000;
+/** Legacy input is supported only at the validated migration boundary. */
+export function profileIds(
+  profile: Pick<PortableProfile, 'id'> & { aliases?: string[] }
+): string[] {
+  return [...new Set([profile.id, ...(profile.aliases || [])])].sort();
+}
+export function deletionIds(
+  deletion: Pick<Deletion, 'profile_id'> & { aliases?: string[] }
+): string[] {
+  return [...new Set([deletion.profile_id, ...(deletion.aliases || [])])].sort();
 }
 /** Partial identities must never match independently created profiles during sync. */
 export function identityKey(profile: Identity): string | null {

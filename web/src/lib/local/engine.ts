@@ -13,6 +13,9 @@ import {
   emptyState,
   IDENTITY_FIELDS,
   identityKey,
+  profileIds,
+  deletionIds,
+  MAX_PROFILE_ALIASES,
   OFFICIAL_HOSTS,
   type Identity,
   type PortableProfile,
@@ -395,17 +398,19 @@ function buildRows(profile: PortableProfile): Row[] {
   return rows;
 }
 function publicProfile(profile: PortableProfile): Profile {
-  const { snapshots: _snapshots, updated_at: _updated, ...result } = profile;
+  const { snapshots: _snapshots, updated_at: _updated, aliases: _aliases, ...result } = profile;
   return result;
 }
 export class LocalEngine {
   state: PortableState;
   private cache = new Map<string, Row[]>();
   constructor(state: PortableState = emptyState()) {
+    if (state.version !== 2)
+      throw new Error('Legacy archives must be validated and migrated before use.');
     this.state = structuredClone(state);
   }
   private profile(id: string): PortableProfile {
-    const profile = this.state.profiles.find((p) => p.id === id);
+    const profile = this.state.profiles.find((p) => profileIds(p).includes(id));
     if (!profile) throw new Error('Profile not found.');
     return profile;
   }
@@ -415,8 +420,10 @@ export class LocalEngine {
   createProfile(name: string): Profile {
     noCredentials(name);
     const timestamp = new Date().toISOString();
+    const id = crypto.randomUUID();
     const profile: PortableProfile = {
-      id: crypto.randomUUID(),
+      id,
+      aliases: [id],
       name: text(name.trim(), 'profile name', 80),
       account_fingerprint: null,
       endpoint_host: null,
@@ -439,14 +446,17 @@ export class LocalEngine {
   }
   deleteProfile(id: string): void {
     const p = this.profile(id);
-    this.state.tombstones = this.state.tombstones.filter((t) => t.profile_id !== id);
+    this.state.tombstones = this.state.tombstones.filter(
+      (t) => !deletionIds(t).some((alias) => profileIds(p).includes(alias))
+    );
     this.state.tombstones.push({
-      profile_id: id,
+      profile_id: p.id,
+      aliases: profileIds(p),
       identity: identityKey(p),
       deleted_at: new Date().toISOString()
     });
-    this.state.profiles = this.state.profiles.filter((p) => p.id !== id);
-    this.cache.delete(id);
+    this.state.profiles = this.state.profiles.filter((profile) => profile !== p);
+    this.cache.clear();
   }
   async importRecords(input: ImportInput): Promise<ImportResult> {
     const { records_document: document, manifest = null, raw_pages = null } = input;
@@ -457,7 +467,9 @@ export class LocalEngine {
     const fullIdentity = identityKey(bound);
     if (
       this.state.tombstones.some(
-        (t) => t.profile_id === p.id || (fullIdentity !== null && t.identity === fullIdentity)
+        (t) =>
+          deletionIds(t).some((alias) => profileIds(p).includes(alias)) ||
+          (fullIdentity !== null && t.identity === fullIdentity)
       )
     )
       throw new Error(
@@ -520,8 +532,9 @@ export class LocalEngine {
     };
   }
   private rows(id: string): Row[] {
-    if (!this.cache.has(id)) this.cache.set(id, buildRows(this.profile(id)));
-    return this.cache.get(id)!;
+    const profile = this.profile(id);
+    if (!this.cache.has(profile.id)) this.cache.set(profile.id, buildRows(profile));
+    return this.cache.get(profile.id)!;
   }
   private filtered(filters: Partial<Filters> & { profile_id: string }): Row[] {
     return this.rows(filters.profile_id).filter((row) => {
@@ -635,35 +648,57 @@ export class LocalEngine {
       if (
         merged.profiles.some(
           (p) =>
-            p.id === deletion.profile_id ||
+            profileIds(p).some((alias) => deletionIds(deletion).includes(alias)) ||
             (deletion.identity !== null && identityKey(p) === deletion.identity)
         )
       )
         throw new Error(
           'A synced deletion conflicts with a local profile. Resolve it in Backup & Sync.'
         );
-      if (!merged.tombstones.some((t) => canonical(t) === canonical(deletion)))
-        merged.tombstones.push(deletion);
+      const existing = merged.tombstones.find(
+        (t) =>
+          deletionIds(t).some((alias) => deletionIds(deletion).includes(alias)) ||
+          (t.identity !== null && t.identity === deletion.identity)
+      );
+      if (existing) {
+        if (
+          existing.identity !== null &&
+          deletion.identity !== null &&
+          existing.identity !== deletion.identity
+        )
+          throw new Error('Deletion aliases refer to different game accounts.');
+        existing.aliases = [
+          ...new Set([...deletionIds(existing), ...deletionIds(deletion)])
+        ].sort();
+        existing.profile_id = existing.aliases[0];
+        existing.identity ??= deletion.identity;
+        existing.deleted_at = [existing.deleted_at, deletion.deleted_at].sort().at(-1)!;
+      } else merged.tombstones.push(deletion);
     }
     for (const remote of incoming.profiles) {
       const fullIdentity = identityKey(remote);
       if (
         merged.tombstones.some(
           (t) =>
-            t.profile_id === remote.id || (fullIdentity !== null && t.identity === fullIdentity)
+            deletionIds(t).some((alias) => profileIds(remote).includes(alias)) ||
+            (fullIdentity !== null && t.identity === fullIdentity)
         )
       )
         throw new Error(
           'An imported profile conflicts with a deletion. Resolve it in Backup & Sync.'
         );
       const local = merged.profiles.find(
-        (p) => p.id === remote.id || (fullIdentity !== null && identityKey(p) === fullIdentity)
+        (p) =>
+          profileIds(p).some((alias) => profileIds(remote).includes(alias)) ||
+          (fullIdentity !== null && identityKey(p) === fullIdentity)
       );
       if (!local) {
         merged.profiles.push(remote);
         continue;
       }
       bind(local, remote);
+      local.aliases = [...new Set([...profileIds(local), ...profileIds(remote)])].sort();
+      local.id = local.aliases[0];
       if (local.name !== remote.name)
         throw new Error('Profile names conflict. Resolve the rename in Backup & Sync.');
       const known = new Set(local.snapshots.map((s) => s.digest));
@@ -704,10 +739,13 @@ function validateSettings(
       throw new Error('Server consent preferences must remain on this device.');
   }
 }
-export async function validateState(input: unknown): Promise<PortableState> {
+export async function validateState(
+  input: unknown,
+  options: { preserveVersion?: boolean } = {}
+): Promise<PortableState> {
   const state = object(input, 'archive');
   noCredentials(state);
-  if (state.format !== 'gfl2-pull-tracker' || state.version !== 1)
+  if (state.format !== 'gfl2-pull-tracker' || ![1, 2].includes(state.version as number))
     throw new Error('Unsupported backup format or version.');
   if (new TextEncoder().encode(canonical(state)).length > MAX_STATE_BYTES)
     throw new Error('Archive exceeds the 64 MiB expanded limit.');
@@ -723,16 +761,36 @@ export async function validateState(input: unknown): Promise<PortableState> {
   result.settings = { ...state.settings };
   const ids = new Set<string>();
   const identities = new Set<string>();
+  let aliasReferences = 0;
+  function aliases(value: unknown, id: string): string[] {
+    if (state.version === 1) return [id];
+    if (!Array.isArray(value) || !value.length || value.length > MAX_PROFILE_ALIASES)
+      throw new Error('Invalid profile aliases.');
+    const validated = value.map((alias) => text(alias, 'profile alias'));
+    if (
+      new Set(validated).size !== validated.length ||
+      !validated.includes(id) ||
+      canonical(validated) !== canonical([...validated].sort())
+    )
+      throw new Error('Profile aliases must be unique, sorted, and include the canonical ID.');
+    aliasReferences += validated.length;
+    if (aliasReferences > MAX_PROFILE_ALIASES)
+      throw new Error('Archive contains too many profile alias references.');
+    return validated;
+  }
   for (const raw of state.profiles) {
     const p = object(raw, 'profile');
     const id = text(p.id, 'profile ID');
-    if (ids.has(id)) throw new Error('Duplicate profile ID.');
-    ids.add(id);
+    const retainedIds = aliases(p.aliases, id);
+    if (retainedIds.some((alias) => ids.has(alias)))
+      throw new Error('Duplicate profile ID or alias.');
+    retainedIds.forEach((alias) => ids.add(alias));
     const bound = identity(p);
     if (!Array.isArray(p.snapshots) || p.snapshots.length > 10000)
       throw new Error('Invalid source snapshot list.');
     const profile: PortableProfile = {
       id,
+      aliases: retainedIds,
       name: text(p.name, 'profile name', 80),
       ...bound,
       created_at: date(p.created_at, 'profile creation date'),
@@ -771,10 +829,13 @@ export async function validateState(input: unknown): Promise<PortableState> {
     if (fullIdentity !== null) identities.add(fullIdentity);
     result.profiles.push(profile);
   }
+  const deletionOwners = new Map<string, string | null>();
   for (const raw of state.tombstones) {
     const d = object(raw, 'deletion');
     const id = text(d.profile_id, 'deleted profile ID');
-    if (ids.has(id)) throw new Error('Archive contains both a profile and its deletion.');
+    const retainedIds = aliases(d.aliases, id);
+    if (retainedIds.some((alias) => ids.has(alias)))
+      throw new Error('Archive contains both a profile and its deletion.');
     const value = d.identity === null ? null : text(d.identity, 'deleted identity', 1000);
     if (value !== null) {
       const parsed = JSON.parse(value);
@@ -791,11 +852,49 @@ export async function validateState(input: unknown): Promise<PortableState> {
     }
     if (value !== null && result.profiles.some((p) => identityKey(p) === value))
       throw new Error('Archive contains both a game identity and its deletion.');
+    if (state.version === 2 && retainedIds.some((alias) => deletionOwners.has(alias)))
+      throw new Error('Archive repeats a deletion alias.');
+    retainedIds.forEach((alias) => deletionOwners.set(alias, value));
     result.tombstones.push({
       profile_id: id,
+      aliases: retainedIds,
       identity: value,
       deleted_at: date(d.deleted_at, 'deletion date')
     });
+  }
+  if (state.version === 1 && options.preserveVersion) {
+    result.version = 1;
+    for (const value of [...result.profiles, ...result.tombstones])
+      delete (value as unknown as Record<string, unknown>).aliases;
+    return result;
+  }
+  if (state.version === 1) {
+    // v1 permitted repeated deletion records. Preserve their full identifier set
+    // while refusing evidence which assigns a retained ID to different accounts.
+    const deletions: PortableState['tombstones'] = [];
+    for (const deletion of result.tombstones) {
+      const matches = deletions.filter(
+        (existing) =>
+          existing.aliases.some((alias) => deletion.aliases.includes(alias)) ||
+          (existing.identity !== null && existing.identity === deletion.identity)
+      );
+      for (const existing of matches) {
+        if (
+          existing.identity !== null &&
+          deletion.identity !== null &&
+          existing.identity !== deletion.identity
+        )
+          throw new Error('Deletion aliases refer to different game accounts.');
+        deletion.aliases = [...new Set([...deletion.aliases, ...existing.aliases])].sort();
+        deletion.profile_id = deletion.aliases[0];
+        deletion.identity ??= existing.identity;
+        deletion.deleted_at = [deletion.deleted_at, existing.deleted_at].sort().at(-1)!;
+        deletions.splice(deletions.indexOf(existing), 1);
+      }
+      deletions.push(deletion);
+    }
+    result.tombstones = deletions;
+    return validateState(result);
   }
   return result;
 }

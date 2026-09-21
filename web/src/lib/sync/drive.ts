@@ -5,6 +5,8 @@ export const MAX_REVISION_BYTES = 32 * 1024 * 1024;
 export const MAX_REVISIONS = 2000;
 
 export interface Revision {
+  /** Missing only on legacy/test transports; new publications always use v2. */
+  formatVersion?: 1 | 2;
   id: string;
   parents: string[];
   createdAt: string;
@@ -66,7 +68,7 @@ function revisionFromFile(file: {
     const value = JSON.parse(file.description ?? '') as Record<string, unknown>;
     if (
       value.format !== 'gfl2-drive-revision' ||
-      value.version !== 1 ||
+      ![1, 2].includes(value.version as number) ||
       typeof value.id !== 'string' ||
       !/^[\w-]{1,100}$/.test(value.id) ||
       value.id !== file.appProperties?.revision ||
@@ -81,6 +83,7 @@ function revisionFromFile(file: {
     )
       throw new Error();
     return {
+      formatVersion: value.version as 1 | 2,
       id: value.id,
       parents: value.parents as string[],
       createdAt: value.createdAt,
@@ -90,7 +93,7 @@ function revisionFromFile(file: {
   } catch {
     throw new DriveError(
       'invalid',
-      'An unsupported or damaged Drive revision was found. Local data is unchanged.'
+      'An unsupported or damaged Drive revision was found. Refresh the tracker before retrying. Local data is unchanged.'
     );
   }
 }
@@ -161,7 +164,8 @@ export function createDriveTransport(
           const previous = revisions.get(revision.id);
           if (
             previous &&
-            (previous.sha256 !== revision.sha256 ||
+            (previous.formatVersion !== revision.formatVersion ||
+              previous.sha256 !== revision.sha256 ||
               JSON.stringify(previous.parents) !== JSON.stringify(revision.parents))
           )
             throw new DriveError('invalid', 'Drive contains conflicting copies of a revision.');
@@ -203,7 +207,7 @@ export function createDriveTransport(
         mimeType: 'application/gzip',
         parents: ['appDataFolder'],
         appProperties: { tracker: 'gfl2-v1', revision: revision.id },
-        description: JSON.stringify({ format: 'gfl2-drive-revision', version: 1, ...revision })
+        description: JSON.stringify({ ...revision, format: 'gfl2-drive-revision', version: 2 })
       };
       const body = new Blob([
         `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: application/gzip\r\n\r\n`,

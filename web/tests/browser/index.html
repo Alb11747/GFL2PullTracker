@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://127.0.0.1:14194; worker-src 'self'; object-src 'none'; base-uri 'none'"
+    />
+    <title>Drive sync browser regressions</title>
+    <style>
+      body {
+        max-width: 1040px;
+        margin: 2rem auto;
+        padding: 0 1rem;
+        font:
+          16px/1.5 system-ui,
+          sans-serif;
+        color: #18202a;
+        background: #f4f6f8;
+      }
+      button {
+        padding: 0.6rem 1rem;
+        cursor: pointer;
+      }
+      button:disabled {
+        cursor: default;
+      }
+      pre {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        padding: 1rem;
+        background: #fff;
+        border: 1px solid #ccd3db;
+      }
+      #fixture {
+        padding: 1rem;
+        background: white;
+        border: 1px solid #ccd3db;
+      }
+      fieldset {
+        margin-block: 1rem;
+      }
+      label {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Drive sync browser regressions</h1>
+    <p>
+      Uses real workers, IndexedDB, Web Locks, gzip, and the archive settings component. Drive and
+      authorization are synthetic. Running resets only this isolated test origin’s archive.
+    </p>
+    <button id="run">Run tests</button>
+    <p id="summary" role="status">Ready</p>
+    <pre id="results" aria-label="Test results"></pre>
+    <h2>Production conflict dialog</h2>
+    <div id="fixture"></div>
+    <script type="module" src="/suite.ts"></script>
+  </body>
+</html>

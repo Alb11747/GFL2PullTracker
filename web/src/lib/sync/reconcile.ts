@@ -2,6 +2,8 @@ import {
   emptyState,
   identityKey,
   IDENTITY_FIELDS,
+  profileIds,
+  deletionIds,
   type Deletion,
   type PortableProfile,
   type PortableState
@@ -9,12 +11,15 @@ import {
 
 export interface SyncConflict {
   id: string;
-  kind: 'rename' | 'identity' | 'delete-edit';
+  kind: 'rename' | 'identity' | 'delete-edit' | 'setting';
   profileName: string;
   localLabel: string;
   remoteLabel: string;
+  /** Exact alternatives, including immutable history, to which a choice applies. */
+  fingerprint: string;
 }
-export type Resolutions = Record<string, 'local' | 'remote'>;
+export type Choices = Record<string, 'local' | 'remote'>;
+export type Resolutions = Record<string, { choice: 'local' | 'remote'; fingerprint: string }>;
 export const PORTABLE_SETTINGS = ['theme', 'locale', 'page_size'] as const;
 
 export function canonical(value: unknown): string {
@@ -53,6 +58,26 @@ function mergeSnapshots(profiles: PortableProfile[]): PortableProfile['snapshots
     (a, b) => a.imported_at.localeCompare(b.imported_at) || a.digest.localeCompare(b.digest)
   );
 }
+function collapse(profiles: PortableProfile[]): PortableProfile | undefined {
+  if (!profiles.length) return undefined;
+  const result = structuredClone(profiles[0]);
+  const ids = [...new Set(profiles.flatMap(profileIds))].sort();
+  result.id = ids[0];
+  result.aliases = ids;
+  result.created_at = profiles.map((p) => p.created_at).sort()[0];
+  result.updated_at = profiles
+    .map((p) => p.updated_at)
+    .sort()
+    .at(-1)!;
+  result.snapshots = mergeSnapshots(profiles);
+  for (const p of profiles) for (const field of IDENTITY_FIELDS) result[field] ??= p[field];
+  return result;
+}
+function deletionMatches(d: Deletion, ids: Set<string>, identities: Set<string>): boolean {
+  return (
+    deletionIds(d).some((id) => ids.has(id)) || (d.identity !== null && identities.has(d.identity))
+  );
+}
 
 /** Three-way reconciliation. Snapshots are immutable; the local worker derives occurrence counts. */
 export function reconcile(
@@ -62,11 +87,28 @@ export function reconcile(
   resolutions: Resolutions = {}
 ): { state: PortableState; conflicts: SyncConflict[] } {
   const conflicts: SyncConflict[] = [];
+  const conflict = (
+    kind: SyncConflict['kind'],
+    key: string,
+    name: string,
+    localLabel: string,
+    remoteLabel: string,
+    alternatives: unknown
+  ) => {
+    const id = `${kind}:${key}`;
+    const fingerprint = canonical({ kind, alternatives });
+    const resolution = resolutions[id];
+    if (resolution?.fingerprint === fingerprint) return resolution.choice;
+    conflicts.push({ id, kind, profileName: name, localLabel, remoteLabel, fingerprint });
+    return null;
+  };
   const groups: { profiles: PortableProfile[]; ids: Set<string>; identities: Set<string> }[] = [];
   for (const profile of [...local.profiles, ...remote.profiles, ...base.profiles]) {
     const identity = identityKey(profile);
     const matches = groups.filter(
-      (g) => g.ids.has(profile.id) || (identity !== null && g.identities.has(identity))
+      (g) =>
+        profileIds(profile).some((id) => g.ids.has(id)) ||
+        (identity !== null && g.identities.has(identity))
     );
     const group = matches[0] ?? {
       profiles: [],
@@ -75,135 +117,185 @@ export function reconcile(
     };
     if (!matches.length) groups.push(group);
     for (const other of matches.slice(1)) {
-      other.profiles.forEach((p) => group.profiles.push(p));
+      group.profiles.push(...other.profiles);
       other.ids.forEach((id) => group.ids.add(id));
       other.identities.forEach((id) => group.identities.add(id));
       groups.splice(groups.indexOf(other), 1);
     }
     group.profiles.push(profile);
-    group.ids.add(profile.id);
+    profileIds(profile).forEach((id) => group.ids.add(id));
     if (identity) group.identities.add(identity);
   }
   const state = emptyState();
-  const tombstones = new Map<string, Deletion>();
-  for (const item of [...local.tombstones, ...remote.tombstones]) {
-    const key = item.identity ?? item.profile_id;
-    if (!tombstones.has(key) || tombstones.get(key)!.deleted_at < item.deleted_at)
-      tombstones.set(key, item);
-  }
-  const conflict = (
-    kind: SyncConflict['kind'],
-    key: string,
-    name: string,
-    localLabel: string,
-    remoteLabel: string
+  let tombstones = structuredClone([...local.tombstones, ...remote.tombstones]);
+
+  const mergeProfiles = (
+    leftProfiles: PortableProfile[],
+    rightProfiles: PortableProfile[],
+    ancestors: PortableProfile[],
+    forceDeletionChoice = false
   ) => {
-    const id = `${kind}:${key}`;
-    if (resolutions[id]) return resolutions[id];
-    conflicts.push({ id, kind, profileName: name, localLabel, remoteLabel });
-    return null;
+    const current = [...leftProfiles, ...rightProfiles];
+    if (!current.length) return;
+    // Rejected identity alternatives must not contribute history or aliases.
+    const safeAncestors = ancestors.filter((p) =>
+      current.every((other) => !incompatible(p, other))
+    );
+    const ids = new Set([...current, ...safeAncestors].flatMap(profileIds));
+    const identities = new Set(
+      [...current, ...safeAncestors].map(identityKey).filter((id): id is string => id !== null)
+    );
+    const key = [...ids].sort()[0];
+    const left = collapse(leftProfiles);
+    const right = collapse(rightProfiles);
+    const ancestor = collapse(safeAncestors);
+    const sample = left ?? right!;
+    const matches = (d: Deletion) => deletionMatches(d, ids, identities);
+    const leftDeletes = local.tombstones.filter(matches);
+    const rightDeletes = remote.tombstones.filter(matches);
+    for (const deletion of [...leftDeletes, ...rightDeletes])
+      deletionIds(deletion).forEach((id) => ids.add(id));
+    const alternatives = {
+      local: leftProfiles,
+      remote: rightProfiles,
+      base: safeAncestors,
+      leftDeletes,
+      rightDeletes
+    };
+    if (leftDeletes.length || rightDeletes.length) {
+      const deletionSide = leftDeletes.length ? 'local' : 'remote';
+      const live = deletionSide === 'local' ? right : left;
+      let choice: 'local' | 'remote' | null = deletionSide;
+      if (live && (forceDeletionChoice || !ancestor || content(live) !== content(ancestor))) {
+        choice = conflict(
+          'delete-edit',
+          key,
+          sample.name,
+          leftDeletes.length ? 'Delete on all devices' : `Keep ${sample.name}`,
+          rightDeletes.length ? 'Delete on all devices' : `Keep ${sample.name}`,
+          alternatives
+        );
+      }
+      if (!choice) return;
+      if (choice === deletionSide) {
+        // Remember every compatible identity even when deletion wins before an ID merge.
+        for (const deletion of tombstones.filter(matches)) {
+          const allIds = [...new Set([...deletionIds(deletion), ...ids])].sort();
+          deletion.profile_id = allIds[0];
+          deletion.aliases = allIds;
+          if (!deletion.identity && identities.size === 1) deletion.identity = [...identities][0];
+        }
+        return;
+      }
+      tombstones = tombstones.filter((d) => !matches(d));
+      if (live) {
+        const kept = structuredClone(live);
+        kept.id = [...ids].sort()[0];
+        kept.aliases = [...ids].sort();
+        state.profiles.push(kept);
+      }
+      return;
+    }
+    const merged = collapse(current)!;
+    merged.id = key;
+    merged.aliases = [...ids].sort();
+    if (left && right && left.name !== right.name) {
+      if (ancestor?.name === left.name) merged.name = right.name;
+      else if (ancestor?.name !== right.name) {
+        const choice = conflict('rename', key, sample.name, left.name, right.name, alternatives);
+        if (choice === 'remote') merged.name = right.name;
+      }
+    }
+    state.profiles.push(merged);
   };
+
   for (const group of groups) {
-    const match = (p: PortableProfile) => group.ids.has(p.id);
+    const match = (p: PortableProfile) => profileIds(p).some((id) => group.ids.has(id));
     const leftProfiles = local.profiles.filter(match);
     const rightProfiles = remote.profiles.filter(match);
     const currentProfiles = [...leftProfiles, ...rightProfiles];
-    const key = [...group.ids].sort()[0];
-    // Matching an ID and an identity can connect several profiles transitively.
-    // Detect conflicting bindings before collapsing that group, never after mixing its snapshots.
+    const ancestors = base.profiles.filter(match);
     if (
-      currentProfiles.some((profile, index) =>
-        currentProfiles.slice(index + 1).some((other) => incompatible(profile, other))
+      currentProfiles.some((p, index) =>
+        currentProfiles.slice(index + 1).some((other) => incompatible(p, other))
       )
     ) {
       const describe = (profiles: PortableProfile[]) =>
         profiles.map((p) => `${p.name}: ${identityKey(p) ?? p.id}`).join('; ') || 'No profile';
       const choice = conflict(
         'identity',
-        key,
+        [...group.ids].sort()[0],
         currentProfiles[0].name,
         describe(leftProfiles),
-        describe(rightProfiles)
+        describe(rightProfiles),
+        {
+          local: leftProfiles,
+          remote: rightProfiles,
+          base: ancestors,
+          deletions: tombstones.filter((d) => deletionMatches(d, group.ids, group.identities))
+        }
       );
-      if (choice)
-        state.profiles.push(...structuredClone(choice === 'local' ? leftProfiles : rightProfiles));
-      continue;
-    }
-    const collapse = (profiles: PortableProfile[]) => {
-      const found = profiles.filter(match);
-      if (!found.length) return undefined;
-      const first = structuredClone(found[0]);
-      // A device may intentionally have multiple profiles for one known game account.
-      // Their histories must all survive identity matching, including before the first sync.
-      first.snapshots = mergeSnapshots(found);
-      return first;
-    };
-    const left = collapse(local.profiles);
-    const right = collapse(remote.profiles);
-    const ancestor = base.profiles.find(match);
-    if (!left && !right) continue;
-    const sample = left ?? right!;
-    const isDeleted = (d: Deletion) =>
-      group.ids.has(d.profile_id) || (d.identity !== null && group.identities.has(d.identity));
-    const leftDelete = local.tombstones.find(isDeleted);
-    const rightDelete = remote.tombstones.find(isDeleted);
-    if (leftDelete || rightDelete) {
-      const live = leftDelete ? right : left;
-      const deletionSide = leftDelete ? 'local' : 'remote';
-      let choice: 'local' | 'remote' | null = deletionSide;
-      if (live && (!ancestor || content(live) !== content(ancestor))) {
-        choice = conflict(
-          'delete-edit',
-          key,
-          sample.name,
-          leftDelete ? 'Delete on all devices' : `Keep ${sample.name}`,
-          rightDelete ? 'Delete on all devices' : `Keep ${sample.name}`
+      if (!choice) continue;
+      const selected = choice === 'local' ? leftProfiles : rightProfiles;
+      // A transitive collision can contain several unrelated accounts on the chosen side.
+      // Preserve those accounts separately, then reconcile each with applicable deletions.
+      for (const p of selected) {
+        const pIds = new Set(profileIds(p));
+        const identity = identityKey(p);
+        const related = ancestors.filter(
+          (a) =>
+            profileIds(a).some((id) => pIds.has(id)) ||
+            (identity !== null && identityKey(a) === identity)
         );
+        mergeProfiles(choice === 'local' ? [p] : [], choice === 'remote' ? [p] : [], related, true);
       }
-      if (!choice || choice === deletionSide) continue;
-      for (const [tkey, deletion] of tombstones) if (isDeleted(deletion)) tombstones.delete(tkey);
-      if (live) state.profiles.push(structuredClone(live));
       continue;
     }
-    if (!left || !right) {
-      state.profiles.push(structuredClone(sample));
-      continue;
-    }
-    if (incompatible(left, right)) {
-      const choice = conflict(
-        'identity',
-        key,
-        sample.name,
-        `${left.name}: ${identityKey(left) ?? left.id}`,
-        `${right.name}: ${identityKey(right) ?? right.id}`
-      );
-      if (choice) state.profiles.push(structuredClone(choice === 'local' ? left : right));
-      continue;
-    }
-    let name = left.name;
-    if (left.name !== right.name) {
-      if (ancestor?.name === left.name) name = right.name;
-      else if (ancestor?.name !== right.name) {
-        const choice = conflict('rename', key, sample.name, left.name, right.name);
-        if (choice === 'remote') name = right.name;
-      }
-    }
-    const merged = structuredClone(left);
-    merged.name = name;
-    merged.id = [left.id, right.id].sort()[0];
-    merged.created_at = [left.created_at, right.created_at].sort()[0];
-    merged.updated_at = [left.updated_at, right.updated_at].sort().at(-1)!;
-    for (const field of IDENTITY_FIELDS) merged[field] ??= right[field];
-    merged.snapshots = mergeSnapshots([left, right]);
-    state.profiles.push(merged);
+    mergeProfiles(leftProfiles, rightProfiles, ancestors);
+  }
+
+  // Coalesce deletion aliases transitively without losing the newest deletion timestamp.
+  const mergedDeletions: Deletion[] = [];
+  for (const deletion of tombstones) {
+    const ids = new Set(deletionIds(deletion));
+    const matches = mergedDeletions.filter(
+      (d) =>
+        (d.identity === null || deletion.identity === null || d.identity === deletion.identity) &&
+        (deletionIds(d).some((id) => ids.has(id)) ||
+          (deletion.identity !== null && d.identity === deletion.identity))
+    );
+    const items = [...matches, deletion];
+    const allIds = [...new Set(items.flatMap(deletionIds))].sort();
+    for (const match of matches) mergedDeletions.splice(mergedDeletions.indexOf(match), 1);
+    mergedDeletions.push({
+      profile_id: allIds[0],
+      aliases: allIds,
+      identity: items.find((d) => d.identity !== null)?.identity ?? null,
+      deleted_at: items
+        .map((d) => d.deleted_at)
+        .sort()
+        .at(-1)!
+    });
   }
   state.profiles.sort((a, b) => a.id.localeCompare(b.id));
-  state.tombstones = [...tombstones.values()].sort((a, b) =>
-    a.profile_id.localeCompare(b.profile_id)
-  );
-  // Server backup and analytics preferences are deliberately not portable.
+  state.tombstones = mergedDeletions.sort((a, b) => a.profile_id.localeCompare(b.profile_id));
+  // Server consent, backup preferences, and credentials are deliberately not portable.
   for (const key of PORTABLE_SETTINGS) {
-    const value = local.settings[key] ?? remote.settings[key];
+    const left = local.settings[key];
+    const right = remote.settings[key];
+    const ancestor = base.settings[key];
+    let value = left ?? right;
+    if (left !== undefined && right !== undefined && left !== right) {
+      if (left === ancestor) value = right;
+      else if (right !== ancestor) {
+        const choice = conflict('setting', key, key, String(left), String(right), {
+          local: left,
+          remote: right,
+          base: ancestor
+        });
+        if (choice === 'remote') value = right;
+      }
+    }
     if (value !== undefined) state.settings[key] = value;
   }
   return { state, conflicts };

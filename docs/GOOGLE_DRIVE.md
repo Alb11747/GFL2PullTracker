@@ -58,6 +58,40 @@ unresponsive even though the initial upload succeeded. Close the stalled chooser
 and, once local saving has completed, reload the tracker and reconnect. A popup
 failure alone does not mean the local archive or an earlier cloud backup was lost.
 
+## Archive version 2 and conflict resolution
+
+New backups and Drive revisions use version 2. Existing version 1 backups remain
+readable: their original checksums are verified before migration. Profiles and
+deletion markers retain earlier profile IDs so an offline device cannot silently
+restore deleted history after two profiles for the same account have merged.
+The first sync of legacy cloud history may read older revisions to recover those
+IDs. Later version 2 revisions retain them without rereading that ancestry.
+
+Refresh older tracker tabs before using an upgraded archive. Browser storage is
+upgraded transactionally together with its recovery copy and device exclusions;
+older clients cannot reopen the upgraded database or read new Drive revisions.
+Do not clear browser storage or delete Drive revisions to work around an upgrade
+error. Keep a downloadable backup and retain a version 2-capable client for
+recovery; downgrading to a version 1-only release is not a compatible rollback.
+
+Conflict choices apply to the archive and alternatives shown in the dialog.
+Accepted choices are retained if resolving one conflict reveals another. New
+local edits or changed cloud heads invalidate those choices, and a concurrent
+edit during the final save causes the replacement to fail safely. Identity
+choices may require a separate decision about a conflicting deletion.
+
+Theme, language, and page-size preferences sync independently. Changes on one
+device propagate; simultaneous different values require an explicit choice.
+Consent and server-feature preferences remain device-local. Once devices agree,
+unchanged syncs do not publish more revisions.
+
+`npm test` includes deterministic conflict, migration, integrity, and convergence
+regressions. From `web`, `npm run test:browser` starts the isolated synthetic
+browser harness described in `tests/browser/README.md`. It exercises the actual
+conflict dialog, workers, IndexedDB migration, and concurrent local writes with
+a simulated Drive transport; it does not establish authenticated Google runtime
+behavior.
+
 ## Remaining live tests
 
 Test using two browser profiles connected to the same Google account: import on

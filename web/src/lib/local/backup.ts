@@ -36,7 +36,7 @@ export async function encodeBackup(input: PortableState): Promise<Uint8Array> {
   const state = await validateState(input);
   const envelope = {
     format: 'gfl2-pull-tracker-backup',
-    version: 1,
+    version: 2,
     sha256: await digest(state),
     state
   };
@@ -47,7 +47,10 @@ export async function encodeBackup(input: PortableState): Promise<Uint8Array> {
     MAX_COMPRESSED_BYTES
   );
 }
-export async function decodeBackup(bytes: Uint8Array): Promise<PortableState> {
+export async function decodeBackup(
+  bytes: Uint8Array,
+  expectedVersion?: 1 | 2
+): Promise<PortableState> {
   if (!(bytes instanceof Uint8Array) || bytes.byteLength > MAX_COMPRESSED_BYTES)
     throw new Error('Backup exceeds the 16 MiB compressed limit.');
   if (bytes[0] !== 0x1f || bytes[1] !== 0x8b)
@@ -72,9 +75,17 @@ export async function decodeBackup(bytes: Uint8Array): Promise<PortableState> {
   } catch {
     throw new Error('Backup does not contain valid JSON.');
   }
-  if (envelope.format !== 'gfl2-pull-tracker-backup' || envelope.version !== 1)
+  if (
+    envelope.format !== 'gfl2-pull-tracker-backup' ||
+    ![1, 2].includes(envelope.version as number)
+  )
     throw new Error('Unsupported compressed backup format or version.');
-  const state = await validateState(envelope.state);
+  if (expectedVersion !== undefined && envelope.version !== expectedVersion)
+    throw new Error('Drive revision metadata and backup versions do not match.');
+  if (object(envelope.state, 'archive').version !== envelope.version)
+    throw new Error('Backup envelope and archive versions do not match.');
+  // Verify the original wire version before adding aliases or changing its version.
+  const state = await validateState(envelope.state, { preserveVersion: true });
   if (envelope.sha256 !== (await digest(state))) throw new Error('Backup integrity check failed.');
-  return state;
+  return state.version === 1 ? validateState(state) : state;
 }

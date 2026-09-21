@@ -17,7 +17,7 @@ import {
   type PortableState,
   type SourceSnapshot
 } from '../src/lib/local/types.ts';
-import { LocalEngine } from '../src/lib/local/engine.ts';
+import { LocalEngine, validateState, digest as archiveDigest } from '../src/lib/local/engine.ts';
 import { encodeBackup, decodeBackup } from '../src/lib/local/backup.ts';
 
 const time = '2026-09-20T10:00:00.000Z';
@@ -34,6 +34,7 @@ function snapshot(digest: string): SourceSnapshot {
 function profile(name = 'Account', snapshots = [snapshot('first')]): PortableProfile {
   return {
     id: 'profile-one',
+    aliases: ['profile-one'],
     name,
     account_fingerprint: 'account-one',
     endpoint_host: 'gf2-gacha-record-us.sunborngame.com',
@@ -51,6 +52,9 @@ function memoryStore(initial: PortableState) {
   let current = structuredClone(initial);
   const listeners = new Set<() => void>();
   const store: SyncStore & { edit(next: PortableState): void; beforeReplace?: () => void } = {
+    async validateState(next) {
+      return structuredClone(next);
+    },
     async exportState() {
       return structuredClone(current);
     },
@@ -153,6 +157,7 @@ test('full identity matches independently created profiles while partial identit
   const left = state();
   const right = state();
   right.profiles[0].id = 'other-device';
+  right.profiles[0].aliases = ['other-device'];
   assert.equal(reconcile(left, right).state.profiles.length, 1);
   left.profiles[0].server = null;
   right.profiles[0].server = null;
@@ -167,7 +172,12 @@ test('causal renames merge; simultaneous rename and incompatible identity requir
   const conflict = reconcile(local, remote, base);
   assert.equal(conflict.conflicts[0].kind, 'rename');
   assert.equal(
-    reconcile(local, remote, base, { [conflict.conflicts[0].id]: 'remote' }).state.profiles[0].name,
+    reconcile(local, remote, base, {
+      [conflict.conflicts[0].id]: {
+        choice: 'remote',
+        fingerprint: conflict.conflicts[0].fingerprint
+      }
+    }).state.profiles[0].name,
     'Bob'
   );
   remote.profiles[0].account_fingerprint = 'other-account';
@@ -178,14 +188,18 @@ test('transitive ID and identity matches never combine histories of incompatible
   const first = profile('First', [snapshot('first-account')]);
   const other = profile('Second', [snapshot('second-account')]);
   other.id = 'profile-two';
+  other.aliases = ['profile-two'];
   other.account_fingerprint = 'account-two';
   const spoof = structuredClone(other);
   spoof.id = first.id;
+  spoof.aliases = [first.id];
   const local = state([first, other]);
   const remote = state([spoof]);
   const pending = reconcile(local, remote);
   assert.equal(pending.conflicts[0].kind, 'identity');
-  const resolved = reconcile(local, remote, emptyState(), { [pending.conflicts[0].id]: 'local' });
+  const resolved = reconcile(local, remote, emptyState(), {
+    [pending.conflicts[0].id]: { choice: 'local', fingerprint: pending.conflicts[0].fingerprint }
+  });
   assert.equal(resolved.state.profiles.length, 2);
   assert.deepEqual(
     resolved.state.profiles.map((p) => p.snapshots.map((s) => s.digest)),
@@ -197,6 +211,7 @@ test('multiple local profiles of one complete account retain every source snapsh
   const one = profile('Account', [snapshot('one')]);
   const two = profile('Account', [snapshot('two')]);
   two.id = 'profile-two';
+  two.aliases = ['profile-two'];
   const result = reconcile(state([one, two]), emptyState());
   assert.equal(result.conflicts.length, 0);
   assert.deepEqual(
@@ -209,13 +224,20 @@ test('deletion propagates to unchanged profiles and conflicts with concurrent ed
   const base = state();
   const deleted = emptyState();
   deleted.tombstones = [
-    { profile_id: base.profiles[0].id, identity: identityKey(base.profiles[0]), deleted_at: time }
+    {
+      profile_id: base.profiles[0].id,
+      aliases: [base.profiles[0].id],
+      identity: identityKey(base.profiles[0]),
+      deleted_at: time
+    }
   ];
   assert.equal(reconcile(base, deleted, base).state.profiles.length, 0);
   const edited = state([profile('Edited')]);
   const pending = reconcile(edited, deleted, base);
   assert.equal(pending.conflicts[0].kind, 'delete-edit');
-  const resolved = reconcile(edited, deleted, base, { [pending.conflicts[0].id]: 'local' });
+  const resolved = reconcile(edited, deleted, base, {
+    [pending.conflicts[0].id]: { choice: 'local', fingerprint: pending.conflicts[0].fingerprint }
+  });
   assert.equal(resolved.state.profiles[0].name, 'Edited');
   assert.deepEqual(resolved.state.tombstones, []);
 });
@@ -264,9 +286,11 @@ test('real gzip archives restore duplicate pulls and overlapping sources through
   });
   const drive = cloud();
   const firstStore = memoryStore(engine.exportState());
+  firstStore.validateState = validateState;
   firstStore.encodeBackup = encodeBackup;
   firstStore.decodeBackup = decodeBackup;
   const secondStore = memoryStore(emptyState());
+  secondStore.validateState = validateState;
   secondStore.encodeBackup = encodeBackup;
   secondStore.decodeBackup = decodeBackup;
   const first = client(firstStore, drive.transport);
@@ -311,9 +335,10 @@ test('simultaneous rename conflicts preserve local data until resolved explicitl
     assert.equal(first.status.phase, 'conflict');
     assert.equal(canonical(await a.exportState()), before);
     for (let attempt = 0; attempt < 4 && first.status.phase === 'conflict'; attempt++) {
-      await first.resolve(
-        Object.fromEntries(first.status.conflicts.map((c) => [c.id, 'local' as const]))
-      );
+      await first.resolve({
+        generation: first.status.resolutionGeneration,
+        choices: Object.fromEntries(first.status.conflicts.map((c) => [c.id, 'local' as const]))
+      });
     }
     assert.equal(first.status.phase, 'synced');
   } finally {
@@ -333,7 +358,12 @@ test('two-device concurrent deletion and offline edit require a choice before ap
     await second.connect();
     const deleted = emptyState();
     deleted.tombstones = [
-      { profile_id: 'profile-one', identity: identityKey(profile()), deleted_at: time }
+      {
+        profile_id: 'profile-one',
+        aliases: ['profile-one'],
+        identity: identityKey(profile()),
+        deleted_at: time
+      }
     ];
     a.edit(deleted);
     b.edit(state([profile('Edited offline')]));
@@ -343,14 +373,15 @@ test('two-device concurrent deletion and offline edit require a choice before ap
     assert.ok(second.status.conflicts.some((conflict) => conflict.kind === 'delete-edit'));
     assert.equal((await b.exportState()).profiles[0].name, 'Edited offline');
     for (let attempt = 0; attempt < 4 && second.status.phase === 'conflict'; attempt++) {
-      await second.resolve(
-        Object.fromEntries(
+      await second.resolve({
+        generation: second.status.resolutionGeneration,
+        choices: Object.fromEntries(
           second.status.conflicts.map((conflict) => [
             conflict.id,
             conflict.localLabel.startsWith('Keep ') ? ('local' as const) : ('remote' as const)
           ])
         )
-      );
+      });
     }
     assert.equal(second.status.phase, 'synced');
     assert.equal((await b.exportState()).profiles[0].name, 'Edited offline');
@@ -427,6 +458,7 @@ test('long immutable histories are traversed iteratively and cycles are rejected
   const bytes = await store.encodeBackup(state());
   const sha256 = await digest(bytes);
   let revisions: Revision[] = Array.from({ length: 2000 }, (_, index) => ({
+    formatVersion: 2,
     id: `revision-${index}`,
     fileId: `file-${index}`,
     parents: index ? [`revision-${index - 1}`] : [],
@@ -532,4 +564,353 @@ test('Drive transport rejects oversized downloads and invalid metadata', async (
   const invalid = createDriveTransport(() => 'test', (async () =>
     Response.json({ files: [{ id: 'file', description: '{}' }] })) as typeof fetch);
   await assert.rejects(invalid.list(), /unsupported or damaged/);
+});
+
+async function seedRevision(
+  drive: ReturnType<typeof cloud>,
+  id: string,
+  archive: PortableState,
+  parents: string[] = [],
+  formatVersion: 1 | 2 = 2,
+  encode: (archive: PortableState) => Promise<Uint8Array> = async (value) =>
+    new TextEncoder().encode(canonical(value))
+) {
+  const bytes = await encode(archive);
+  drive.files.set(id, {
+    revision: {
+      id,
+      fileId: id,
+      parents,
+      createdAt: time,
+      formatVersion,
+      sha256: await digest(bytes)
+    },
+    bytes
+  });
+}
+
+async function resolveAll(sync: ReturnType<typeof client>, choice: 'local' | 'remote') {
+  assert.equal(sync.status.phase, 'conflict');
+  await sync.resolve({
+    generation: sync.status.resolutionGeneration,
+    choices: Object.fromEntries(sync.status.conflicts.map((conflict) => [conflict.id, choice]))
+  });
+}
+
+test('remote rename choices survive successive cloud-branch and device conflict dialogs', async () => {
+  const drive = cloud();
+  await seedRevision(drive, 'root', state());
+  await seedRevision(drive, 'a', state([profile('Alice')]), ['root']);
+  await seedRevision(drive, 'b', state([profile('Bob')]), ['root']);
+  const store = memoryStore(state([profile('Alice')]));
+  const sync = client(store, drive.transport);
+  try {
+    await sync.connect();
+    for (let attempt = 0; attempt < 3 && sync.status.phase === 'conflict'; attempt++)
+      await resolveAll(sync, 'remote');
+    assert.equal(sync.status.phase, 'synced', sync.status.message);
+    assert.equal((await store.exportState()).profiles[0].name, 'Bob');
+    const uploads = drive.uploads;
+    await sync.sync();
+    assert.equal(sync.status.phase, 'synced');
+    assert.equal((await store.exportState()).profiles[0].name, 'Bob');
+    assert.equal(drive.uploads, uploads);
+  } finally {
+    sync.destroy();
+  }
+});
+
+test('a deletion decision is invalidated when an import arrives during the next cloud read', async () => {
+  const drive = cloud();
+  const deleted = emptyState();
+  deleted.tombstones = [
+    {
+      profile_id: 'profile-one',
+      aliases: ['profile-one'],
+      identity: identityKey(profile()),
+      deleted_at: time
+    }
+  ];
+  await seedRevision(drive, 'root', state());
+  await seedRevision(drive, 'deleted', deleted, ['root']);
+  const store = memoryStore(state([profile('Edited offline')]));
+  let duringRead: (() => void) | undefined;
+  const sync = client(store, {
+    ...drive.transport,
+    async list() {
+      await Promise.resolve();
+      duringRead?.();
+      duringRead = undefined;
+      return drive.transport.list();
+    }
+  });
+  try {
+    await sync.connect();
+    assert.equal(sync.status.phase, 'conflict');
+    const generation = sync.status.resolutionGeneration;
+    duringRead = () =>
+      store.edit(state([profile('Edited offline', [snapshot('first'), snapshot('new-import')])]));
+    await resolveAll(sync, 'remote');
+    assert.equal(sync.status.phase, 'conflict');
+    assert.notEqual(sync.status.resolutionGeneration, generation);
+    assert.deepEqual(
+      (await store.exportState()).profiles[0].snapshots.map((item) => item.digest),
+      ['first', 'new-import']
+    );
+    assert.equal(drive.uploads, 0);
+    await resolveAll(sync, 'remote');
+    assert.equal(sync.status.phase, 'synced', sync.status.message);
+    assert.equal((await store.exportState()).profiles.length, 0);
+  } finally {
+    sync.destroy();
+  }
+});
+
+test('stale dialog generations and reconnects never reuse an earlier decision', async () => {
+  const drive = cloud();
+  await seedRevision(drive, 'bob', state([profile('Bob')]));
+  const store = memoryStore(state([profile('Alice')]));
+  const sync = client(store, drive.transport);
+  try {
+    await sync.connect();
+    const original = sync.status;
+    assert.equal(original.phase, 'conflict');
+    await sync.sync();
+    assert.notEqual(sync.status.resolutionGeneration, original.resolutionGeneration);
+    await sync.resolve({
+      generation: original.resolutionGeneration,
+      choices: Object.fromEntries(original.conflicts.map((conflict) => [conflict.id, 'remote']))
+    });
+    assert.equal(sync.status.phase, 'conflict');
+    assert.equal((await store.exportState()).profiles[0].name, 'Alice');
+    assert.equal(drive.uploads, 0);
+    const beforeReconnect = sync.status;
+    sync.disconnect();
+    await sync.connect();
+    await sync.resolve({
+      generation: beforeReconnect.resolutionGeneration,
+      choices: Object.fromEntries(
+        beforeReconnect.conflicts.map((conflict) => [conflict.id, 'remote'])
+      )
+    });
+    assert.equal(sync.status.phase, 'conflict');
+    await resolveAll(sync, 'remote');
+    assert.equal(sync.status.phase, 'synced');
+    assert.equal((await store.exportState()).profiles[0].name, 'Bob');
+  } finally {
+    sync.destroy();
+  }
+});
+
+test('concurrent portable settings converge and stop uploading, including after reconnect', async () => {
+  const drive = cloud();
+  const initial = state();
+  initial.settings = { theme: 'system', locale: 'en', page_size: 20 };
+  const a = memoryStore(initial);
+  const b = memoryStore(emptyState());
+  const first = client(a, drive.transport);
+  const second = client(b, drive.transport);
+  try {
+    await first.connect();
+    await second.connect();
+    const left = await a.exportState();
+    left.settings = { theme: 'dark', locale: 'ja', page_size: 50 };
+    const right = await b.exportState();
+    right.settings = { theme: 'light', locale: 'ko', page_size: 100 };
+    a.edit(left);
+    b.edit(right);
+    await Promise.all([first.sync(), second.sync()]);
+    await first.sync();
+    assert.equal(first.status.phase, 'conflict');
+    assert.ok(first.status.conflicts.every((conflict) => conflict.kind === 'setting'));
+    for (let attempt = 0; attempt < 3 && first.status.phase === 'conflict'; attempt++) {
+      await first.resolve({
+        generation: first.status.resolutionGeneration,
+        choices: Object.fromEntries(
+          first.status.conflicts.map((conflict) => [
+            conflict.id,
+            ['dark', 'ja', '50'].includes(conflict.localLabel) ? 'local' : 'remote'
+          ])
+        )
+      });
+    }
+    assert.equal(first.status.phase, 'synced', first.status.message);
+    await second.sync();
+    assert.equal(second.status.phase, 'synced', second.status.message);
+    assert.deepEqual((await b.exportState()).settings, left.settings);
+    const uploads = drive.uploads;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await first.sync();
+      await second.sync();
+    }
+    first.disconnect();
+    second.disconnect();
+    await first.connect();
+    await second.connect();
+    assert.equal(first.status.phase, 'synced');
+    assert.equal(second.status.phase, 'synced');
+    assert.equal(drive.uploads, uploads);
+    assert.equal(canonical(await a.exportState()), canonical(await b.exportState()));
+  } finally {
+    first.destroy();
+    second.destroy();
+  }
+});
+
+async function encodeLegacy(archive: PortableState): Promise<Uint8Array> {
+  const original = {
+    ...archive,
+    version: 1,
+    profiles: archive.profiles.map(({ aliases: _aliases, ...profile }) => profile),
+    tombstones: archive.tombstones.map(({ aliases: _aliases, ...deletion }) => deletion)
+  };
+  const envelope = {
+    format: 'gfl2-pull-tracker-backup',
+    version: 1,
+    sha256: await archiveDigest(original),
+    state: original
+  };
+  const stream = new Blob([JSON.stringify(envelope)])
+    .stream()
+    .pipeThrough(new CompressionStream('gzip'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+test('validated v1 lineage prevents an old partial profile resurrecting after a canonical-ID deletion', async () => {
+  const drive = cloud();
+  const old = profile('Account', []);
+  old.account_fingerprint = `sha256:${'a'.repeat(64)}`;
+  old.id = 'z-offline';
+  old.aliases = ['z-offline'];
+  old.server = null;
+  const full = { ...old, server: '1' };
+  const canonicalProfile = { ...full, id: 'a-canonical', aliases: ['a-canonical'] };
+  const deleted = emptyState();
+  deleted.tombstones = [
+    {
+      profile_id: canonicalProfile.id,
+      aliases: canonicalProfile.aliases,
+      identity: identityKey(canonicalProfile),
+      deleted_at: time
+    }
+  ];
+  await seedRevision(drive, 'partial', state([old]), [], 1, encodeLegacy);
+  await seedRevision(drive, 'identified', state([full]), ['partial'], 1, encodeLegacy);
+  await seedRevision(drive, 'merged', state([canonicalProfile]), ['identified'], 1, encodeLegacy);
+  await seedRevision(drive, 'deleted', deleted, ['merged'], 1, encodeLegacy);
+  const store = memoryStore(await decodeBackup(await encodeLegacy(state([old]))));
+  store.validateState = validateState;
+  store.encodeBackup = encodeBackup;
+  store.decodeBackup = decodeBackup;
+  const sync = client(store, drive.transport);
+  try {
+    await sync.connect();
+    assert.ok(['synced', 'conflict'].includes(sync.status.phase), sync.status.message);
+    if (sync.status.phase === 'conflict') {
+      assert.equal(drive.uploads, 0, 'ambiguous ancestry cannot silently publish a live account');
+      for (let attempt = 0; attempt < 3 && sync.status.phase === 'conflict'; attempt++) {
+        await sync.resolve({
+          generation: sync.status.resolutionGeneration,
+          choices: Object.fromEntries(
+            sync.status.conflicts.map((conflict) => [
+              conflict.id,
+              conflict.localLabel.startsWith('Delete') ? 'local' : 'remote'
+            ])
+          )
+        });
+      }
+    }
+    assert.equal(sync.status.phase, 'synced', sync.status.message);
+    const result = await store.exportState();
+    assert.equal(result.profiles.length, 0);
+    assert.deepEqual(result.tombstones[0].aliases, ['a-canonical', 'z-offline']);
+    const uploaded = [...drive.files.values()].find((file) => file.revision.formatVersion === 2)!;
+    assert.ok(uploaded, 'the legacy history gets one v2 alias checkpoint');
+    const saved = await decodeBackup(uploaded.bytes);
+    assert.equal(saved.version, 2);
+    assert.equal(saved.profiles.length, 0);
+    assert.deepEqual(saved.tombstones[0].aliases, ['a-canonical', 'z-offline']);
+    const uploads = drive.uploads;
+    sync.disconnect();
+    await sync.connect();
+    assert.equal(sync.status.phase, 'synced');
+    assert.equal(drive.uploads, uploads);
+  } finally {
+    sync.destroy();
+  }
+});
+
+test('an import immediately after the resolution snapshot cannot be deleted by the accepted stale choice', async () => {
+  const drive = cloud();
+  const deleted = emptyState();
+  deleted.tombstones = [
+    {
+      profile_id: 'profile-one',
+      aliases: ['profile-one'],
+      identity: identityKey(profile()),
+      deleted_at: time
+    }
+  ];
+  await seedRevision(drive, 'root', state());
+  await seedRevision(drive, 'deleted', deleted, ['root']);
+  const store = memoryStore(state([profile('Edited offline')]));
+  const sync = client(store, drive.transport);
+  try {
+    await sync.connect();
+    assert.equal(sync.status.phase, 'conflict');
+    const originalExport = store.exportState;
+    let injectImport = true;
+    store.exportState = async () => {
+      const snapshot = await originalExport();
+      if (injectImport) {
+        injectImport = false;
+        // The caller receives its old snapshot, but the archive changes before
+        // its next continuation. This reproduces the original two-export gap.
+        queueMicrotask(() =>
+          store.edit(
+            state([
+              profile('Edited offline', [
+                ...snapshot.profiles[0].snapshots,
+                { ...snapshot.profiles[0].snapshots[0], id: 'new-import', digest: 'new-import' }
+              ])
+            ])
+          )
+        );
+      }
+      return snapshot;
+    };
+    await resolveAll(sync, 'remote');
+    assert.ok(['error', 'conflict'].includes(sync.status.phase), sync.status.message);
+    const saved = await store.exportState();
+    assert.equal(saved.profiles.length, 1);
+    assert.deepEqual(
+      saved.profiles[0].snapshots.map((item) => item.digest),
+      ['first', 'new-import']
+    );
+    assert.equal(drive.uploads, 0, 'a stale deletion must never reach Drive');
+  } finally {
+    sync.destroy();
+  }
+});
+
+test('v2 revision metadata cannot hide a v1 archive and bypass historical alias recovery', async () => {
+  const drive = cloud();
+  const account = profile('Account', []);
+  account.account_fingerprint = `sha256:${'a'.repeat(64)}`;
+  await seedRevision(drive, 'mismatched', state([account]), [], 2, encodeLegacy);
+  const original = state([account]);
+  const store = memoryStore(original);
+  store.validateState = validateState;
+  store.encodeBackup = encodeBackup;
+  store.decodeBackup = decodeBackup;
+  const sync = client(store, drive.transport);
+  try {
+    await sync.connect();
+    assert.equal(sync.status.phase, 'error');
+    assert.match(sync.status.message, /version|metadata/i);
+    assert.equal(canonical(await store.exportState()), canonical(original));
+    assert.equal(drive.uploads, 0);
+  } finally {
+    sync.destroy();
+  }
 });

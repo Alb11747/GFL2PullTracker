@@ -97,6 +97,7 @@ export function createLocalClient() {
         files.map((file) => ({ file, path: file.webkitRelativePath || file.name }))
       ),
     exportState: () => call<PortableState>('exportState'),
+    validateState: (state: unknown) => call<PortableState>('validateState', state),
     mergeState: (state: PortableState) => call<PortableState>('mergeState', state),
     replaceState: (state: PortableState, expectedState?: PortableState) =>
       call<PortableState>('replaceState', state, expectedState),
@@ -104,7 +105,8 @@ export function createLocalClient() {
     importBackup: (bytes: Uint8Array, replace = false) =>
       call<PortableState>('importBackup', bytes, replace),
     encodeBackup: (state: PortableState) => call<Uint8Array>('encodeBackup', state),
-    decodeBackup: (bytes: Uint8Array) => call<PortableState>('decodeBackup', bytes),
+    decodeBackup: (bytes: Uint8Array, expectedVersion?: 1 | 2) =>
+      call<PortableState>('decodeBackup', bytes, expectedVersion),
     recoverySnapshot: () => call<PortableState | null>('recoverySnapshot'),
     preferences: () => call<Record<string, string | number | boolean>>('preferences'),
     setPreferences: (settings: Record<string, string | number | boolean>) =>

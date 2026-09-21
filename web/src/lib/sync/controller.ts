@@ -1,6 +1,7 @@
 import { emptyState, type PortableState } from '../local/types.ts';
-import { canonical, type Resolutions, type SyncConflict } from './reconcile.ts';
+import { canonical, type Choices, type Resolutions, type SyncConflict } from './reconcile.ts';
 import { createMergeWorker } from './merge-worker.ts';
+import { createLineageIndex } from './lineage.ts';
 import {
   createDriveTransport,
   digest,
@@ -10,13 +11,14 @@ import {
   type Revision,
   type RevisionTransport
 } from './drive.ts';
-export type { SyncConflict, Resolutions } from './reconcile.ts';
+export type { SyncConflict, Choices, Resolutions } from './reconcile.ts';
 
 export interface SyncStore {
   exportState(): Promise<PortableState>;
   replaceState(state: PortableState, expectedState?: PortableState): Promise<PortableState>;
   encodeBackup(state: PortableState): Promise<Uint8Array>;
-  decodeBackup(bytes: Uint8Array): Promise<PortableState>;
+  decodeBackup(bytes: Uint8Array, expectedVersion?: 1 | 2): Promise<PortableState>;
+  validateState(state: PortableState): Promise<PortableState>;
   subscribe(listener: () => void): () => void;
 }
 export interface SyncStatus {
@@ -24,6 +26,11 @@ export interface SyncStatus {
   message: string;
   lastSyncedAt: string | null;
   conflicts: SyncConflict[];
+  resolutionGeneration: string | null;
+}
+export interface ResolutionSubmission {
+  generation: string | null;
+  choices: Choices;
 }
 interface TokenResponse {
   access_token?: string;
@@ -139,7 +146,8 @@ export function createDriveSync(options: DriveSyncOptions) {
     phase: 'disconnected',
     message: 'Drive is disconnected. Your history is saved on this device.',
     lastSyncedAt: null,
-    conflicts: []
+    conflicts: [],
+    resolutionGeneration: null
   };
   const listeners = new Set<(status: SyncStatus) => void>();
   if (options.onStatus) listeners.add(options.onStatus);
@@ -154,7 +162,7 @@ export function createDriveSync(options: DriveSyncOptions) {
   let dirty = false;
   let debounce: ReturnType<typeof setTimeout> | undefined;
   let expiryTimer: ReturnType<typeof setTimeout> | undefined;
-  let conflictSnapshot = '';
+  let resolutionSession: { key: string; choices: Resolutions } | null = null;
   let pendingUpload: { revision: Omit<Revision, 'fileId'>; bytes: Uint8Array } | null = null;
   let retryReadOnWake = false;
   const merger = createMergeWorker();
@@ -170,17 +178,18 @@ export function createDriveSync(options: DriveSyncOptions) {
   const transport = options.transport ?? createDriveTransport(token);
   const decoded = new Map<string, PortableState>();
   const decode = async (revision: Revision) => {
-    if (!decoded.has(revision.id)) {
+    const cacheKey = `${revision.formatVersion ?? 1}:${revision.id}:${revision.sha256}`;
+    if (!decoded.has(cacheKey)) {
       const bytes = await transport.download(revision);
       if ((await digest(bytes)) !== revision.sha256)
         throw new DriveError(
           'invalid',
           'Drive backup integrity check failed. Local data is unchanged.'
         );
-      decoded.set(revision.id, await options.store.decodeBackup(bytes));
+      decoded.set(cacheKey, await options.store.decodeBackup(bytes, revision.formatVersion ?? 1));
       if (decoded.size > 3) decoded.delete(decoded.keys().next().value!);
     }
-    return decoded.get(revision.id)!;
+    return decoded.get(cacheKey)!;
   };
   const active = (startedEpoch: number) => {
     if (disposed || epoch !== startedEpoch)
@@ -200,28 +209,49 @@ export function createDriveSync(options: DriveSyncOptions) {
       if (typeof document === 'undefined' || document.visibilityState === 'visible') void sync();
     }, 750);
   }
-  async function perform(resolutions: Resolutions = {}) {
+  async function perform(submission?: ResolutionSubmission) {
     const startedEpoch = epoch;
+    // Submissions refer to the dialog the user actually saw, never a later dialog
+    // that happens to reuse its IDs. Accepted decisions survive subsequent rounds.
+    const offered = status.conflicts;
+    const acceptsSubmission =
+      status.phase === 'conflict' &&
+      submission?.generation !== null &&
+      submission?.generation === status.resolutionGeneration;
     let uploading = false;
     try {
       active(startedEpoch);
       setStatus({
         phase: 'syncing',
         message: 'Syncing your compressed Drive backup…',
-        conflicts: []
+        conflicts: [],
+        resolutionGeneration: null
       });
       const revisions = await transport.list();
       active(startedEpoch);
       const history = graph(revisions);
       if (pendingUpload && history.byId.has(pendingUpload.revision.id)) pendingUpload = null;
-      const conflictKey = canonical({
-        heads: history.heads.map((head) => head.id),
-        local: await options.store.exportState()
-      });
-      if (Object.keys(resolutions).length && conflictKey !== conflictSnapshot) resolutions = {};
-      let remote = emptyState();
+      // Finish all network reads before binding decisions to the archive used by
+      // the final compare-and-swap. V2 heads checkpoint retained aliases; legacy
+      // ancestry is read once while upgrading, without retaining its snapshots.
+      const lineage = createLineageIndex();
+      const visited = new Set<string>();
+      const pending = [...history.heads];
+      const headStates = new Map<string, PortableState>();
+      const headIds = new Set(history.heads.map((head) => head.id));
+      while (pending.length) {
+        const revision = pending.pop()!;
+        if (visited.has(revision.id)) continue;
+        visited.add(revision.id);
+        const state = await decode(revision);
+        active(startedEpoch);
+        lineage.add(state);
+        if (headIds.has(revision.id)) headStates.set(revision.id, state);
+        if (revision.formatVersion !== 2)
+          pending.push(...revision.parents.map((id) => history.byId.get(id)!));
+      }
+      const commonStates = new Map<string, PortableState>();
       const mergedHeads: string[] = [];
-      let conflicts: SyncConflict[] = [];
       for (const head of history.heads) {
         let common = emptyState();
         if (mergedHeads.length) {
@@ -234,35 +264,93 @@ export function createDriveSync(options: DriveSyncOptions) {
           );
           if (closest.length === 1) common = await decode(history.byId.get(closest[0])!);
         }
-        const prefix = `branch:${head.id}:`;
-        const branchChoices = Object.fromEntries(
+        commonStates.set(head.id, common);
+        mergedHeads.push(head.id);
+      }
+      active(startedEpoch);
+      const local = await options.store.exportState();
+      const conflictKey = canonical({
+        heads: history.heads.map(({ id, sha256, parents, formatVersion }) => ({
+          id,
+          sha256,
+          parents,
+          formatVersion: formatVersion ?? 1
+        })),
+        local
+      });
+      const sameSession = resolutionSession?.key === conflictKey;
+      if (!sameSession) resolutionSession = { key: conflictKey, choices: {} };
+      const resolutions = resolutionSession!.choices;
+      if (sameSession && acceptsSubmission) {
+        for (const conflict of offered) {
+          const choice = submission!.choices[conflict.id];
+          if (choice === 'local' || choice === 'remote')
+            resolutions[conflict.id] = { choice, fingerprint: conflict.fingerprint };
+        }
+      }
+      const choicesFor = (prefix: string): Resolutions =>
+        Object.fromEntries(
           Object.entries(resolutions)
             .filter(([key]) => key.startsWith(prefix))
             .map(([key, value]) => [key.slice(prefix.length), value])
         );
-        const merged = await merger.reconcile(remote, await decode(head), common, branchChoices);
+      const showConflicts = (conflicts: SyncConflict[]) => {
+        setStatus({
+          phase: 'conflict',
+          message: 'Choose how to resolve these changes. Nothing has been replaced or uploaded.',
+          conflicts: [...new Map(conflicts.map((conflict) => [conflict.id, conflict])).values()],
+          resolutionGeneration: crypto.randomUUID()
+        });
+      };
+      lineage.add(local);
+      const lineageChoices = choicesFor('lineage:');
+      const recoveredLocal = lineage.recover(local, lineageChoices);
+      const lineageConflicts = [...recoveredLocal.conflicts];
+      for (const states of [headStates, commonStates]) {
+        for (const [id, state] of states) {
+          const recovered = lineage.recover(state, lineageChoices);
+          states.set(id, recovered.state);
+          lineageConflicts.push(...recovered.conflicts);
+        }
+      }
+      if (lineageConflicts.length) {
+        showConflicts(
+          lineageConflicts.map((conflict) => ({ ...conflict, id: `lineage:${conflict.id}` }))
+        );
+        return;
+      }
+      let remote = emptyState();
+      let conflicts: SyncConflict[] = [];
+      for (const head of history.heads) {
+        const prefix = `branch:${head.id}:`;
+        const merged = await merger.reconcile(
+          remote,
+          headStates.get(head.id)!,
+          commonStates.get(head.id)!,
+          choicesFor(prefix)
+        );
         conflicts.push(
           ...merged.conflicts.map((conflict) => ({ ...conflict, id: prefix + conflict.id }))
         );
         remote = merged.state;
-        mergedHeads.push(head.id);
       }
       active(startedEpoch);
-      // Export again after network reads. Compare-and-swap prevents edits during this commit being lost.
-      const local = await options.store.exportState();
       const knownBase = baselineHeads.every((id) => history.byId.has(id)) ? baseline : emptyState();
-      const result = await merger.reconcile(local, remote, knownBase, resolutions);
-      conflicts = [...conflicts, ...result.conflicts];
+      const result = await merger.reconcile(
+        recoveredLocal.state,
+        remote,
+        knownBase,
+        choicesFor('device:')
+      );
+      conflicts = [
+        ...conflicts,
+        ...result.conflicts.map((conflict) => ({ ...conflict, id: `device:${conflict.id}` }))
+      ];
       if (conflicts.length) {
-        conflictSnapshot = canonical({ heads: history.heads.map((head) => head.id), local });
-        setStatus({
-          phase: 'conflict',
-          message: 'Choose how to resolve these changes. Nothing has been replaced or uploaded.',
-          conflicts
-        });
+        showConflicts(conflicts);
         return;
       }
-      const state = result.state;
+      const state = await options.store.validateState(result.state);
       if (canonical(state) !== canonical(local)) {
         active(startedEpoch);
         applying = true;
@@ -274,7 +362,11 @@ export function createDriveSync(options: DriveSyncOptions) {
       }
       active(startedEpoch);
       // Once data is safely local, quota/network failure can only delay its cloud publication.
-      if (history.heads.length !== 1 || canonical(state) !== canonical(remote)) {
+      if (
+        history.heads.length !== 1 ||
+        history.heads[0].formatVersion !== 2 ||
+        canonical(state) !== canonical(remote)
+      ) {
         if (revisions.length >= MAX_REVISIONS)
           throw new DriveError(
             'quota',
@@ -290,6 +382,7 @@ export function createDriveSync(options: DriveSyncOptions) {
         ) {
           pendingUpload = {
             revision: {
+              formatVersion: 2,
               id: crypto.randomUUID(),
               parents: mergedHeads,
               createdAt: new Date().toISOString(),
@@ -304,17 +397,18 @@ export function createDriveSync(options: DriveSyncOptions) {
         uploading = false;
         active(startedEpoch);
         baselineHeads = [upload.revision.id];
-        decoded.set(upload.revision.id, state);
+        decoded.set(`2:${upload.revision.id}:${upload.revision.sha256}`, state);
         pendingUpload = null;
       } else baselineHeads = mergedHeads;
       baseline = structuredClone(state);
-      conflictSnapshot = '';
+      resolutionSession = null;
       retryReadOnWake = false;
       setStatus({
         phase: 'synced',
         message: 'Saved on this device and synced to Google Drive.',
         lastSyncedAt: new Date().toISOString(),
-        conflicts: []
+        conflicts: [],
+        resolutionGeneration: null
       });
     } catch (error) {
       if (epoch !== startedEpoch || disposed) return;
@@ -322,21 +416,23 @@ export function createDriveSync(options: DriveSyncOptions) {
       retryReadOnWake = error instanceof DriveError && error.code === 'network' && !uploading;
       if (reconnect) {
         accessToken = '';
+        resolutionSession = null;
         clearTimeout(expiryTimer);
       }
       setStatus({
         phase: reconnect ? 'reconnect' : 'error',
         message: error instanceof Error ? error.message : 'Drive sync failed. Local data is safe.',
-        conflicts: []
+        conflicts: [],
+        resolutionGeneration: null
       });
     }
   }
-  function sync(resolutions: Resolutions = {}): Promise<void> {
+  function sync(submission?: ResolutionSubmission): Promise<void> {
     if (busy) {
       dirty = true;
       return busy;
     }
-    busy = perform(resolutions).finally(() => {
+    busy = perform(submission).finally(() => {
       busy = null;
       if (dirty) {
         dirty = false;
@@ -367,13 +463,15 @@ export function createDriveSync(options: DriveSyncOptions) {
     baseline = emptyState();
     baselineHeads = [];
     pendingUpload = null;
+    resolutionSession = null;
     decoded.clear();
     clearTimeout(debounce);
     clearTimeout(expiryTimer);
     setStatus({
       phase: 'disconnected',
       message: 'Drive is disconnected. Your history is saved on this device.',
-      conflicts: []
+      conflicts: [],
+      resolutionGeneration: null
     });
   }
   async function connect() {
@@ -429,8 +527,11 @@ export function createDriveSync(options: DriveSyncOptions) {
       expiryTimer = setTimeout(
         () => {
           accessToken = '';
+          resolutionSession = null;
           setStatus({
             phase: 'reconnect',
+            conflicts: [],
+            resolutionGeneration: null,
             message: 'Google authorization expired. Reconnect to resume sync.'
           });
         },
@@ -449,7 +550,7 @@ export function createDriveSync(options: DriveSyncOptions) {
     connect,
     disconnect,
     sync: () => sync(),
-    resolve: (resolutions: Resolutions) => sync(resolutions),
+    resolve: (submission: ResolutionSubmission) => sync(submission),
     subscribe(listener: (value: SyncStatus) => void) {
       listeners.add(listener);
       listener(structuredClone(status));

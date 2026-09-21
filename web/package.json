@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "test:browser": "vite --config tests/browser/vite.config.ts",
     "format": "prettier --write ."
   },
   "dependencies": {

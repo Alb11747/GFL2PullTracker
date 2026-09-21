@@ -63,14 +63,14 @@ test('corrupt gzip, format, version, schema and checksum failures never reach re
   );
   const envelope = {
     format: 'gfl2-pull-tracker-backup',
-    version: 1,
+    version: 2,
     state: emptyState(),
     sha256: 'wrong'
   };
   await assert.rejects(classifyImportFiles([compressed(envelope)], true), /integrity/);
   for (const invalid of [
     { ...envelope, format: 'other' },
-    { ...envelope, version: 2 }
+    { ...envelope, version: 3 }
   ]) {
     await assert.rejects(classifyImportFiles([compressed(invalid)], true), /format or version/);
   }
