@@ -3,6 +3,9 @@ FROM node:24-bookworm-slim AS build
 ARG POSTHOG_PROJECT_ID=
 ARG GFL2_RELEASE=
 WORKDIR /app/web
+# The native source-map CLI uses the system trust store, unlike Node's bundled CAs.
+RUN apt-get update && apt-get install --no-install-recommends -y ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
