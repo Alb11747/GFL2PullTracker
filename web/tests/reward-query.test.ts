@@ -99,3 +99,38 @@ test('reward pages are bounded independently of the total history size', () => {
   );
   assert.equal(query(3, ['Standard'], 1000, 20).items.length, 0);
 });
+
+test('warm previews reuse totals and stop inspecting history after their selected window', () => {
+  let inspected = 0;
+  const rows = Array.from({ length: 30000 }, (_, index) => {
+    const row = pull(index, { rarity: index % 10 === 0 ? 'Elite' : 'Standard' });
+    const rarity = row.rarity;
+    Object.defineProperty(row, 'rarity', {
+      enumerable: true,
+      get() {
+        inspected++;
+        return rarity;
+      }
+    });
+    return row;
+  });
+  const query = createRewardQuery(rows);
+  inspected = 0;
+  assert.deepEqual(query(3, [], 0, 20).items, []);
+  assert.equal(inspected, 0, 'An empty selection need not inspect any history');
+  assert.deepEqual(
+    query(3, ['Elite', 'Standard'], 29998, 20).items.map((row) => row.id),
+    [29998, 29999]
+  );
+  assert.equal(inspected, 0, 'An all-rarity page need not refilter history');
+  const preview = query(3, ['Elite'], 3, 10);
+  assert.equal(preview.total, 3000);
+  assert.deepEqual(
+    preview.items.map((row) => row.id),
+    [30, 40, 50, 60, 70, 80, 90, 100, 110, 120]
+  );
+  assert(inspected <= 121, 'A warm preview scanned beyond its requested window');
+  inspected = 0;
+  assert.deepEqual(query(3, ['Elite'], 3000, 10).items, []);
+  assert.equal(inspected, 0, 'A page beyond the cached total need not inspect history');
+});

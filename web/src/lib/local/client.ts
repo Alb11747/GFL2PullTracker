@@ -11,6 +11,8 @@ import type {
 import type { PortableState } from './types.ts';
 import type { ExiliumProfile } from '../exilium-import.ts';
 import type { ProfileOverview } from '../reward-query.ts';
+import type { Resolutions } from '../sync/reconcile.ts';
+import type { BackupPreview } from './restore.ts';
 export type { PortableState, PortableProfile, SourceSnapshot } from './types.ts';
 
 function transferableFilters(filters: Filters): Filters {
@@ -71,18 +73,21 @@ export function createLocalClient() {
     }
     return worker;
   }
-  function call<T>(method: string, ...args: unknown[]): Promise<T> {
+  function send<T>(method: string, args: unknown[], previewConsumer?: string): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       const id = ++sequence;
       try {
         const target = activeWorker();
         pending.set(id, { resolve: (value) => resolve(value as T), reject });
-        target.postMessage({ id, method, args });
+        target.postMessage({ id, method, args, ...(previewConsumer ? { previewConsumer } : {}) });
       } catch (error) {
         pending.delete(id);
         reject(error);
       }
     });
+  }
+  function call<T>(method: string, ...args: unknown[]): Promise<T> {
+    return send<T>(method, args);
   }
   return {
     revision: () => call<number>('revision'),
@@ -100,6 +105,15 @@ export function createLocalClient() {
       offset: number,
       limit: number
     ) => call<ProfileOverview>('rewards', profileId, typeId, [...rarities], offset, limit),
+    rewardPreview: (
+      profileId: string,
+      typeId: number | null,
+      rarities: string[],
+      offset: number,
+      limit: number,
+      consumer: string
+    ) =>
+      send<ProfileOverview>('rewards', [profileId, typeId, [...rarities], offset, limit], consumer),
     statistics: (filters: Filters) => call<Statistics>('statistics', transferableFilters(filters)),
     filterOptions: (id: string) => call<FilterOptions>('filterOptions', id),
     importRecords: (input: ImportInput) => call<ImportResult>('importRecords', input),
@@ -123,6 +137,9 @@ export function createLocalClient() {
     exportBackup: () => call<Uint8Array>('exportBackup'),
     importBackup: (bytes: Uint8Array, replace = false) =>
       call<PortableState>('importBackup', bytes, replace),
+    previewBackup: (bytes: Uint8Array, replace = false, resolutions: Resolutions = {}) =>
+      call<BackupPreview>('previewBackup', bytes, replace, resolutions),
+    commitBackup: (id: string) => call<PortableState>('commitBackup', id),
     encodeBackup: (state: PortableState) => call<Uint8Array>('encodeBackup', state),
     decodeBackup: (bytes: Uint8Array) => call<PortableState>('decodeBackup', bytes),
     recoverySnapshot: () => call<PortableState | null>('recoverySnapshot'),

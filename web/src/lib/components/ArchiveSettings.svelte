@@ -1,6 +1,9 @@
 <script lang="ts">
-  import { tick, untrack } from 'svelte';
+  import { onDestroy, tick, untrack } from 'svelte';
   import DriveIcon from './DriveIcon.svelte';
+  import LoadingRegion from './LoadingRegion.svelte';
+  import type { BackupPreview } from '$lib/local/restore';
+  import type { Resolutions, SyncConflict } from '$lib/sync/reconcile';
   import type { Profile } from '$lib/api';
   import type { createLocalClient } from '$lib/local/client';
   import { MAX_COMPRESSED_BYTES } from '$lib/local/limits';
@@ -55,6 +58,32 @@
   let restoreFile = $state<File | null>(null),
     replace = $state(false);
   let confirmReplace = $state(false);
+  let restorePreview = $state<BackupPreview | null>(null);
+  let restoreDecisions = $state<Record<string, 'local' | 'remote'>>({});
+  let restoreResolutions: Resolutions = {};
+  let committingRestore = false;
+  function resetRestorePreview() {
+    restorePreview = null;
+    restoreDecisions = {};
+    restoreResolutions = {};
+  }
+  $effect(() =>
+    local.subscribe((revision) => {
+      if (!committingRestore && restorePreview && restorePreview.revision !== revision) {
+        resetRestorePreview();
+        notice = 'Your archive changed. Review the selected backup again before restoring it.';
+      }
+    })
+  );
+  function conflictTitle(conflict: SyncConflict): string {
+    return conflict.kind === 'delete-edit'
+      ? 'Deletion and newer changes'
+      : conflict.kind === 'setting'
+        ? 'Different preferences'
+        : conflict.kind === 'rename'
+          ? 'Different profile names'
+          : 'Different account identities';
+  }
   let restoreHeading = $state<HTMLHeadingElement>();
   let acceptedRestoreRequest = -1;
   $effect(() => {
@@ -66,6 +95,7 @@
     untrack(() => {
       if (pendingRestoreFile) {
         restoreFile = pendingRestoreFile;
+        resetRestorePreview();
         replace = false;
         confirmReplace = false;
         error = '';
@@ -108,6 +138,26 @@
       });
     })
   );
+
+  let signingIn = $state(false);
+  function cancelOwnedSignIn() {
+    if (signingIn && drive?.status.phase === 'connecting') drive.disconnect();
+  }
+  onDestroy(cancelOwnedSignIn);
+  $effect(() => {
+    if (signingIn && section !== 'backup' && section !== 'all') cancelOwnedSignIn();
+  });
+  async function connectDrive() {
+    signingIn = true;
+    try {
+      await drive?.connect();
+      // A cancelled sign-in has no archive changes to refresh. In particular,
+      // unmounting must not restart a closed archive worker through onchanged.
+      if (drive && drive.status.phase !== 'disconnected') await onchanged();
+    } finally {
+      signingIn = false;
+    }
+  }
 
   async function run(action: () => Promise<void>) {
     if (busy || importBusy) return;
@@ -160,16 +210,52 @@
       throw new Error('This archive exceeds the 16 MiB compressed limit.');
     if (replace && !confirmReplace) throw new Error('Confirm replacement before restoring.');
     const bytes = new Uint8Array(await restoreFile.arrayBuffer());
-    await local.decodeBackup(bytes);
-    // A downloadable copy remains recoverable independently of the database replacement.
-    if (replace) download(await local.exportBackup(), `gfl2-before-restore-${Date.now()}.json.gz`);
-    await local.importBackup(bytes, replace);
-    await onchanged();
-    restoreFile = null;
-    confirmReplace = false;
-    notice = replace
-      ? 'Archive replaced. The previous archive was downloaded before replacement.'
-      : 'Archive merged. Repeated imports retain legitimate duplicate pulls without counting them twice.';
+    const release = await drive?.acquirePause();
+    try {
+      // A choice is valid only for the exact alternatives shown at this revision.
+      if (restorePreview && restorePreview.revision !== (await local.revision()))
+        resetRestorePreview();
+      for (const conflict of restorePreview?.conflicts ?? []) {
+        const choice = restoreDecisions[conflict.id];
+        if (choice) restoreResolutions[conflict.id] = { choice, fingerprint: conflict.fingerprint };
+      }
+      restorePreview = await local.previewBackup(
+        bytes,
+        replace,
+        structuredClone(restoreResolutions)
+      );
+      restoreDecisions = {};
+      if (restorePreview.conflicts.length) return;
+      // Keep the inspected identity even if a cross-tab notification clears the
+      // visible preview while its independent recovery copy is being encoded.
+      const previewId = restorePreview.id;
+      download(await local.exportBackup(), `gfl2-before-restore-${Date.now()}.json.gz`);
+      committingRestore = true;
+      try {
+        await local.commitBackup(previewId);
+      } catch (cause) {
+        if (cause instanceof Error && cause.name === 'StaleBackupPreviewError') {
+          resetRestorePreview();
+          restorePreview = await local.previewBackup(bytes, replace, {});
+          throw new Error(
+            'Your archive changed while preparing the restore. Review the refreshed preview and try again.'
+          );
+        }
+        throw cause;
+      } finally {
+        committingRestore = false;
+      }
+      await onchanged();
+      resetRestorePreview();
+      restoreFile = null;
+      confirmReplace = false;
+      notice = replace
+        ? 'Archive replaced. The previous archive was downloaded before replacement.'
+        : 'Archive merged. A recovery copy was downloaded. Repeated imports preserve legitimate duplicate pulls.';
+    } finally {
+      // User choices happen outside the lease so Drive can continue while a dialog is open.
+      release?.();
+    }
   }
   async function recoverServer() {
     if (!publicApi || !verifiedAccount) throw new Error('Choose a verified account first.');
@@ -200,6 +286,12 @@
       'Private server backup saved. Uploaded records do not contribute to community statistics.';
   }
 </script>
+
+{#if (section === 'backup' || section === 'all') && sync.phase === 'connecting'}
+  <div class="actions" role="group" aria-label="Google sign-in">
+    <button onclick={() => drive?.disconnect()}>Cancel sign-in</button>
+  </div>
+{/if}
 
 <fieldset class="settings" disabled={importBusy || busy} aria-busy={busy}>
   {#if importBusy}<p class="availability" role="status">
@@ -365,6 +457,7 @@
               accept=".gz,.gzip,application/gzip"
               onchange={(event) => {
                 restoreFile = event.currentTarget.files?.[0] ?? null;
+                resetRestorePreview();
                 replace = false;
                 confirmReplace = false;
               }}
@@ -377,18 +470,60 @@
             ><input
               type="checkbox"
               bind:checked={replace}
-              onchange={() => (confirmReplace = false)}
+              onchange={() => {
+                confirmReplace = false;
+                resetRestorePreview();
+              }}
             /> Replace this device’s archive instead of merging</label
           >
           {#if replace}<label class="check"
               ><input type="checkbox" bind:checked={confirmReplace} /> I understand the current archive
               will be replaced. A recovery copy will download first.</label
             >{/if}
+          <LoadingRegion {busy} message="">
+            {#if restorePreview?.conflicts.length}
+              <div class="confirmation">
+                <h3>Resolve backup changes</h3>
+                <p>Choose which version to keep. Nothing has been changed yet.</p>
+                {#each restorePreview.conflicts as conflict (conflict.id)}
+                  <fieldset>
+                    <legend>{conflict.profileName} · {conflictTitle(conflict)}</legend>
+                    <label class="check"
+                      ><input
+                        type="radio"
+                        name={`backup-conflict-${conflict.id}`}
+                        checked={restoreDecisions[conflict.id] === 'local'}
+                        onchange={() =>
+                          (restoreDecisions = { ...restoreDecisions, [conflict.id]: 'local' })}
+                      />This device: {conflict.localLabel}</label
+                    >
+                    <label class="check"
+                      ><input
+                        type="radio"
+                        name={`backup-conflict-${conflict.id}`}
+                        checked={restoreDecisions[conflict.id] === 'remote'}
+                        onchange={() =>
+                          (restoreDecisions = { ...restoreDecisions, [conflict.id]: 'remote' })}
+                      />Backup: {conflict.remoteLabel}</label
+                    >
+                  </fieldset>
+                {/each}
+              </div>
+            {/if}
+          </LoadingRegion>
           <div class="actions">
             <button
               class="primary"
-              disabled={busy || !restoreFile || (replace && !confirmReplace)}
-              onclick={() => run(restore)}>{replace ? 'Replace archive' : 'Merge archive'}</button
+              disabled={busy ||
+                !restoreFile ||
+                (replace && !confirmReplace) ||
+                restorePreview?.conflicts.some((conflict) => !restoreDecisions[conflict.id])}
+              onclick={() => run(restore)}
+              >{restorePreview?.conflicts.length
+                ? 'Apply backup choices'
+                : replace
+                  ? 'Replace archive'
+                  : 'Merge archive'}</button
             >
             <button
               class="text-button"
@@ -423,7 +558,14 @@
             </div>
             <div>
               <dt>Cloud sync</dt>
-              <dd role="status">{sync.message}</dd>
+              <dd>
+                <LoadingRegion
+                  busy={sync.phase === 'syncing' || sync.phase === 'connecting'}
+                  message={sync.message}
+                >
+                  <span role="status">{sync.message}</span>
+                </LoadingRegion>
+              </dd>
             </div>
             {#if sync.lastSyncedAt}<div>
                 <dt>Last synced</dt>
@@ -438,11 +580,7 @@
             {#if ['disconnected', 'reconnect'].includes(sync.phase)}<button
                 class="primary"
                 disabled={busy || !drive || !googleClientId}
-                onclick={() =>
-                  run(async () => {
-                    await drive?.connect();
-                    await onchanged();
-                  })}
+                onclick={() => run(connectDrive)}
                 ><DriveIcon />{sync.phase === 'reconnect'
                   ? 'Reconnect Google Drive'
                   : 'Connect Google Drive'}</button
@@ -463,72 +601,70 @@
               >{/if}
             {#if sync.phase === 'error'}<button
                 disabled={busy || !drive || !googleClientId}
-                onclick={() =>
-                  run(async () => {
-                    await drive?.connect();
-                    await onchanged();
-                  })}><DriveIcon />Reconnect Google Drive</button
+                onclick={() => run(connectDrive)}><DriveIcon />Reconnect Google Drive</button
               >{/if}
           </div>
-          {#if sync.conflicts.length}
-            <div class="confirmation">
-              <h3>Choose how to resolve changes</h3>
-              <p>
-                Both versions remain available until you choose. Pull histories merge where their
-                account identities agree.
-              </p>
-              {#each sync.conflicts as conflict (conflict.id)}<fieldset>
-                  <legend
-                    >{conflict.profileName} · {conflict.kind === 'delete-edit'
-                      ? 'Deletion and newer changes'
-                      : conflict.kind === 'setting'
-                        ? 'Different preferences'
-                        : conflict.kind === 'rename'
-                          ? 'Different profile names'
-                          : 'Different account identities'}</legend
-                  ><label class="check"
-                    ><input
-                      type="radio"
-                      name={`conflict-${conflict.id}`}
-                      checked={decisions[conflict.id] === 'local'}
-                      onchange={() => (decisions = { ...decisions, [conflict.id]: 'local' })}
-                    />
-                    {conflict.id.startsWith('lineage:')
-                      ? 'Earlier account binding'
-                      : conflict.id.startsWith('branch:')
-                        ? 'Earlier cloud revision'
-                        : 'This device'}:
-                    {conflict.localLabel}</label
-                  ><label class="check"
-                    ><input
-                      type="radio"
-                      name={`conflict-${conflict.id}`}
-                      checked={decisions[conflict.id] === 'remote'}
-                      onchange={() => (decisions = { ...decisions, [conflict.id]: 'remote' })}
-                    />
-                    {conflict.id.startsWith('lineage:')
-                      ? 'Other account binding'
-                      : conflict.id.startsWith('branch:')
-                        ? 'Other cloud revision'
-                        : 'Google Drive'}:
-                    {conflict.remoteLabel}</label
-                  >
-                </fieldset>{/each}
-              <button
-                class="primary"
-                disabled={busy || sync.conflicts.some((conflict) => !decisions[conflict.id])}
-                onclick={() =>
-                  run(async () => {
-                    await drive?.resolve({
-                      generation: sync.resolutionGeneration,
-                      choices: { ...decisions }
-                    });
-                    decisions = {};
-                    await onchanged();
-                  })}>Apply choices and sync</button
-              >
-            </div>
-          {/if}
+          <LoadingRegion busy={sync.phase === 'syncing'} message="">
+            {#if sync.conflicts.length}
+              <div class="confirmation">
+                <h3>Choose how to resolve changes</h3>
+                <p>
+                  Both versions remain available until you choose. Pull histories merge where their
+                  account identities agree.
+                </p>
+                {#each sync.conflicts as conflict (conflict.id)}<fieldset>
+                    <legend
+                      >{conflict.profileName} · {conflict.kind === 'delete-edit'
+                        ? 'Deletion and newer changes'
+                        : conflict.kind === 'setting'
+                          ? 'Different preferences'
+                          : conflict.kind === 'rename'
+                            ? 'Different profile names'
+                            : 'Different account identities'}</legend
+                    ><label class="check"
+                      ><input
+                        type="radio"
+                        name={`conflict-${conflict.id}`}
+                        checked={decisions[conflict.id] === 'local'}
+                        onchange={() => (decisions = { ...decisions, [conflict.id]: 'local' })}
+                      />
+                      {conflict.id.startsWith('lineage:')
+                        ? 'Earlier account binding'
+                        : conflict.id.startsWith('branch:')
+                          ? 'Earlier cloud revision'
+                          : 'This device'}:
+                      {conflict.localLabel}</label
+                    ><label class="check"
+                      ><input
+                        type="radio"
+                        name={`conflict-${conflict.id}`}
+                        checked={decisions[conflict.id] === 'remote'}
+                        onchange={() => (decisions = { ...decisions, [conflict.id]: 'remote' })}
+                      />
+                      {conflict.id.startsWith('lineage:')
+                        ? 'Other account binding'
+                        : conflict.id.startsWith('branch:')
+                          ? 'Other cloud revision'
+                          : 'Google Drive'}:
+                      {conflict.remoteLabel}</label
+                    >
+                  </fieldset>{/each}
+                <button
+                  class="primary"
+                  disabled={busy || sync.conflicts.some((conflict) => !decisions[conflict.id])}
+                  onclick={() =>
+                    run(async () => {
+                      await drive?.resolve({
+                        generation: sync.resolutionGeneration,
+                        choices: { ...decisions }
+                      });
+                      decisions = {};
+                      await onchanged();
+                    })}>Apply choices and sync</button
+                >
+              </div>
+            {/if}
+          </LoadingRegion>
           <h3>Import from another tracker</h3>
           <p>
             Bring older history into your selected game profile. External imports merge with your
@@ -658,8 +794,10 @@
       {/if}
     </section>
   {/if}
-  {#if error}<p class="feedback error" role="alert">{error}</p>{/if}
-  {#if notice}<p class="feedback" role="status">{notice}</p>{/if}
+  <LoadingRegion {busy} message="Updating your archive…">
+    {#if error}<p class="feedback error" role="alert">{error}</p>{/if}
+    {#if notice}<p class="feedback" role="status">{notice}</p>{/if}
+  </LoadingRegion>
 </fieldset>
 
 <style>

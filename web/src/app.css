@@ -1,4 +1,6 @@
 :root {
+  /* Reserve the scrollbar before results arrive so grid column counts stay stable. */
+  scrollbar-gutter: stable;
   font-family: 'Barlow', sans-serif;
   color: #20252b;
   background: #f0f2f4;

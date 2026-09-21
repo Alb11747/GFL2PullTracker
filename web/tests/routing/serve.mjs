@@ -20,6 +20,7 @@ async function application(mode) {
     env: {
       ...process.env,
       HOST: '127.0.0.1', PORT: String(port), ORIGIN: origin,
+      ADDRESS_HEADER: 'x-real-ip',
       GFL2_MODE: mode, PUBLIC_ORIGIN: 'https://routing.invalid',
       PUBLIC_GOOGLE_CLIENT_ID: 'synthetic-routing-client',
       GFL2_API_URL: 'http://127.0.0.1:1', GFL2_API_ALLOWED_ORIGINS: 'http://127.0.0.1:1',
@@ -35,7 +36,7 @@ async function application(mode) {
   for (let attempts = 0; attempts < 100; attempts++) {
     if (child.exitCode !== null) throw new Error(`Application exited: ${output}`);
     try {
-      const response = await fetch(`${base}/history`);
+      const response = await fetch(`${base}/history`, { headers: { 'x-real-ip': '127.0.0.1' } });
       if (response.status === 200) return { base, child };
     } catch {}
     await sleep(100);
@@ -48,13 +49,13 @@ async function smoke() {
     const { base, child } = await application(mode);
     try {
       for (const path of ['/history', '/privacy-policy', '/guides/exilium']) {
-        assert.equal((await fetch(base + path)).status, 200, `${mode} ${path}`);
+        assert.equal((await fetch(base + path, { headers: { 'x-real-ip': '127.0.0.1' } })).status, 200, `${mode} ${path}`);
       }
       for (const path of ['/not-a-section', '/History', '/backup/unknown']) {
-        assert.equal((await fetch(base + path)).status, 404, `${mode} ${path}`);
+        assert.equal((await fetch(base + path, { headers: { 'x-real-ip': '127.0.0.1' } })).status, 404, `${mode} ${path}`);
       }
       for (const path of ['/', '/backup', '/profiles', '/statistics', '/privacy']) {
-        const response = await fetch(base + path, { redirect: 'manual' });
+        const response = await fetch(base + path, { redirect: 'manual', headers: { 'x-real-ip': '127.0.0.1' } });
         if (mode === 'public' && path !== '/') {
           assert.equal(response.status, 200, path);
           const html = await response.text();
@@ -68,7 +69,7 @@ async function smoke() {
           assert.equal(response.headers.get('location'), path === '/privacy' ? '/privacy-policy' : '/history');
         }
       }
-      const policy = await (await fetch(base + '/privacy-policy')).text();
+      const policy = await (await fetch(base + '/privacy-policy', { headers: { 'x-real-ip': '127.0.0.1' } })).text();
       assert.ok(policy.includes('routing@example.invalid'));
       assert.ok(policy.includes('Synthetic routing fixture'));
       console.log(`PASS ${mode}: routes, redirects, unknown slugs, runtime policy disclosures`);
@@ -90,7 +91,8 @@ if (process.argv.includes('--smoke')) {
         return;
       }
       if (request.url === '/__routing/suite.js') {
-        const source = await readFile(new URL('./suite.ts', import.meta.url), 'utf8');
+        const source = (await Promise.all(['import-regressions.ts', 'suite.ts'].map((file) =>
+          readFile(new URL(`./${file}`, import.meta.url), 'utf8')))).join('\n');
         const script = ts.transpileModule(source, {
           compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None }
         }).outputText;
@@ -105,6 +107,7 @@ if (process.argv.includes('--smoke')) {
       const headers = new Headers(request.headers);
       headers.delete('connection');
       headers.set('accept-encoding', 'identity');
+      headers.set('x-real-ip', '127.0.0.1');
       const upstream = await fetch(base + request.url, { headers, redirect: 'manual' });
       const outputHeaders = Object.fromEntries(upstream.headers);
       delete outputHeaders['content-length'];

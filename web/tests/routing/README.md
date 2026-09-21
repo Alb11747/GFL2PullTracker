@@ -64,3 +64,14 @@ other warm actions' maximum, p95, and 200 ms target. Long tasks and import times
 reported separately. Results remain visible and in `window.routingPerformanceResults`.
 Synthetic sync overlap is evidence of usable browsing during an outstanding cloud
 request; it does not measure authenticated Drive latency or full sync CPU contention.
+
+The loading regression observer checks the previous-size/message floor to within
+1 CSS pixel throughout route, ledger, summary, community, import and sync work.
+The import fixture injects a held/failing durable write and verifies retained
+sanitized downloads, retry without another capture, and cancellation ownership.
+
+Reward diagnostics additionally report worker reception/dispatch delay, FIFO wait,
+execution, response transfer, and post-response DOM/paint opportunity separately.
+A real full-archive backup export runs ahead of rapid selection changes, separately
+from stalled network responses. Cache-busted bundled portrait load/decode timings
+are local HTTP evidence, not a measurement of production CDN latency.

@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import LoadingRegion from './LoadingRegion.svelte';
+  import LoadingLabel from './LoadingLabel.svelte';
   import { createPublicClient, type PublicClient, type CommunityStatistics } from '$lib/public-api';
   let { publicApi }: { publicApi?: PublicClient } = $props();
   let statistics = $state<CommunityStatistics | null>(null),
@@ -86,7 +88,9 @@
         Recruitment results contributed by players, fetched directly from official game services.
       </p>
     </div>
-    <button disabled={loading} onclick={load}>{loading ? 'Loading…' : 'Refresh statistics'}</button>
+    <button disabled={loading} onclick={load}
+      ><LoadingLabel busy={loading} label="Refresh statistics" /></button
+    >
   </header>
   <p class="context">
     These results cover accessible history, not every pull ever made. They describe this sample and
@@ -94,124 +98,128 @@
     listed here. Small rarity, item, and pity groups are also hidden, so published shares may not
     add up to 100%.
   </p>
-  {#if loading}<p class="empty" role="status">Loading the community ledger…</p>
-  {:else if error}<p class="empty error" role="alert">{error}</p>
-  {:else if statistics?.suppressed}<div class="empty">
-      <h3>Waiting for a larger sample</h3>
-      <p>
-        Results appear once at least {statistics.minimum_contributors} independent accounts contribute.
-        Smaller groups remain hidden to protect individual histories.
-      </p>
-    </div>
-  {:else if statistics}
-    <dl class="totals">
-      <div>
-        <dt>Contributing accounts</dt>
-        <dd>{number(statistics.contributors)}</dd>
-      </div>
-      <div>
-        <dt>Recorded pulls</dt>
-        <dd>{number(statistics.total)}</dd>
-      </div>
-      <div>
-        <dt>Privacy threshold</dt>
-        <dd>{number(statistics.minimum_contributors)} accounts per group</dd>
-      </div>
-    </dl>
-    <div class="filters">
-      <label
-        >Server<select
-          bind:value={server}
-          onchange={() => {
-            source = '';
-            pool = '';
-          }}
-          ><option value="">All servers</option>{#each servers as item}<option value={item}
-              >{item.split('|')[1]} · {item.split('|')[0]}</option
-            >{/each}</select
-        ></label
-      ><label
-        >Source type<select bind:value={source} onchange={() => (pool = '')}
-          ><option value="">All types</option>{#each types as item}<option value={String(item)}
-              >Type {item}</option
-            >{/each}</select
-        ></label
-      ><label
-        >Pool<select bind:value={pool}
-          ><option value="">All pools</option>{#each pools as item}<option value={String(item)}
-              >Pool {item}</option
-            >{/each}</select
-        ></label
-      >
-    </div>
-    {#if !selected.length}<p class="empty">
-        No publishable groups match this selection. Groups with fewer than {statistics.minimum_contributors}
-        contributing accounts are hidden.
-      </p>{/if}
-    {#each selected as group}
-      <article>
-        <h3>{group.server} · Type {group.type_id} · Pool {group.pool_id}</h3>
-        <p class="group-meta">
-          {group.endpoint_host} · {number(group.contributors)} accounts · {number(group.total)} pulls
+  <LoadingRegion busy={loading} message="Loading the community ledger…" hideContent={false}>
+    {#if error}<p class="empty error" role="alert">{error}</p>
+    {:else if statistics?.suppressed}<div class="empty" aria-hidden={loading ? 'true' : undefined}>
+        <h3>Waiting for a larger sample</h3>
+        <p>
+          Results appear once at least {statistics.minimum_contributors} independent accounts contribute.
+          Smaller groups remain hidden to protect individual histories.
         </p>
-        <div class="distributions">
-          <div>
-            <h4>Rarity distribution</h4>
-            <table>
-              <thead><tr><th>Rarity</th><th>Pulls</th><th>Share</th></tr></thead><tbody
-                >{#each group.rarities as rarity}<tr
-                    ><th scope="row">{rarity.rarity}</th><td>{number(rarity.count)}</td><td
-                      >{rate(rarity.rate)}</td
-                    ></tr
-                  >{/each}</tbody
-              >
-            </table>
-          </div>
-          <div>
-            <h4>Observed pity</h4>
-            <p>
-              {group.average_observed_pity === null
-                ? 'No certain intervals available.'
-                : `${group.average_observed_pity.toFixed(2)} pulls on average across ${number(group.observed_pity_count)} certain intervals.`}
-            </p>
-            <p class="group-meta">
-              Intervals crossing coverage gaps or unknown rewards are excluded.
-            </p>
-            {#if group.pity.length}<details>
-                <summary>View pity distribution</summary>
-                <table>
-                  <thead><tr><th>Pulls to Elite</th><th>Intervals</th></tr></thead><tbody
-                    >{#each group.pity as row}<tr
-                        ><th scope="row">{row.pulls}</th><td>{number(row.count)}</td></tr
-                      >{/each}</tbody
-                  >
-                </table>
-              </details>{/if}
-          </div>
+      </div>
+    {:else if statistics}
+      <dl class="totals" aria-hidden={loading ? 'true' : undefined}>
+        <div>
+          <dt>Contributing accounts</dt>
+          <dd>{number(statistics.contributors)}</dd>
         </div>
-        <details>
-          <summary>View item distribution ({group.items.length} items)</summary>
-          <div class="item-table">
-            <table>
-              <thead><tr><th>Item ID</th><th>Pulls</th><th>Share</th></tr></thead><tbody
-                >{#each group.items as item}<tr
-                    ><th scope="row">{item.item_id}</th><td>{number(item.count)}</td><td
-                      >{group.total ? rate(item.count / group.total) : '—'}</td
-                    ></tr
-                  >{/each}</tbody
-              >
-            </table>
+        <div>
+          <dt>Recorded pulls</dt>
+          <dd>{number(statistics.total)}</dd>
+        </div>
+        <div>
+          <dt>Privacy threshold</dt>
+          <dd>{number(statistics.minimum_contributors)} accounts per group</dd>
+        </div>
+      </dl>
+      <div class="filters">
+        <label
+          >Server<select
+            bind:value={server}
+            onchange={() => {
+              source = '';
+              pool = '';
+            }}
+            ><option value="">All servers</option>{#each servers as item}<option value={item}
+                >{item.split('|')[1]} · {item.split('|')[0]}</option
+              >{/each}</select
+          ></label
+        ><label
+          >Source type<select bind:value={source} onchange={() => (pool = '')}
+            ><option value="">All types</option>{#each types as item}<option value={String(item)}
+                >Type {item}</option
+              >{/each}</select
+          ></label
+        ><label
+          >Pool<select bind:value={pool}
+            ><option value="">All pools</option>{#each pools as item}<option value={String(item)}
+                >Pool {item}</option
+              >{/each}</select
+          ></label
+        >
+      </div>
+      {#if !selected.length}<p class="empty">
+          No publishable groups match this selection. Groups with fewer than {statistics.minimum_contributors}
+          contributing accounts are hidden.
+        </p>{/if}
+      {#each selected as group}
+        <article aria-hidden={loading ? 'true' : undefined} inert={loading}>
+          <h3>{group.server} · Type {group.type_id} · Pool {group.pool_id}</h3>
+          <p class="group-meta">
+            {group.endpoint_host} · {number(group.contributors)} accounts · {number(group.total)} pulls
+          </p>
+          <div class="distributions">
+            <div>
+              <h4>Rarity distribution</h4>
+              <table>
+                <thead><tr><th>Rarity</th><th>Pulls</th><th>Share</th></tr></thead><tbody
+                  >{#each group.rarities as rarity}<tr
+                      ><th scope="row">{rarity.rarity}</th><td>{number(rarity.count)}</td><td
+                        >{rate(rarity.rate)}</td
+                      ></tr
+                    >{/each}</tbody
+                >
+              </table>
+            </div>
+            <div>
+              <h4>Observed pity</h4>
+              <p>
+                {group.average_observed_pity === null
+                  ? 'No certain intervals available.'
+                  : `${group.average_observed_pity.toFixed(2)} pulls on average across ${number(group.observed_pity_count)} certain intervals.`}
+              </p>
+              <p class="group-meta">
+                Intervals crossing coverage gaps or unknown rewards are excluded.
+              </p>
+              {#if group.pity.length}<details>
+                  <summary>View pity distribution</summary>
+                  <table>
+                    <thead><tr><th>Pulls to Elite</th><th>Intervals</th></tr></thead><tbody
+                      >{#each group.pity as row}<tr
+                          ><th scope="row">{row.pulls}</th><td>{number(row.count)}</td></tr
+                        >{/each}</tbody
+                    >
+                  </table>
+                </details>{/if}
+            </div>
           </div>
-        </details>
-      </article>
-    {/each}
-  {/if}
+          <details>
+            <summary>View item distribution ({group.items.length} items)</summary>
+            <div class="item-table">
+              <table>
+                <thead><tr><th>Item ID</th><th>Pulls</th><th>Share</th></tr></thead><tbody
+                  >{#each group.items as item}<tr
+                      ><th scope="row">{item.item_id}</th><td>{number(item.count)}</td><td
+                        >{group.total ? rate(item.count / group.total) : '—'}</td
+                      ></tr
+                    >{/each}</tbody
+                >
+              </table>
+            </div>
+          </details>
+        </article>
+      {/each}
+    {/if}
+  </LoadingRegion>
 </section>
 
 <style>
   .community {
     border-top: 2px solid var(--ink);
     padding-top: 24px;
+  }
+  .community[aria-busy='true'] :is(.totals, article, .empty) {
+    visibility: hidden;
   }
   header {
     display: flex;

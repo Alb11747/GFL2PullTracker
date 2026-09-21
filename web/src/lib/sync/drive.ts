@@ -1,3 +1,4 @@
+import { ARCHIVE_VERSION, STABLE_ARCHIVE_NAMESPACE } from '../local/types.ts';
 export const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const API = 'https://www.googleapis.com/drive/v3/files';
 const UPLOAD =
@@ -18,12 +19,14 @@ export type NewRevision = Omit<Revision, 'fileId' | 'contentVersion'>;
 export type PublishedRevision = Pick<Revision, 'fileId' | 'contentVersion'>;
 export interface RevisionTransport {
   list(): Promise<Revision[]>;
+  /** Proven-invalid metadata from the last complete listing; cleanup waits for payload audits. */
+  pendingInvalidFiles?(): readonly string[];
   download(revision: Revision): Promise<Uint8Array>;
   upload(revision: NewRevision, bytes: Uint8Array): Promise<PublishedRevision>;
   delete(fileId: string): Promise<void>;
 }
 export class DriveError extends Error {
-  code: 'reconnect' | 'quota' | 'network' | 'invalid';
+  code: 'reconnect' | 'quota' | 'network' | 'invalid' | 'unsupported';
   constructor(code: DriveError['code'], message: string) {
     super(message);
     this.code = code;
@@ -87,10 +90,14 @@ function observedContentVersion(file: DriveFile): string {
 function revisionFromFile(file: DriveFile, contentVersion: string): Revision {
   try {
     const value = JSON.parse(file.description ?? '') as Record<string, unknown>;
+    if (value.format === 'gfl2-drive-revision' && value.version !== ARCHIVE_VERSION)
+      throw new DriveError(
+        'unsupported',
+        'Unsupported Drive archive version. Update the tracker before syncing. No cloud files or local data were changed.'
+      );
     if (
       value.format !== 'gfl2-drive-revision' ||
-      'version' in value ||
-      'formatVersion' in value ||
+      value.version !== ARCHIVE_VERSION ||
       typeof value.id !== 'string' ||
       !/^[\w-]{1,100}$/.test(value.id) ||
       value.id !== file.appProperties?.revision ||
@@ -112,7 +119,8 @@ function revisionFromFile(file: DriveFile, contentVersion: string): Revision {
       fileId: file.id,
       contentVersion
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof DriveError && error.code === 'unsupported') throw error;
     throw new DriveError(
       'invalid',
       'An unsupported or damaged Drive revision was found. Refresh the tracker before retrying. Local data is unchanged.'
@@ -125,6 +133,7 @@ export function createDriveTransport(
   token: () => string,
   fetcher: typeof fetch = fetch
 ): RevisionTransport {
+  let pendingInvalid: string[] = [];
   const request = async (url: string, init: RequestInit = {}) => {
     let response: Response;
     try {
@@ -164,7 +173,9 @@ export function createDriveTransport(
     await request(`${API}/${encodeURIComponent(fileId)}`, { method: 'DELETE' });
   };
   return {
+    pendingInvalidFiles: () => [...pendingInvalid],
     async list() {
+      pendingInvalid = [];
       const revisions = new Map<string, Revision>();
       const validFiles: Revision[] = [];
       const invalidFiles = new Set<string>();
@@ -177,7 +188,7 @@ export function createDriveTransport(
       do {
         const params = new URLSearchParams({
           spaces: 'appDataFolder',
-          q: "trashed = false and (appProperties has { key='tracker' and value='gfl2' } or appProperties has { key='tracker' and value='gfl2-v1' })",
+          q: `trashed = false and appProperties has { key='tracker' and value='${STABLE_ARCHIVE_NAMESPACE}' }`,
           fields: 'nextPageToken,files(id,description,appProperties,version,size)',
           pageSize: '1000'
         });
@@ -199,7 +210,7 @@ export function createDriveTransport(
             );
           if (!file || typeof file.id !== 'string' || !/^[\w-]+$/.test(file.id))
             throw new DriveError('invalid', 'Drive returned an invalid file identifier.');
-          if (!['gfl2', 'gfl2-v1'].includes(file.appProperties?.tracker ?? ''))
+          if (file.appProperties?.tracker !== STABLE_ARCHIVE_NAMESPACE)
             throw new DriveError('invalid', 'Drive returned a file outside this tracker archive.');
           const contentVersion = observedContentVersion(file);
           const metadata = JSON.stringify([file.description, file.appProperties, contentVersion]);
@@ -210,15 +221,15 @@ export function createDriveTransport(
             continue;
           }
           seenFiles.set(file.id, metadata);
-          if (BigInt(file.size!) > BigInt(MAX_REVISION_BYTES)) {
-            invalidFiles.add(file.id);
-            continue;
-          }
           let revision: Revision;
           try {
             revision = revisionFromFile(file, contentVersion);
           } catch (error) {
             if (!(error instanceof DriveError) || error.code !== 'invalid') throw error;
+            invalidFiles.add(file.id);
+            continue;
+          }
+          if (BigInt(file.size!) > BigInt(MAX_REVISION_BYTES)) {
             invalidFiles.add(file.id);
             continue;
           }
@@ -253,7 +264,9 @@ export function createDriveTransport(
         for (const fileId of filesByRevision.get(id)!) invalidFiles.add(fileId);
         revisions.delete(id);
       }
-      for (const fileId of invalidFiles) await remove(fileId);
+      // The controller must also rule out unsupported payload versions before
+      // removing anything. A metadata listing by itself never changes Drive.
+      pendingInvalid = [...invalidFiles];
       // Keep identical copies visible so every physical payload gets audited.
       return validFiles.filter((revision) => !conflicting.has(revision.id));
     },
@@ -275,8 +288,12 @@ export function createDriveTransport(
         name: `gfl2-${revision.id}.json.gz`,
         mimeType: 'application/gzip',
         parents: ['appDataFolder'],
-        appProperties: { tracker: 'gfl2', revision: revision.id },
-        description: JSON.stringify({ ...revision, format: 'gfl2-drive-revision' })
+        appProperties: { tracker: STABLE_ARCHIVE_NAMESPACE, revision: revision.id },
+        description: JSON.stringify({
+          ...revision,
+          format: 'gfl2-drive-revision',
+          version: ARCHIVE_VERSION
+        })
       };
       const body = new Blob([
         `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: application/gzip\r\n\r\n`,

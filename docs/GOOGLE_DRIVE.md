@@ -16,7 +16,7 @@ was tested in the same browser with its local history retained; it is not proof
 of fresh-device recovery.
 
 Those results belong to the earlier versioned implementation. They do not
-validate the unversioned prerelease reset, invalid-file cleanup, or current sync
+validate the stable version 1 baseline, invalid-file cleanup, or current sync
 performance. Record new live evidence against the deployed commit separately
 from synthetic transport and browser test results.
 
@@ -63,36 +63,50 @@ unresponsive even though the initial upload succeeded. Close the stalled chooser
 and, once local saving has completed, reload the tracker and reconnect. A popup
 failure alone does not mean the local archive or an earlier cloud backup was lost.
 
-## Prerelease archive reset
+## Stable archive version 1
 
-The tracker has not had a public release. Browser archives, downloaded backups,
-and Drive revisions now share one strict unversioned schema. The cutover starts
-with an empty browser archive and clears its old recovery copy, device exclusions,
-and stale profile/job references. Display preferences remain. IndexedDB retains
-its required database revision and closes older connections during the reset;
-refresh older tabs before continuing. Windows SQLite databases and original
-collector or Exilium exports are not reset.
+The first supported archive baseline uses `version: 1` in portable archives,
+gzip backup envelopes, and Drive revision descriptions. The gzip envelope's
+SHA-256 digest covers the validated portable state, including its version.
+Google's own file `version` remains an unrelated observed content generation.
 
-Earlier versioned tracker backups have no reader or migration path. Reimport
-original collector or supported Exilium exports if you need the old history.
-The reset does not change those sources' independent format versions.
+Stable browser storage uses the separate IndexedDB database
+`gfl2-pull-tracker-stable`, database revision 1. The prerelease
+`gfl2-pull-tracker` database, its recovery copy, and device exclusions are left
+untouched. Stable profile/job references and cross-tab messages use a separate
+namespace; display preferences remain. An old tab can continue using its old
+archive, but cannot overwrite the stable archive.
 
-Connecting Drive discovers both earlier tracker-tagged files and current files.
-Sync removes obsolete versioned files and files proven invalid by metadata,
-size, decompression, checksum, or schema checks. Healthy revisions remain.
-Network errors, expired authorization, quota failures, cancellation, and incomplete
-listings never establish that a file is invalid. An uncertain deletion is checked
-by listing again; incomplete cleanup is reported while local history remains intact.
+Stable Drive files use the ownership marker `tracker=gfl2-stable`. Stable clients
+list only that marker. Earlier clients' `gfl2`/`gfl2-v1` cleanup queries cannot
+find stable files, and stable clients never clean up prerelease files. Keep
+prerelease archives separately if they matter; do not erase them to upgrade.
+There is no prerelease tracker-backup reader or migration. Reimport original
+collector or supported Exilium exports into the fresh stable archive. Their
+independent source schema versions are unchanged.
+
+A future or missing archive version is unsupported, not corrupt. The tracker
+stops that sync or restore before applying local data or removing any cloud
+files. Update the tracker before reading a future backup. Supported-version
+files proven corrupt by metadata, size, decompression, checksum, or schema checks
+can be cleaned up only after a complete listing and payload audit rules out
+unsupported versions. Network errors, revoked authorization, quota failures,
+cancellation, and incomplete listings never establish corruption. An uncertain
+deletion is checked by listing again; local history remains intact on failure.
 
 Healthy snapshots remain usable when a parent revision is missing or removed.
 Their merge base is unknown, so conflicting changes still need a decision.
 Profiles and deletion markers retain aliases for earlier profile IDs, preventing
 an offline device from silently restoring deleted history after account profiles
-merge. Device exclusions remain supported for current archives.
+merge. Device exclusions stay local and survive stable archive replacements.
 
-There is no prerelease migration framework. Before the first public release,
-establish the versioned baseline and tested migrations in the
-[release checklist](PUBLICATION.md#first-public-release-checklist).
+Version 1 has no previous supported version to migrate. Any later schema change
+must add explicit, tested migrations with integrity validation before conversion,
+atomic failure, recovery copies, concurrent-tab and offline-device coverage, and
+a documented rollback boundary. Never delete a stable store during upgrade.
+Downgrading to a prerelease client exposes only that client's separate archive;
+it cannot read stable backups. A version 1 client refuses a later IndexedDB
+revision or unsupported archive instead of resetting it.
 
 ## Conflict resolution and verification
 
@@ -107,10 +121,10 @@ device propagate; simultaneous different values require an explicit choice.
 Consent and server-feature preferences remain device-local. Once devices agree,
 unchanged syncs do not publish more revisions.
 
-Run `npm test` for deterministic conflict, reset, integrity, cleanup, and convergence
+Run `npm test` for deterministic conflict, format, integrity, cleanup, and convergence
 regressions. From `web`, `npm run test:browser` starts the isolated synthetic
 browser harness described in [browser tests](../web/tests/browser/README.md).
-Verify the actual conflict dialog, workers, IndexedDB reset, and concurrent local
+Verify the actual conflict dialog, workers, IndexedDB isolation, and concurrent local
 writes with its simulated Drive transport. These checks do not establish
 authenticated Google runtime behavior.
 

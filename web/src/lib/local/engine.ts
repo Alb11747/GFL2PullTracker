@@ -12,6 +12,7 @@ import type {
 } from '../api.ts';
 import {
   emptyState,
+  requireArchiveVersion,
   IDENTITY_FIELDS,
   identityKey,
   profileIds,
@@ -440,7 +441,7 @@ export class LocalEngine {
   private rewardQueries = new Map<string, ReturnType<typeof createRewardQuery>>();
   constructor(state: PortableState = emptyState()) {
     engineDiagnostics.engineBuilds++;
-    if ('version' in state) throw new InvalidArchiveError('Unsupported archive format.');
+    requireArchiveVersion(state.version);
     this.state = structuredClone(state);
   }
   /** A mutation works on its own state until persistence succeeds. Derived rows are immutable. */
@@ -822,9 +823,10 @@ function validateSettings(
 }
 export async function validateState(input: unknown): Promise<PortableState> {
   const state = object(input, 'archive');
-  noCredentials(state);
-  if (state.format !== 'gfl2-pull-tracker' || 'version' in state)
+  if (state.format !== 'gfl2-pull-tracker')
     throw new InvalidArchiveError('Unsupported backup format.');
+  requireArchiveVersion(state.version);
+  noCredentials(state);
   if (new TextEncoder().encode(canonical(state)).length > MAX_STATE_BYTES)
     throw new InvalidArchiveError('Archive exceeds the 64 MiB expanded limit.');
   if (

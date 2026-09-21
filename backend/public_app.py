@@ -26,7 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from backend.public_jobs import PublicJobs, prepare, prepared_identity
-from backend.public_store import PublicStore, account_key, digest
+from backend.public_store import PublicStore, digest
 from backend.tracker import IDENTITY
 
 COOKIE = 'gfl2_session'
@@ -238,13 +238,16 @@ def create_public_app(data_dir=None, *, origin=None, client_factory=None, identi
     def fetch(body: FetchInput, request: Request):
         token = session_token(request)
         limiter.take('fetch:' + digest(token), 10, 3600)
+        limiter.take('client-fetch:' + request.state.client_address, 60, 3600)
         if body.save_backup or body.contribute:
             require_verifier()
         prepared = prepare(body.capture, body.server)
-        limiter.take('account-fetch:' + account_key(prepared_identity(prepared)), 10, 3600)
         account_id = None
         if body.save_backup or body.contribute:
             account_id, _ = verify_prepared(request, prepared)
+            # Supplied account identifiers do not establish ownership. Only a
+            # verifier may reserve a quota shared across independent sessions.
+            limiter.take('account-fetch:' + account_id, 10, 3600)
             request.app.state.store.preference(account_id, body.contribute)
         return request.app.state.jobs.start(token, prepared, account_id, body.save_backup, body.contribute)
 

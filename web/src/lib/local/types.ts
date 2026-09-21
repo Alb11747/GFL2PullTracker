@@ -1,5 +1,24 @@
 import type { Profile } from '../api.ts';
 
+export const ARCHIVE_VERSION = 1 as const;
+export const STABLE_ARCHIVE_NAMESPACE = 'gfl2-stable';
+
+/** Unsupported data is preserved; it must never enter corrupt-file cleanup. */
+export class UnsupportedArchiveVersionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UnsupportedArchiveVersionError';
+  }
+}
+export function requireArchiveVersion(version: unknown, label = 'archive'): void {
+  if (version === ARCHIVE_VERSION) return;
+  throw new UnsupportedArchiveVersionError(
+    version === undefined
+      ? `This prerelease ${label} is not supported. Reimport original collector or Exilium exports; the original archive is unchanged.`
+      : `Unsupported ${label} version. Update the tracker before opening it; the original archive is unchanged.`
+  );
+}
+
 /** Portable data never contains game captures, OAuth tokens, or server trust claims. */
 export interface SourceSnapshot {
   id: string;
@@ -23,6 +42,7 @@ export interface Deletion {
 }
 export interface PortableState {
   format: 'gfl2-pull-tracker';
+  version: typeof ARCHIVE_VERSION;
   profiles: PortableProfile[];
   settings: Record<string, string | number | boolean>;
   tombstones: Deletion[];
@@ -46,7 +66,13 @@ export const OFFICIAL_HOSTS = new Set([
   'gf2-gacha-record-intl.haoplay.com'
 ]);
 export function emptyState(): PortableState {
-  return { format: 'gfl2-pull-tracker', profiles: [], settings: {}, tombstones: [] };
+  return {
+    format: 'gfl2-pull-tracker',
+    version: ARCHIVE_VERSION,
+    profiles: [],
+    settings: {},
+    tombstones: []
+  };
 }
 export const MAX_PROFILE_ALIASES = 10_000;
 /** Identity aliases survive reconciliation across devices. */

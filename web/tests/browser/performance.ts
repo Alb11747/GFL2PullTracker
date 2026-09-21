@@ -62,7 +62,7 @@ function recordsDocument(count: number, profile: number, from = 0): ImportInput[
 }
 async function reset() {
   await new Promise<void>((resolve, reject) => {
-    const request = indexedDB.deleteDatabase('gfl2-pull-tracker');
+    const request = indexedDB.deleteDatabase('gfl2-pull-tracker-stable');
     request.onsuccess = () => resolve();
     request.onerror = () => reject(request.error);
     request.onblocked = () => reject(new Error('Close other tabs on the isolated fixture origin.'));

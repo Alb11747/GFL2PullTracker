@@ -6,7 +6,7 @@ import {
   object,
   validateState
 } from './engine.ts';
-import type { PortableState } from './types.ts';
+import { ARCHIVE_VERSION, requireArchiveVersion, type PortableState } from './types.ts';
 import { MAX_COMPRESSED_BYTES } from './limits.ts';
 export { MAX_COMPRESSED_BYTES } from './limits.ts';
 
@@ -51,6 +51,7 @@ export async function encodeBackup(input: PortableState): Promise<Uint8Array> {
   const state = await validateState(input);
   const envelope = {
     format: 'gfl2-pull-tracker-backup',
+    version: ARCHIVE_VERSION,
     sha256: await digest(state),
     state
   };
@@ -94,8 +95,9 @@ export async function decodeBackup(bytes: Uint8Array): Promise<PortableState> {
       throw cause;
     throw new InvalidBackupError('Backup does not contain valid JSON.');
   }
-  if (envelope.format !== 'gfl2-pull-tracker-backup' || 'version' in envelope)
+  if (envelope.format !== 'gfl2-pull-tracker-backup')
     throw new InvalidBackupError('Unsupported compressed backup format.');
+  requireArchiveVersion(envelope.version, 'backup');
   let state: PortableState;
   try {
     state = await validateState(envelope.state);

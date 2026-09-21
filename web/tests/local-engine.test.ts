@@ -17,7 +17,7 @@ import {
   restoreExclusions,
   retainExclusionAliases
 } from '../src/lib/local/device.ts';
-import { MAX_PROFILE_ALIASES } from '../src/lib/local/types.ts';
+import { MAX_PROFILE_ALIASES, type PortableState } from '../src/lib/local/types.ts';
 
 export function record(
   item = 11007,
@@ -452,25 +452,28 @@ test('duplicate account assignment and implicit resurrection cannot invalidate p
   await validateState(engine.exportState());
 });
 
-test('unreleased versioned archives and backups are rejected instead of migrated', async () => {
+test('stable archives reject prerelease and future versions without migration', async () => {
   const { engine, id } = await setup();
   await engine.importRecords({ profile_id: id, records_document: document([record()]) });
   const state = engine.exportState();
-  assert.equal('version' in state, false);
-  for (const version of [1, 2, 3]) {
-    const legacy = { ...state, version };
-    await assert.rejects(() => validateState(legacy), /Unsupported/);
-    assert.throws(() => new LocalEngine(legacy), /Unsupported/);
+  assert.equal(state.version, 1);
+  for (const version of [undefined, 2, 3]) {
+    const unsupported = structuredClone(state) as unknown as Record<string, unknown>;
+    if (version === undefined) delete unsupported.version;
+    else unsupported.version = version;
+    await assert.rejects(() => validateState(unsupported), { name: 'UnsupportedArchiveVersionError' });
+    assert.throws(() => new LocalEngine(unsupported as unknown as PortableState),
+      { name: 'UnsupportedArchiveVersionError' });
     for (const envelope of [
-      { format: 'gfl2-pull-tracker-backup', version, state, sha256: await digest(state) },
-      { format: 'gfl2-pull-tracker-backup', state: legacy, sha256: await digest(legacy) }
+      { format: 'gfl2-pull-tracker-backup', ...(version === undefined ? {} : { version }), state, sha256: await digest(state) },
+      { format: 'gfl2-pull-tracker-backup', version: 1, state: unsupported, sha256: await digest(unsupported) }
     ]) {
       const bytes = new Uint8Array(
         await new Response(
           new Blob([canonical(envelope)]).stream().pipeThrough(new CompressionStream('gzip'))
         ).arrayBuffer()
       );
-      await assert.rejects(() => decodeBackup(bytes), { name: 'InvalidBackupError' });
+      await assert.rejects(() => decodeBackup(bytes), { name: 'UnsupportedArchiveVersionError' });
     }
   }
   assert.deepEqual(await decodeBackup(await encodeBackup(state)), state);
@@ -504,7 +507,7 @@ test('backup decoding distinguishes unsupported platforms from malformed nested 
     { profile_id: id, aliases: [id], identity: '{', deleted_at: '2026-09-20T00:00:00Z' }
   ];
   for (const bad of [malformed, deleted]) {
-    const envelope = { format: 'gfl2-pull-tracker-backup', state: bad, sha256: await digest(bad) };
+    const envelope = { format: 'gfl2-pull-tracker-backup', version: 1, state: bad, sha256: await digest(bad) };
     const compressed = new Uint8Array(
       await new Response(
         new Blob([canonical(envelope)]).stream().pipeThrough(new CompressionStream('gzip'))

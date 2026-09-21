@@ -5,17 +5,18 @@ A Girls' Frontline 2 pull-history tracker with a Windows local mode and a Docker
 ## Public website
 
 The site is in private prerelease testing at `https://gfl2.alb11747.com`; it has
-not had a public release. The performance overhaul deliberately starts with an
-empty browser archive and removes obsolete versioned Drive files when connected.
-Display preferences, Windows SQLite databases, and source exports are retained.
-Old tracker backups cannot be restored. See the [prerelease reset](docs/GOOGLE_DRIVE.md#prerelease-archive-reset)
+not had a public release. Stable format version 1 starts a separate browser archive
+and Drive namespace. Prerelease browser data, recovery copies, Drive files, display
+preferences, Windows SQLite databases, and source exports remain untouched.
+Prerelease tracker archives are not migrated; original collector or Exilium exports
+can be reimported. See the [stable baseline](docs/GOOGLE_DRIVE.md#stable-archive-version-1)
 and [first-release checklist](docs/PUBLICATION.md#first-public-release-checklist).
 
 Public mode stores personal histories in IndexedDB and processes archives in a Web Worker. It supports multiple game profiles, compressed downloads and restores, and optional two-way Google Drive sync. No website account is required. The interface includes profile management, import guidance, backup controls, privacy information, and community statistics.
 
 Use [the Docker hosting guide](docs/HOSTING.md) and [.env.example](.env.example). Configure a real HTTPS origin and keep the API private. [Google Drive setup](docs/GOOGLE_DRIVE.md) requires your own OAuth client. Original source is MIT licensed; game data and fonts retain their [third-party notices](THIRD_PARTY_NOTICES.md).
 
-**Release gates:** This release has no enabled production game-account ownership verifier. Server backup, recovery, and verified contributions fail closed until an audited provider adapter establishes credential-to-account binding. The bounded server relay works without those features. Decoding token metadata or accepting a supplied UID is insufficient proof. Each deployment needs real Google OAuth and authenticated upstream import tests. The earlier hosted build passed Google authorization, upload, automatic sync after import, and reconnect read-back; that evidence does not validate the new unversioned sync. See [live validation limits](docs/GOOGLE_DRIVE.md#live-validation).
+**Release gates:** This release has no enabled production game-account ownership verifier. Server backup, recovery, and verified contributions fail closed until an audited provider adapter establishes credential-to-account binding. The bounded server relay works without those features. Decoding token metadata or accepting a supplied UID is insufficient proof. Each deployment needs real Google OAuth and authenticated upstream import tests. The earlier hosted build passed Google authorization, upload, automatic sync after import, and reconnect read-back; that evidence does not validate the stable v1 sync. See [live validation limits](docs/GOOGLE_DRIVE.md#live-validation).
 
 Browser-only imports contact the official game API directly. Choosing server features or the explicit relay fallback sends the capture through server memory; captures are never retained. Server-backup and contribution choices are independent and initially on, with unavailable features identified before submission. See [data and privacy](docs/PRIVACY.md), [import formats](docs/IMPORTING.md), and [preparing a publication copy](docs/PUBLICATION.md).
 

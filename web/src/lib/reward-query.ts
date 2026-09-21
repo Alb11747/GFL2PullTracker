@@ -87,12 +87,24 @@ export function createRewardQuery(rows: Pull[]) {
     const selected = new Set(rarities);
     const start = Number.isFinite(offset) ? Math.max(0, Math.floor(offset)) : 0;
     const count = Number.isFinite(limit) ? Math.max(1, Math.min(500, Math.floor(limit))) : 20;
-    const items: Pull[] = [];
-    let total = 0;
-    for (const row of selectedType === null ? [] : groups.get(selectedType)!) {
-      if (!selected.has(rewardRarity(row.rarity))) continue;
-      if (total >= start && items.length < count) items.push(row);
-      total++;
+    const scoped = selectedType === null ? [] : groups.get(selectedType)!;
+    // Recruitment summaries already counted each rarity when this immutable
+    // query was built. Paging must not repeat a full-history count.
+    const total = summary.breakdown.reduce(
+      (sum, entry) => sum + (selected.has(entry.rarity) ? entry.count : 0),
+      0
+    );
+    let items: Pull[] = [];
+    if (start < total) {
+      if (total === scoped.length) items = scoped.slice(start, start + count);
+      else {
+        let matched = 0;
+        for (const row of scoped) {
+          if (!selected.has(rewardRarity(row.rarity))) continue;
+          if (matched++ >= start) items.push(row);
+          if (items.length === count) break;
+        }
+      }
     }
     return {
       ...summary,

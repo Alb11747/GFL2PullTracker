@@ -4,7 +4,7 @@ From `web`, run `npm run test:browser`, open http://127.0.0.1:14194 in the in-ap
 
 The harness refuses other origins and deletes only its isolated origin's synthetic archive. It imports the production settings component, controller, local workers, merge worker, and backup encoder. Only Drive transport and authorization are replaced. Its Content Security Policy blocks external network access. This is browser runtime coverage, not authenticated Google Drive coverage.
 
-The suite verifies the intentional IndexedDB 1/2-to-3 prerelease reset (including malformed archives), rejection of obsolete database writers, retained unrelated display preferences, device exclusion aliases, two-worker mutation and stale replacement protection, successive conflict-dialog choices, preference choices, and metadata-only unchanged syncs. Add `?autorun=1` to start immediately. No test dependencies or browser downloads are required.
+The suite verifies stable format isolation from prerelease IndexedDB revisions 1/2/3, preservation of old archive/recovery data and display preferences, rejection of future formats without mutation, device exclusion aliases, two-worker mutation and stale replacement protection, successive conflict-dialog choices, preference choices, and metadata-only unchanged syncs. Add `?autorun=1` to start immediately. No test dependencies or browser downloads are required.
 
 ## Performance
 
@@ -24,7 +24,7 @@ Append `?loading=1` to the reward fixture URL to hold a rarity query for visual
 inspection of unchanged pity and reserved layout space. Reload fixture
 or Run tests exits the held preview.
 The brief query wait has no spinner; the region exposes its pending state through
-`aria-busy` without adding a transient visual indicator.
+`aria-busy` and concise text. Loading regions reserve the larger of previous settled content and the naturally wrapped message, without a spinner.
 
 Reward expansion includes **Show more**, **Show all**, and **Show fewer**. Ordinary
 expansion and paging render at most 200 cards; Show all explicitly expands every

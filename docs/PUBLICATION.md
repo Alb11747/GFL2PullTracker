@@ -2,18 +2,23 @@
 
 ## First public release checklist
 
-The website is currently a private prerelease deployment. Its browser archive,
-downloaded backups, and Drive data use one unversioned schema, with a deliberate
-reset of earlier prerelease data. Complete these gates before accepting public
-users or describing the archive format as stable:
+The website remains a private release candidate until the runtime gates below
+pass. Its first stable archive baseline is version 1 for portable state, gzip
+backup envelopes, and Drive revision metadata. The separate stable IndexedDB
+and Drive namespaces preserve prerelease archives without attempting migration.
+Original collector and Exilium exports can be reimported. See the
+[format and rollback contract](GOOGLE_DRIVE.md#stable-archive-version-1).
 
-- Establish and document a versioned baseline for browser archives, downloadable
-  backups, and Drive revisions. Preserve profile aliases, deletion markers,
-  device exclusions, occurrence counts, and source ordering.
-- Add explicit, tested migrations from the supported baseline. Cover integrity
-  validation before conversion, atomic failure, recovery copies, open tabs,
-  offline devices, and the supported rollback boundary. Retain fixtures for each
-  supported format. Do not carry forward obsolete prerelease readers.
+- Verify stable-format round trips, profile aliases, deletion markers, device
+  exclusions, occurrence counts, and source ordering against the final release.
+  Check that old/new clients remain isolated and unsupported future versions
+  stop without changing local data or cleaning up cloud files.
+- Before any later supported schema change, add explicit, tested migrations
+  from version 1. Cover integrity validation before conversion, atomic failure,
+  recovery copies, open tabs, offline devices, and the supported rollback
+  boundary. Retain fixtures for each supported format. The initial version 1
+  release has no previous supported baseline and needs no artificial migration
+  or obsolete prerelease reader.
 - Run the final frontend and Python checks, production-browser performance and
   storage regressions, and the [hosting release gates](HOSTING.md#release-gates).
   Record the commit, reference device, data sizes, and measured interaction times.

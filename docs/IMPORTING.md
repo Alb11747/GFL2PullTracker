@@ -12,20 +12,23 @@ older exports. A partial capture cannot prove the start of a pity interval.
 
 Select a compressed tracker backup by itself; it cannot be combined with JSON
 exports or other backups. The picker recognizes gzip content rather than trusting
-the filename, then checks the backup format, integrity, unversioned schema, and size
+the filename, then checks the backup format, integrity, supported version 1 schema, and size
 limits before opening **Backup & sync** with the file retained. Selecting it does
 not restore automatically. **Restore a tracker backup** opens the same controls
 without requiring a selection in the import panel.
 
-Earlier versioned tracker backups are unsupported after the deliberate
-[prerelease reset](GOOGLE_DRIVE.md#prerelease-archive-reset). Reimport original
-collector or supported Exilium exports to rebuild history. Their independent
-source format versions are unchanged by the tracker archive reset.
+Prerelease tracker archives are unsupported by the [stable version 1 baseline](GOOGLE_DRIVE.md#stable-archive-version-1).
+Their browser and Drive data are preserved separately. Reimport original collector
+or supported Exilium exports to rebuild history; those source format versions are
+unchanged. A future tracker format is rejected without changing local history.
 
 Backups restore their contained profiles into the browser archive, rather than
 putting every profile's history into the currently selected profile. Each newly
-selected backup defaults to **Merge archive**. Replacement requires a separate
-confirmation and downloads a recovery copy before replacing the archive.
+selected backup defaults to **Merge archive**. Conflicts offer independent **This
+device** and **Backup** choices without connecting Drive. Decisions apply only to
+the inspected local revision and exact alternatives; concurrent changes require a
+fresh preview. Both merge and replacement download and preserve a recovery copy.
+Replacement also requires separate confirmation.
 Compressed archive restoration is available in the hosted browser-local tracker;
 Windows local-server mode explains this limitation instead of treating gzip as a
 records export. JSON exports continue to merge into the selected destination.

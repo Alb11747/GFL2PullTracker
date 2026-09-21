@@ -43,12 +43,13 @@ folder. Archives contain histories, profile identities, source snapshots, and
 portable settings; they exclude tokens, sessions, and server verification claims.
 Compression is not encryption. Downloaded backups contain private game data.
 
-During prerelease testing, the unversioned archive cutover clears old browser
-archive and recovery data and removes obsolete versioned tracker files from
-Drive when connected. Sync also deletes tracker files proven invalid; temporary
-network or authorization failures do not establish corruption. Display preferences,
-Windows SQLite history, and original export files remain intact. See the
-[reset and cleanup rules](GOOGLE_DRIVE.md#prerelease-archive-reset).
+Stable archive version 1 uses a separate browser database and Drive ownership
+namespace. Prerelease archives, recovery copies, and Drive files remain untouched;
+original collector or Exilium exports can be reimported. Display preferences and
+Windows SQLite history are preserved. Sync deletes only owned stable tracker files
+proven invalid after the complete version audit; unsupported future formats stop
+without cleanup or local mutation. Network and authorization failures do not
+establish corruption. See the [format and cleanup rules](GOOGLE_DRIVE.md#stable-archive-version-1).
 
 Removing a local profile and deleting a profile across synced devices are
 different actions. Drive changes do not automatically change server backup or

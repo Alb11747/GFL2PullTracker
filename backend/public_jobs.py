@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from backend.public_store import account_key, digest, validate_portable
+from backend.public_store import digest, validate_portable
 from backend.tracker import canonical, validate_document
 from scripts import fetch_pull_history as collector
 
@@ -18,6 +18,9 @@ MAX_RESULT_BYTES = 16 * 1024 * 1024
 MAX_RECORDS = 50_000
 RESULT_TTL = 900
 JOB_SECONDS = 180
+MAX_RETAINED_RESULTS = 8
+MAX_TERMINAL_STATUSES = 64
+ACTIVE_STATUSES = frozenset(('queued', 'running', 'cancelling'))
 
 
 def prepare(capture_text, server):
@@ -58,9 +61,18 @@ class PublicJobs:
 
     def cleanup(self):
         with self.lock:
-            self.jobs = {key: value for key, value in self.jobs.items()
-                         if value['expires'] > time.time() or value['status'] in ('queued', 'running', 'cancelling')}
+            self._prune_jobs()
             self.threads = [thread for thread in self.threads if thread.is_alive()]
+
+    def _prune_jobs(self):
+        """Called under self.lock; terminal metadata cannot consume payload slots."""
+        now = time.time()
+        self.jobs = {key: value for key, value in self.jobs.items()
+                     if value['expires'] > now or value['status'] in ACTIVE_STATUSES}
+        statuses = sorted((value['expires'], key) for key, value in self.jobs.items()
+                          if value['status'] not in ACTIVE_STATUSES and value['result'] is None)
+        for _, key in statuses[:max(0, len(statuses) - MAX_TERMINAL_STATUSES)]:
+            del self.jobs[key]
 
     def close(self):
         self.stopping.set()
@@ -81,10 +93,15 @@ class PublicJobs:
         self.cleanup()
         with self.lock:
             owner = digest(token)
-            scope = account_key(prepared_identity(prepared))
-            if self.stopping.is_set() or len(self.jobs) >= 8:
+            # account_id exists only after server verification, never from a
+            # relay capture's caller-supplied account identifier.
+            scope = account_id
+            occupied = sum(job['status'] in ACTIVE_STATUSES or job['result'] is not None
+                           for job in self.jobs.values())
+            if self.stopping.is_set() or occupied >= MAX_RETAINED_RESULTS:
                 raise HTTPException(503, 'Relay capacity reached. Try again after existing results expire.')
-            if any((job['owner'] == owner or job['scope'] == scope) and job['status'] in ('queued', 'running', 'cancelling') for job in self.jobs.values()):
+            if any((job['owner'] == owner or (scope is not None and job['scope'] == scope))
+                   and job['status'] in ACTIVE_STATUSES for job in self.jobs.values()):
                 raise HTTPException(409, 'A collection is already active for this session or account')
             if not self.slots.acquire(blocking=False):
                 raise HTTPException(429, 'Collection workers are busy; retry later with a fresh capture')
@@ -136,6 +153,8 @@ class PublicJobs:
                     changes.pop('status', None)
                     changes.pop('message', None)
                 self.jobs[identifier].update(changes)
+                if self.jobs[identifier]['status'] not in ACTIVE_STATUSES:
+                    self._prune_jobs()
 
     def run(self, identifier, prepared, account_id, save_backup, contribute, backup_version):
         manager = self

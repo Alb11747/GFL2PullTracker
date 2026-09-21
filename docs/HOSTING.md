@@ -47,6 +47,11 @@ exactly in `GFL2_API_ALLOWED_ORIGINS`. The internal API uses Docker DNS at
 game APIs; no inbound API port is mapped. Do not add wildcard origins.
 
 New sessions are limited to 120/hour and statistics to 30/minute per client IP.
+Relay attempts are limited to 10/hour per session and 60/hour per trusted client
+IP. A shared 10/hour account quota or active-account exclusion applies only after server
+ownership verification; a relay capture's supplied account identifier cannot
+reserve another visitor's quota. Ownership features remain disabled without a
+provider verifier.
 The relay also retains its separate global 600-requests/minute limit and bounded
 job pool. Health probes consume the global request budget. Direct loopback web
 probes must supply `X-Real-IP: 127.0.0.1`; direct private API probes must supply
@@ -54,7 +59,10 @@ probes must supply `X-Real-IP: 127.0.0.1`; direct private API probes must supply
 
 The API deliberately runs one process against SQLite with WAL. Do not scale API
 replicas or point multiple hosts at this database. The bounded collection pool
-is part of that single process. An interrupted capture job needs a new capture.
+is part of that single process: two workers and eight active jobs or retained
+result payloads. Result-less terminal statuses expire after 15 minutes and have
+a separate 64-entry cap; the oldest statuses may be evicted sooner. They do not
+consume collection capacity. An interrupted capture job needs a new capture.
 
 ## Verify a running release
 

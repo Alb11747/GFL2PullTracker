@@ -6,6 +6,10 @@
   import MultiSelect from '$lib/components/MultiSelect.svelte';
   import EliteHistory from '$lib/components/EliteHistory.svelte';
   import GitHubLink from '$lib/components/GitHubLink.svelte';
+  import LoadingRegion from '$lib/components/LoadingRegion.svelte';
+  import LoadingLabel from '$lib/components/LoadingLabel.svelte';
+  import { JobMemory } from '$lib/local/job-memory';
+  import { createOperationPauses } from '$lib/local/operation-pauses';
   import { capturePaginationAnchor } from '$lib/pagination-anchor';
   import { recruitmentName } from '$lib/recruitment';
   import { profileFilters } from '$lib/profile-history';
@@ -16,6 +20,7 @@
   import { serverCapabilities, savedServerChoices } from '$lib/import-policy';
   import type {
     ImportResult,
+    ImportInput,
     Filters,
     Profile,
     History,
@@ -40,10 +45,116 @@
   >;
   const publicApi = createPublicClient();
   let drive = $state<ReturnType<typeof createDriveSync>>();
+  let driveReady: Promise<void> = Promise.resolve();
+  const importLeases = createOperationPauses();
+  let preflight = $state(false);
+  let retainedCollection = $state.raw<ImportInput | null>(null);
+  async function pauseForImport(op: Operation, validateDestination = true) {
+    await driveReady;
+    if (!owns(op)) return false;
+    if (drive) {
+      const controller = drive;
+      await importLeases.acquire(op.id, () => controller.acquirePause());
+      if (!owns(op)) {
+        importLeases.release(op.id);
+        return false;
+      }
+    }
+    // Existing server jobs must remain retrievable even if another tab removed
+    // their destination. A failed save retains their result for download.
+    if (!validateDestination) return true;
+    // A pass already running when collection was requested may have deleted
+    // this destination. Revalidate before clearing any submitted credentials.
+    const destinations = await client.profiles();
+    if (!owns(op)) return false;
+    if (!destinations.some((profile) => profile.id === op.profileId))
+      throw new Error(
+        'The destination profile changed during sync. Choose a profile and try again; your capture is still in the field.'
+      );
+    return true;
+  }
+  async function saveCollected(payload: ImportInput) {
+    if (retainedCollection && retainedCollection !== payload)
+      throw new Error(
+        'Save or discard the collected records in this tab before retrieving another collection. Download a recovery copy first if needed.'
+      );
+    // Collector results contain validated records, never the captured credentials.
+    // Keep them in memory until the durable write succeeds.
+    retainedCollection = payload;
+    const result = await client.importRecords(payload);
+    retainedCollection = null;
+    return result;
+  }
+  async function retryCollected() {
+    const payload = retainedCollection;
+    if (!payload || saving || polling) return;
+    const op = operation ?? beginOperation(payload.profile_id);
+    saving = true;
+    importState = 'running';
+    message = 'Saving collected history…';
+    try {
+      if (!(await pauseForImport(op))) return;
+      const result = await saveCollected(payload);
+      rememberJob(op.profileId, null);
+      importState = result.complete === false ? 'partial' : 'complete';
+      message = summary(result);
+      await refresh(true);
+    } catch (cause) {
+      importState = 'error';
+      message =
+        failure(cause) +
+        ' Collected records remain in this tab. Retry saving or download them before leaving.';
+    } finally {
+      finishOperation(op);
+    }
+  }
+  function downloadCollected() {
+    if (!retainedCollection) return;
+    const url = URL.createObjectURL(
+      new Blob([JSON.stringify(retainedCollection.records_document)], { type: 'application/json' })
+    );
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'records.json';
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
   let publicConfig = $state<Awaited<ReturnType<typeof publicApi.config>>>();
   // Every panel shares this route component so navigation retains imports and Drive authorization.
   const section = $derived(page.params.section as TrackerSection);
   const currentPage = $derived(trackerPages.find((item) => item.slug === section)!);
+  let StatisticsPanel =
+    $state<typeof import('$lib/components/CommunityStatistics.svelte').default>();
+  let SettingsPanel = $state<typeof import('$lib/components/ArchiveSettings.svelte').default>();
+  let panelError = $state('');
+  const panelLoading = $derived(
+    hosted &&
+      section !== 'history' &&
+      (initializing ||
+        (!panelError && (section === 'statistics' ? !StatisticsPanel : !SettingsPanel)))
+  );
+  $effect(() => {
+    if (!hosted || section === 'history') return;
+    const target = section;
+    panelError = '';
+    if (target === 'statistics') {
+      void import('$lib/components/CommunityStatistics.svelte')
+        .then((module) => {
+          StatisticsPanel = module.default;
+        })
+        .catch((cause) => {
+          if (section === target) panelError = failure(cause);
+        });
+    } else {
+      void import('$lib/components/ArchiveSettings.svelte')
+        .then((module) => {
+          SettingsPanel = module.default;
+        })
+        .catch((cause) => {
+          if (section === target) panelError = failure(cause);
+        });
+    }
+  });
   let saveBackup = $state(false),
     contribute = $state(false),
     recovery = $state(false);
@@ -56,7 +167,7 @@
   let stopping = $state(false),
     saving = $state(false),
     inspecting = $state(false);
-  let polling = false;
+  let polling = $state(false);
   let pendingRestoreFile = $state<File | null>(null);
   let restoreRequest = $state(0);
   let relayFallback = $state(false);
@@ -70,8 +181,10 @@
     return op;
   }
   function finishOperation(op: Operation) {
+    importLeases.release(op.id);
     if (!owns(op)) return;
     operation = null;
+    preflight = false;
     stopping = false;
     saving = false;
     abortCapture = undefined;
@@ -146,7 +259,17 @@
   let metadata: Promise<[Statistics, FilterOptions]> | undefined;
   let ledgerKey = '';
   let ledger: Promise<History> | undefined;
-  const rewardQuery: typeof serverClient.rewards = (...args) => client.rewards(...args);
+  const rewardQuery = (
+    profileId: string,
+    typeId: number | null,
+    rarities: string[],
+    offset: number,
+    limit: number,
+    preview?: { consumer: string; preview: boolean }
+  ) =>
+    local && preview?.preview
+      ? local.rewardPreview(profileId, typeId, rarities, offset, limit, preview.consumer)
+      : client.rewards(profileId, typeId, rarities, offset, limit);
   let filters = $state<Filters>({
     profile_id: '',
     q: '',
@@ -177,7 +300,7 @@
     sourceProfile = $state('');
   let fileSelection = 0;
   async function chooseFiles(files: File[]) {
-    if (importBusy) return;
+    if (importBusy || retainedCollection) return;
     const selection = ++fileSelection;
     inspecting = true;
     selectedFiles = files;
@@ -225,8 +348,22 @@
   let pollTimer: ReturnType<typeof setTimeout> | undefined;
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
-  const PROFILE_KEY = 'gfl2.profile';
-  const jobKey = (profile: string) => `gfl2.job.${profile}`;
+  const PROFILE_KEY = untrack(() =>
+    data.mode === 'public' ? 'gfl2-stable.profile' : 'gfl2.profile'
+  );
+  const jobs = new JobMemory(
+    () => localStorage,
+    untrack(() => (data.mode === 'public' ? 'gfl2-stable.job.' : 'gfl2.job.'))
+  );
+  let jobRevision = $state(0);
+  function rememberedJob(profile: string) {
+    void jobRevision;
+    return jobs.get(profile);
+  }
+  function rememberJob(profile: string, id: string | null) {
+    jobs.set(profile, id);
+    jobRevision++;
+  }
   function remembered(key: string) {
     try {
       return localStorage.getItem(key);
@@ -269,7 +406,8 @@
     error = '';
     pageError = '';
     requestedPage = null;
-    history = { items: [], total: 0, page: filters.page, page_size: filters.page_size, pages: 1 };
+    // LoadingRegion conceals the old selection while retaining its responsive
+    // geometry. Replace it only when the latest request settles.
     expanded = null;
     if (optionsProfile !== filters.profile_id) {
       stats = null;
@@ -319,6 +457,7 @@
     if (section !== 'history') return;
     const id = invalidateResults();
     if (!filters.profile_id) {
+      history = { items: [], total: 0, page: 1, page_size: filters.page_size, pages: 1 };
       stats = null;
       loading = false;
       return;
@@ -383,7 +522,7 @@
         client = local;
         // Configuration and sync code load independently of personal history.
         void configureServices();
-        void import('$lib/sync/controller')
+        driveReady = import('$lib/sync/controller')
           .then(({ createDriveSync }) => {
             if (!disposed && local)
               drive = createDriveSync({ clientId: data.googleClientId, store: local });
@@ -399,16 +538,6 @@
               error = failure(cause);
             });
         });
-        if (remembered('gfl2.archive-format') !== 'main') {
-          // Only prerelease archive references are reset; presentation preferences survive.
-          try {
-            for (const key of Object.keys(localStorage))
-              if (key === PROFILE_KEY || key.startsWith('gfl2.job.')) localStorage.removeItem(key);
-            localStorage.setItem('gfl2.archive-format', 'main');
-          } catch {
-            /* Browser storage may be unavailable. */
-          }
-        }
       }
       profiles = await client.profiles();
       const saved = remembered(PROFILE_KEY);
@@ -419,7 +548,7 @@
       }
       archiveReady = true;
       initializing = false;
-      const jobId = remembered(jobKey(filters.profile_id));
+      const jobId = rememberedJob(filters.profile_id);
       if (jobId) {
         importOpen = true;
         await pollJob(jobId, beginOperation(filters.profile_id));
@@ -433,13 +562,22 @@
   }
   onMount(() => {
     void initialize();
+    const protectCollected = (event: BeforeUnloadEvent) => {
+      if (retainedCollection) {
+        event.preventDefault();
+        event.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', protectCollected);
     return () => {
       disposed = true;
       clearTimeout(pollTimer);
       clearTimeout(searchTimer);
       capture = '';
       abortCapture?.abort();
+      window.removeEventListener('beforeunload', protectCollected);
       drive?.destroy();
+      importLeases.releaseAll();
       unsubscribeArchive?.();
       local?.close();
     };
@@ -458,11 +596,13 @@
     clearSelection();
     capture = '';
     job = null;
-    message = '';
-    importState = 'idle';
+    if (!retainedCollection) {
+      message = '';
+      importState = 'idle';
+    }
     await refresh(true);
-    const id = remembered(jobKey(filters.profile_id));
-    if (id) {
+    const id = rememberedJob(filters.profile_id);
+    if (id && !retainedCollection) {
       importOpen = true;
       await pollJob(id, beginOperation(filters.profile_id));
     }
@@ -523,6 +663,7 @@
     clearTimeout(pollTimer);
     polling = true;
     try {
+      if (!(await pauseForImport(op, false))) return;
       const next = hosted
         ? ({ ...(await publicApi.job(id)), profile_id: op.profileId } as Job)
         : await serverClient.job(id);
@@ -533,7 +674,7 @@
       if (['queued', 'running', 'cancelling'].includes(next.status)) {
         importState = 'running';
         stopping = stopping || next.status === 'cancelling';
-        remember(jobKey(op.profileId), id);
+        rememberJob(op.profileId, id);
         pollTimer = setTimeout(() => void pollJob(id, op), 1000);
         return;
       }
@@ -548,7 +689,7 @@
         message = 'Saving collected history…';
         const snapshot = await publicApi.result(id);
         if (!owns(op)) return;
-        result = await client.importRecords({ ...snapshot, profile_id: op.profileId });
+        result = await saveCollected({ ...snapshot, profile_id: op.profileId });
         if (!owns(op)) return;
       }
       importState =
@@ -566,7 +707,7 @@
           : next.status === 'cancelled'
             ? 'No new records were saved.'
             : next.message);
-      remember(jobKey(op.profileId), null);
+      rememberJob(op.profileId, null);
       if (!local) archiveRevision++;
       await refresh(true);
       finishOperation(op);
@@ -575,26 +716,39 @@
       saving = false;
       importState = 'error';
       if ((e instanceof PublicApiError || e instanceof ApiError) && e.status === 404) {
-        remember(jobKey(op.profileId), null);
+        rememberJob(op.profileId, null);
         message =
           'This collection has expired or is no longer available. Saved history remains intact; use a fresh capture to collect again.';
         finishOperation(op);
         return;
       }
-      message = failure(e) + ' Check the saved job without submitting another capture.';
+      message =
+        failure(e) +
+        (retainedCollection
+          ? ' Collected records remain in this tab. Retry saving or download them before leaving.'
+          : ' Check the saved job without submitting another capture.');
+      if (retainedCollection) finishOperation(op);
       // Retain ownership while a job or its local persistence is uncertain.
     } finally {
       polling = false;
     }
   }
   async function checkJob() {
+    if (retainedCollection) return;
     const profileId = operation?.profileId ?? filters.profile_id;
-    const id = remembered(jobKey(profileId));
+    const id = rememberedJob(profileId);
     if (id) await pollJob(id, operation ?? beginOperation(profileId));
   }
   async function stopImport() {
     const op = operation;
     if (!op || stopping || saving) return;
+    if (preflight) {
+      importState = 'cancelled';
+      message =
+        'Collection cancelled before it started. Your capture and selected files are unchanged.';
+      finishOperation(op);
+      return;
+    }
     stopping = true;
     message = 'Stopping collection; validated history will be saved…';
     if (abortCapture) {
@@ -616,7 +770,7 @@
     }
   }
   async function runImport(forceRelay = false) {
-    if (importBusy || settingsBusy || inspecting || creating) return;
+    if (importBusy || settingsBusy || inspecting || creating || retainedCollection) return;
     // Freeze every input before the first await; callbacks cannot redirect this import.
     const profileId = filters.profile_id;
     const mode = importMode;
@@ -629,6 +783,10 @@
     let submittedCapture = capture;
     // Acquire ownership before loading optional code, including capture validation.
     const op = beginOperation(profileId);
+    // Previous terminal jobs cannot be stopped or polled on behalf of this import.
+    job = null;
+    preflight = true;
+    importState = 'running';
     let captureModule: typeof import('$lib/capture') | undefined;
     try {
       if (!profileId) throw new Error('Create or choose a profile before importing.');
@@ -655,16 +813,21 @@
         if (forceRelay && (!capabilities.relay || backup || contribution || recover))
           throw new Error('Server fallback is unavailable for these import choices.');
       }
+      importState = 'running';
+      message = 'Waiting for archive sync…';
+      if (!(await pauseForImport(op))) return;
     } catch (cause) {
+      if (!owns(op)) return;
       importState = 'error';
       message = failure(cause);
       submittedCapture = '';
       finishOperation(op);
       return;
     }
+    if (!owns(op)) return;
+    preflight = false;
     if (mode === 'capture') capture = '';
     message = '';
-    job = null;
     importState = 'running';
     let waitingForJob = false;
     try {
@@ -676,7 +839,7 @@
         if (!owns(op)) return;
         saving = true;
         message = 'Saving records into the archive…';
-        const result = await client.importRecords(payload);
+        const result = await saveCollected(payload);
         if (!owns(op)) return;
         importState = result.complete === false ? 'partial' : 'complete';
         message = summary(result);
@@ -720,7 +883,7 @@
           if (!owns(op)) return;
           saving = true;
           message = 'Saving collected history…';
-          const result = await client.importRecords(payload);
+          const result = await saveCollected(payload);
           if (!owns(op)) return;
           importState = result.complete === false ? 'partial' : 'complete';
           message =
@@ -732,7 +895,7 @@
           if (cause.partial) {
             saving = true;
             message = 'Saving partial history…';
-            const result = await client.importRecords(cause.partial);
+            const result = await saveCollected(cause.partial);
             if (!owns(op)) return;
             importState = cause.code === 'cancelled' ? 'cancelled' : 'partial';
             message =
@@ -760,14 +923,18 @@
         submittedCapture = '';
         if (!owns(op)) return;
         job = submitted;
-        remember(jobKey(profileId), submitted.id);
+        rememberJob(profileId, submitted.id);
         waitingForJob = true;
         await pollJob(submitted.id, op);
       }
     } catch (cause) {
       if (!owns(op)) return;
       importState = 'error';
-      message = failure(cause);
+      message =
+        failure(cause) +
+        (retainedCollection
+          ? ' Collected records remain in this tab. Retry saving or download them before leaving.'
+          : '');
     } finally {
       submittedCapture = '';
       if (!waitingForJob) finishOperation(op);
@@ -778,32 +945,49 @@
 {#snippet importStatus()}
   {#if importState !== 'idle'}
     <div class="import-result" class:problem={importState === 'error' || importState === 'partial'}>
-      <div role={importState === 'error' ? 'alert' : 'status'} aria-atomic="true">
-        {#if importBusy}<progress aria-label="Import in progress"></progress>{/if}
-        <strong
-          >{saving
-            ? 'Saving history'
-            : stopping
-              ? 'Stopping collection'
-              : importState === 'error'
-                ? 'Import needs attention'
-                : importState === 'partial'
-                  ? 'Partial collection'
-                  : importState === 'complete'
-                    ? 'Import complete'
-                    : importState === 'cancelled'
-                      ? 'Collection stopped'
-                      : 'Import in progress'}</strong
-        >
-        <p>{message}</p>
-      </div>
+      <LoadingRegion busy={importBusy} message="" hideContent={false}>
+        <div role={importState === 'error' ? 'alert' : 'status'} aria-atomic="true">
+          <strong
+            >{saving
+              ? 'Saving history'
+              : stopping
+                ? 'Stopping collection'
+                : importState === 'error'
+                  ? 'Import needs attention'
+                  : importState === 'partial'
+                    ? 'Partial collection'
+                    : importState === 'complete'
+                      ? 'Import complete'
+                      : importState === 'cancelled'
+                        ? 'Collection stopped'
+                        : 'Import in progress'}</strong
+          >
+          <p>{message}</p>
+        </div>
+      </LoadingRegion>
       <div class="import-actions">
-        {#if importBusy && (abortCapture || job) && !saving}
-          <button onclick={stopImport} disabled={stopping}
-            >{stopping ? 'Stopping…' : 'Stop collection'}</button
+        {#if retainedCollection && importState === 'error' && !saving && !polling}
+          <button onclick={retryCollected} disabled={saving || polling}>Retry saving records</button
+          >
+          <button onclick={downloadCollected}>Download collected records</button>
+          <button
+            onclick={() => {
+              if (saving || polling) return;
+              retainedCollection = null;
+              if (operation) finishOperation(operation);
+            }}>Discard collected copy</button
           >
         {/if}
-        {#if importState === 'error' && remembered(jobKey(operation?.profileId ?? filters.profile_id))}
+        {#if importBusy && (preflight || abortCapture || job) && !saving}
+          <button onclick={stopImport} disabled={stopping}
+            ><LoadingLabel
+              busy={stopping}
+              label="Stop collection"
+              loadingLabel="Stopping…"
+            /></button
+          >
+        {/if}
+        {#if importState === 'error' && !retainedCollection && rememberedJob(operation?.profileId ?? filters.profile_id)}
           <button onclick={checkJob}>Check saved job</button>
         {/if}
         {#if !importBusy && ['complete', 'partial', 'cancelled'].includes(importState)}
@@ -896,618 +1080,639 @@
 
 <main>
   {#if !importOpen || section !== 'history'}{@render importStatus()}{/if}
-  {#if hosted && section !== 'history' && initializing}
-    <section class="empty-state" aria-label={currentPage.title} aria-busy="true">
-      <p role="status">Loading {currentPage.label.toLowerCase()}…</p>
-    </section>
-  {:else if hosted && section !== 'history' && !local}
-    <section class="empty-state" aria-label={currentPage.title}>
-      <p role="alert">{error || 'Could not open your browser archive. Reload to try again.'}</p>
-    </section>
-  {:else if hosted && section === 'statistics'}
-    {#await import('$lib/components/CommunityStatistics.svelte') then panel}
-      <panel.default />
-    {:catch cause}<p role="alert">{failure(cause)}</p>{/await}
-  {:else if hosted && section !== 'history' && local}
-    {#await import('$lib/components/ArchiveSettings.svelte') then panel}
-      <panel.default
-        {local}
-        {profiles}
-        activeProfileId={filters.profile_id}
-        googleClientId={data.googleClientId}
-        {drive}
-        {publicApi}
-        {publicConfig}
-        importBusy={importBusy || settingsBusy}
-        onbusychange={(busy) => {
-          settingsBusy = busy;
-          if (!busy && archiveDirty && !disposed)
-            void archiveChanged().catch((cause) => {
-              error = failure(cause);
-            });
-        }}
-        {pendingRestoreFile}
-        {restoreRequest}
-        onrestoreaccepted={() => {
-          pendingRestoreFile = null;
-          restoreRequest = 0;
-        }}
-        section={section as 'profiles' | 'backup' | 'privacy'}
-        onchanged={archiveChanged}
-        onselect={(id) => {
-          if (importBusy) return;
-          filters.profile_id = id;
-          void profileChanged();
-        }}
-        onrecover={async () => {
-          if (importBusy || !capabilities.backup) return;
-          recovery = true;
-          importMode = 'capture';
-          importOpen = true;
-          await goto('/history');
-        }}
-      />
-    {:catch cause}<p role="alert">{failure(cause)}</p>{/await}
-  {:else}
-    {#if importOpen}
-      <section id="import-panel" class="import-panel" aria-labelledby="import-title">
-        <div class="section-heading">
-          <div>
-            <h2 id="import-title">Add to your archive</h2>
-            <p>Imports merge into the selected profile. Repeated pulls remain separate records.</p>
-          </div>
-          <button class="text-button" onclick={() => (importOpen = false)}>Close</button>
-        </div>
-        <div class="import-grid">
-          <div class="profile-assignment">
-            <label
-              >Import into<select
-                bind:value={filters.profile_id}
-                onchange={profileChanged}
-                disabled={importBusy || settingsBusy}
-                >{#each profiles as p}<option value={p.id}>{p.name}</option>{/each}</select
-              ></label
-            ><button
-              class="text-button"
-              disabled={importBusy || settingsBusy}
-              onclick={() => (createOpen = !createOpen)}
-              aria-expanded={createOpen}>Create a profile</button
-            >{#if createOpen}<form
-                onsubmit={(event) => {
-                  event.preventDefault();
-                  void addProfile();
-                }}
-              >
-                <label
-                  >Profile name<input
-                    bind:value={profileName}
-                    required
-                    maxlength="120"
-                    disabled={importBusy || creating}
-                    placeholder="e.g. Commander · Global"
-                  /></label
-                ><button type="submit" disabled={!profileName.trim() || creating || importBusy}
-                  >{creating ? 'Creating…' : 'Create profile'}</button
-                >
-              </form>{/if}{#if profileError}<p class="small" role="alert">{profileError}</p>{/if}
-            <p class="small">
-              Older exports need explicit profile assignment. Use a separate profile for each game
-              account.
-            </p>
-          </div>
-          <div class="import-source">
-            <div class="segmented" role="group" aria-label="Import method">
-              <button
-                class:chosen={importMode === 'file'}
-                aria-pressed={importMode === 'file'}
-                disabled={importBusy || settingsBusy}
-                onclick={() => {
-                  importMode = 'file';
-                  importState = 'idle';
-                  relayFallback = false;
-                }}>Saved export</button
-              ><button
-                class:chosen={importMode === 'capture'}
-                aria-pressed={importMode === 'capture'}
-                disabled={importBusy || settingsBusy}
-                onclick={() => {
-                  importMode = 'capture';
-                  importState = 'idle';
-                  relayFallback = false;
-                }}>Captured request</button
-              >
-            </div>
-            {#if importMode === 'file'}<p>
-                Choose a collector export folder, supported Exilium JSON, or a compressed tracker
-                backup.
+  <LoadingRegion busy={panelLoading} message={`Loading ${currentPage.label.toLowerCase()}…`}>
+    {#if hosted && section !== 'history' && initializing}
+      <div></div>
+    {:else if hosted && section !== 'history' && !local}
+      <section class="empty-state" aria-label={currentPage.title}>
+        <p role="alert">{error || 'Could not open your browser archive. Reload to try again.'}</p>
+      </section>
+    {:else if hosted && section === 'statistics'}
+      {#if StatisticsPanel}<StatisticsPanel />{:else if panelError}<p role="alert">
+          {panelError}
+        </p>{/if}
+    {:else if hosted && section !== 'history' && local}
+      {#if SettingsPanel}
+        <SettingsPanel
+          {local}
+          {profiles}
+          activeProfileId={filters.profile_id}
+          googleClientId={data.googleClientId}
+          {drive}
+          {publicApi}
+          {publicConfig}
+          importBusy={importBusy || settingsBusy}
+          onbusychange={(busy) => {
+            settingsBusy = busy;
+            if (!busy && archiveDirty && !disposed)
+              void archiveChanged().catch((cause) => {
+                error = failure(cause);
+              });
+          }}
+          {pendingRestoreFile}
+          {restoreRequest}
+          onrestoreaccepted={() => {
+            pendingRestoreFile = null;
+            restoreRequest = 0;
+          }}
+          section={section as 'profiles' | 'backup' | 'privacy'}
+          onchanged={archiveChanged}
+          onselect={(id) => {
+            if (importBusy) return;
+            filters.profile_id = id;
+            void profileChanged();
+          }}
+          onrecover={async () => {
+            if (importBusy || !capabilities.backup) return;
+            recovery = true;
+            importMode = 'capture';
+            importOpen = true;
+            await goto('/history');
+          }}
+        />
+      {:else if panelError}<p role="alert">{panelError}</p>{/if}
+    {:else}
+      {#if importOpen}
+        <section id="import-panel" class="import-panel" aria-labelledby="import-title">
+          <div class="section-heading">
+            <div>
+              <h2 id="import-title">Add to your archive</h2>
+              <p>
+                Imports merge into the selected profile. Repeated pulls remain separate records.
               </p>
-              <div class="file-choices">
-                <label class="file-button"
-                  >Choose export folder<input
-                    type="file"
-                    disabled={importBusy || settingsBusy}
-                    multiple
-                    webkitdirectory
-                    onchange={(e) => {
-                      void chooseFiles(Array.from(e.currentTarget.files ?? []));
-                      e.currentTarget.value = '';
-                    }}
-                  /></label
-                ><label class="file-button secondary"
-                  >Choose files<input
-                    type="file"
-                    disabled={importBusy || settingsBusy}
-                    multiple
-                    accept=".json,.gz,.gzip,application/json,application/gzip"
-                    onchange={(e) => {
-                      void chooseFiles(Array.from(e.currentTarget.files ?? []));
-                      e.currentTarget.value = '';
-                    }}
-                  /></label
+            </div>
+            <button class="text-button" onclick={() => (importOpen = false)}>Close</button>
+          </div>
+          <div class="import-grid">
+            <div class="profile-assignment">
+              <label
+                >Import into<select
+                  bind:value={filters.profile_id}
+                  onchange={profileChanged}
+                  disabled={importBusy || settingsBusy}
+                  >{#each profiles as p}<option value={p.id}>{p.name}</option>{/each}</select
+                ></label
+              ><button
+                class="text-button"
+                disabled={importBusy || settingsBusy}
+                onclick={() => (createOpen = !createOpen)}
+                aria-expanded={createOpen}>Create a profile</button
+              >{#if createOpen}<form
+                  onsubmit={(event) => {
+                    event.preventDefault();
+                    void addProfile();
+                  }}
+                >
+                  <label
+                    >Profile name<input
+                      bind:value={profileName}
+                      required
+                      maxlength="120"
+                      disabled={importBusy || creating}
+                      placeholder="e.g. Commander · Global"
+                    /></label
+                  ><button type="submit" disabled={!profileName.trim() || creating || importBusy}
+                    ><LoadingLabel
+                      busy={creating}
+                      label="Create profile"
+                      loadingLabel="Creating…"
+                    /></button
+                  >
+                </form>{/if}{#if profileError}<p class="small" role="alert">{profileError}</p>{/if}
+              <p class="small">
+                Older exports need explicit profile assignment. Use a separate profile for each game
+                account.
+              </p>
+            </div>
+            <div class="import-source">
+              <div class="segmented" role="group" aria-label="Import method">
+                <button
+                  class:chosen={importMode === 'file'}
+                  aria-pressed={importMode === 'file'}
+                  disabled={importBusy || settingsBusy}
+                  onclick={() => {
+                    importMode = 'file';
+                    importState = 'idle';
+                    relayFallback = false;
+                  }}>Saved export</button
+                ><button
+                  class:chosen={importMode === 'capture'}
+                  aria-pressed={importMode === 'capture'}
+                  disabled={importBusy || settingsBusy}
+                  onclick={() => {
+                    importMode = 'capture';
+                    importState = 'idle';
+                    relayFallback = false;
+                  }}>Captured request</button
                 >
               </div>
-              <p class="small">
-                {selectedFiles.length
-                  ? `${selectedFiles.length} file${selectedFiles.length === 1 ? '' : 's'} selected`
-                  : 'Tracker backups open archive restoration; JSON exports merge into the selected profile.'}
-              </p>
-              <button
-                class="text-button restore-link"
-                disabled={importBusy || settingsBusy || inspecting}
-                onclick={() => openRestore()}>Restore a tracker backup</button
-              >
-              {#if sourceProfiles.length > 1}
-                <label
-                  >Profile from Exilium backup<select
-                    bind:value={sourceProfile}
+              {#if importMode === 'file'}<p>
+                  Choose a collector export folder, supported Exilium JSON, or a compressed tracker
+                  backup.
+                </p>
+                <div class="file-choices">
+                  <label class="file-button"
+                    >Choose export folder<input
+                      type="file"
+                      disabled={importBusy || settingsBusy}
+                      multiple
+                      webkitdirectory
+                      onchange={(e) => {
+                        void chooseFiles(Array.from(e.currentTarget.files ?? []));
+                        e.currentTarget.value = '';
+                      }}
+                    /></label
+                  ><label class="file-button secondary"
+                    >Choose files<input
+                      type="file"
+                      disabled={importBusy || settingsBusy}
+                      multiple
+                      accept=".json,.gz,.gzip,application/json,application/gzip"
+                      onchange={(e) => {
+                        void chooseFiles(Array.from(e.currentTarget.files ?? []));
+                        e.currentTarget.value = '';
+                      }}
+                    /></label
+                  >
+                </div>
+                <p class="small">
+                  {selectedFiles.length
+                    ? `${selectedFiles.length} file${selectedFiles.length === 1 ? '' : 's'} selected`
+                    : 'Tracker backups open archive restoration; JSON exports merge into the selected profile.'}
+                </p>
+                <button
+                  class="text-button restore-link"
+                  disabled={importBusy || settingsBusy || inspecting}
+                  onclick={() => openRestore()}>Restore a tracker backup</button
+                >
+                {#if sourceProfiles.length > 1}
+                  <label
+                    >Profile from Exilium backup<select
+                      bind:value={sourceProfile}
+                      disabled={importBusy || settingsBusy}
+                      ><option value="">Choose a source profile</option
+                      >{#each sourceProfiles as source}<option value={source.id}
+                          >{source.name}</option
+                        >{/each}</select
+                    ></label
+                  >
+                  <p class="small">
+                    Only this source profile will be merged into the selected destination. Unknown
+                    server identity remains unverified.
+                  </p>
+                {/if}
+              {:else}<label
+                  >Captured HTTP request<textarea
                     disabled={importBusy || settingsBusy}
-                    ><option value="">Choose a source profile</option
-                    >{#each sourceProfiles as source}<option value={source.id}>{source.name}</option
-                      >{/each}</select
-                  ></label
+                    bind:value={capture}
+                    rows="4"
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="Paste the full captured HTTPS request"></textarea></label
+                ><label
+                  >Server ID (optional)<input
+                    bind:value={server}
+                    disabled={importBusy || settingsBusy}
+                    inputmode="numeric"
+                    placeholder="e.g. 10"
+                  /></label
                 >
                 <p class="small">
-                  Only this source profile will be merged into the selected destination. Unknown
-                  server identity remains unverified.
+                  Credentials stay in memory and are cleared when collection starts. A new
+                  collection needs a fresh capture; saving collected records can be retried without
+                  one.
                 </p>
-              {/if}
-            {:else}<label
-                >Captured HTTP request<textarea
-                  disabled={importBusy || settingsBusy}
-                  bind:value={capture}
-                  rows="4"
-                  autocomplete="off"
-                  spellcheck="false"
-                  placeholder="Paste the full captured HTTPS request"></textarea></label
-              ><label
-                >Server ID (optional)<input
-                  bind:value={server}
-                  disabled={importBusy || settingsBusy}
-                  inputmode="numeric"
-                  placeholder="e.g. 10"
-                /></label
-              >
-              <p class="small">
-                Credentials stay in memory and are cleared on submission. A fresh capture is
-                required to retry.
-              </p>
-              {#if hosted}
-                <div class="capture-options">
-                  <label class="check-control"
-                    ><input
-                      type="checkbox"
-                      bind:checked={recovery}
-                      disabled={importBusy || !capabilities.backup}
-                    /> Recover a private server backup</label
-                  >
-                  {#if !recovery}
+                {#if hosted}
+                  <div class="capture-options">
                     <label class="check-control"
                       ><input
                         type="checkbox"
-                        bind:checked={saveBackup}
+                        bind:checked={recovery}
                         disabled={importBusy || !capabilities.backup}
-                        onchange={() => remember('gfl2.server-backup', String(saveBackup))}
-                      /> Save server backup</label
+                      /> Recover a private server backup</label
                     >
-                    <label class="check-control"
-                      ><input
-                        type="checkbox"
-                        bind:checked={contribute}
-                        disabled={importBusy || !capabilities.contribution}
-                        onchange={() => remember('gfl2.contribute', String(contribute))}
-                      /> Contribute to community statistics</label
-                    >
-                  {/if}
-                  {#if !capabilities.backup || !capabilities.contribution}
-                    <p class="small">
-                      {!capabilities.backup
-                        ? 'Server backup and recovery are unavailable. '
-                        : ''}{!capabilities.contribution
-                        ? 'Community contributions are unavailable. '
-                        : ''}Browser imports remain available; Drive sync is configured separately.
-                    </p>
-                  {/if}
-                  {#if recovery || saveBackup || contribute}
-                    <p class="small">
-                      This request sends your capture to the tracker server. Credentials are used in
-                      memory and never saved. Only aggregate statistics are public.
-                    </p>
-                  {:else}
-                    <p class="small">
-                      The browser contacts official game servers directly. No capture or history is
-                      sent to this tracker server.
-                    </p>
-                  {/if}
-                </div>
+                    {#if !recovery}
+                      <label class="check-control"
+                        ><input
+                          type="checkbox"
+                          bind:checked={saveBackup}
+                          disabled={importBusy || !capabilities.backup}
+                          onchange={() => remember('gfl2.server-backup', String(saveBackup))}
+                        /> Save server backup</label
+                      >
+                      <label class="check-control"
+                        ><input
+                          type="checkbox"
+                          bind:checked={contribute}
+                          disabled={importBusy || !capabilities.contribution}
+                          onchange={() => remember('gfl2.contribute', String(contribute))}
+                        /> Contribute to community statistics</label
+                      >
+                    {/if}
+                    {#if !capabilities.backup || !capabilities.contribution}
+                      <p class="small">
+                        {!capabilities.backup
+                          ? 'Server backup and recovery are unavailable. '
+                          : ''}{!capabilities.contribution
+                          ? 'Community contributions are unavailable. '
+                          : ''}Browser imports remain available; Drive sync is configured
+                        separately.
+                      </p>
+                    {/if}
+                    {#if recovery || saveBackup || contribute}
+                      <p class="small">
+                        This request sends your capture to the tracker server. Credentials are used
+                        in memory and never saved. Only aggregate statistics are public.
+                      </p>
+                    {:else}
+                      <p class="small">
+                        The browser contacts official game servers directly. No capture or history
+                        is sent to this tracker server.
+                      </p>
+                    {/if}
+                  </div>
+                {/if}
               {/if}
-            {/if}
-            <button
-              class="primary"
-              onclick={() => runImport()}
-              disabled={importBusy ||
-                settingsBusy ||
-                inspecting ||
-                creating ||
-                (hosted &&
-                  importMode === 'capture' &&
-                  (recovery || saveBackup || contribute) &&
-                  !publicConfig?.identity_verification.available)}
-              >{importBusy
-                ? 'Working…'
-                : importMode === 'file'
-                  ? 'Validate and import'
-                  : 'Fetch accessible history'}</button
-            >
-            {@render importStatus()}
-            {#if hosted && importMode === 'capture'}{#await import('$lib/components/ImportGuide.svelte') then guide}<guide.default
-                />{/await}{/if}
+              <button
+                class="primary"
+                onclick={() => runImport()}
+                disabled={importBusy ||
+                  !!retainedCollection ||
+                  settingsBusy ||
+                  inspecting ||
+                  creating ||
+                  (hosted &&
+                    importMode === 'capture' &&
+                    (recovery || saveBackup || contribute) &&
+                    !publicConfig?.identity_verification.available)}
+                ><LoadingLabel
+                  busy={importBusy}
+                  label={importMode === 'file' ? 'Validate and import' : 'Fetch accessible history'}
+                  loadingLabel="Working…"
+                /></button
+              >
+              {@render importStatus()}
+              {#if hosted && importMode === 'capture'}{#await import('$lib/components/ImportGuide.svelte') then guide}<guide.default
+                  />{/await}{/if}
+            </div>
           </div>
+        </section>
+      {/if}
+
+      <section class="overview" aria-labelledby="overview-title">
+        <div class="title-row">
+          <h1 id="overview-title">Recruitment ledger</h1>
+          <span class="local-label"><span></span>Local archive</span>
+        </div>
+        <LoadingRegion busy={loading && !stats} message="Loading recruitment summary…">
+          <div class="summary-strip">
+            <div class="summary-total">
+              <span title="One record = one pull. Item quantity is preserved separately."
+                >Recorded pulls</span
+              ><strong>{stats ? number(stats.total) : loading || error ? '—' : '0'}</strong>
+            </div>
+            <div>
+              <span>Recorded range</span><strong class="date-range"
+                >{date(stats?.date_from)}<span> — </span>{date(stats?.date_to)}</strong
+              >
+            </div>
+            <div>
+              <span>Last import</span><strong
+                >{date(stats?.last_import_at)}<small
+                  >{stats?.last_import_at ? time(stats.last_import_at) : ''}</small
+                ></strong
+              >
+            </div>
+          </div>
+        </LoadingRegion>
+        <EliteHistory
+          query={rewardQuery}
+          profileId={filters.profile_id}
+          revision={archiveRevision}
+        />
+        <div class="coverage">
+          <svg viewBox="0 0 20 20" aria-hidden="true"
+            ><circle cx="10" cy="10" r="7" /><path d="M10 9v5M10 6v1" /></svg
+          >
+          <p>Accessible history only. A completed import does not mean lifetime coverage.</p>
+          <span
+            >{stats?.latest_import_complete === true
+              ? 'Latest collection complete'
+              : stats?.latest_import_complete === false
+                ? 'Latest collection partial'
+                : 'Collection completeness unknown'}</span
+          >
         </div>
       </section>
-    {/if}
 
-    <section class="overview" aria-labelledby="overview-title">
-      <div class="title-row">
-        <h1 id="overview-title">Recruitment ledger</h1>
-        <span class="local-label"><span></span>Local archive</span>
-      </div>
-      <div class="summary-strip">
-        <div class="summary-total">
-          <span title="One record = one pull. Item quantity is preserved separately."
-            >Recorded pulls</span
-          ><strong>{stats ? number(stats.total) : loading || error ? '—' : '0'}</strong>
-        </div>
-        <div>
-          <span>Recorded range</span><strong class="date-range"
-            >{date(stats?.date_from)}<span> — </span>{date(stats?.date_to)}</strong
-          >
-        </div>
-        <div>
-          <span>Last import</span><strong
-            >{date(stats?.last_import_at)}<small
-              >{stats?.last_import_at ? time(stats.last_import_at) : ''}</small
-            ></strong
-          >
-        </div>
-      </div>
-      <EliteHistory query={rewardQuery} profileId={filters.profile_id} revision={archiveRevision} />
-      <div class="coverage">
-        <svg viewBox="0 0 20 20" aria-hidden="true"
-          ><circle cx="10" cy="10" r="7" /><path d="M10 9v5M10 6v1" /></svg
-        >
-        <p>Accessible history only. A completed import does not mean lifetime coverage.</p>
-        <span
-          >{stats?.latest_import_complete === true
-            ? 'Latest collection complete'
-            : stats?.latest_import_complete === false
-              ? 'Latest collection partial'
-              : 'Collection completeness unknown'}</span
-        >
-      </div>
-    </section>
-
-    <section class="history" aria-labelledby="history-title">
-      <div class="section-heading history-heading">
-        <div class="history-title">
-          <h2 id="history-title" tabindex="-1">Pull history</h2>
-          <span
-            >{loading
-              ? 'Loading records…'
-              : error
-                ? 'Records unavailable'
-                : `${number(history.total)} records${active ? ' · filtered' : ''}`}</span
-          >
-        </div>
-        <button class="text-button" onclick={reset} disabled={!active}
-          >Reset filters{active ? ` (${active})` : ''}</button
-        >
-      </div>
-      <p class="small">Times use your browser's time zone. Date filters use UTC.</p>
-      <form
-        class="filters"
-        onsubmit={(e) => {
-          e.preventDefault();
-          void refresh(true);
-        }}
-      >
-        <label class="search-field"
-          >Search name or item ID
-          <div>
-            <svg viewBox="0 0 20 20" aria-hidden="true"
-              ><circle cx="8.5" cy="8.5" r="5.5" /><path d="m13 13 4 4" /></svg
-            ><input
-              type="search"
-              bind:value={filters.q}
-              oninput={searchChanged}
-              placeholder="Find a doll, weapon, or ID"
-            />
-          </div></label
-        >
-        <MultiSelect
-          id="filter-rarity"
-          label="Rarity"
-          allLabel="All rarities"
-          options={options.rarities.map((value) => ({
-            value,
-            label:
-              value === 'Elite'
-                ? '5★ Elite'
-                : value === 'Standard'
-                  ? '4★ Standard'
-                  : value === 'Retired'
-                    ? '3★ Retired'
-                    : 'Unknown'
-          }))}
-          value={filters.rarity}
-          onchange={(value) => {
-            filters.rarity = value;
-            void refresh(true);
-          }}
-        />
-        <MultiSelect
-          id="filter-kind"
-          label="Item kind"
-          allLabel="All kinds"
-          options={options.kinds.map((value) => ({
-            value,
-            label: value === 'doll' ? 'Dolls' : value === 'weapon' ? 'Weapons' : 'Unclassified'
-          }))}
-          value={filters.kind}
-          onchange={(value) => {
-            filters.kind = value;
-            void refresh(true);
-          }}
-        />
-        <MultiSelect
-          id="filter-type"
-          label="Recruitment type"
-          allLabel="All types"
-          options={options.types.map((value) => ({
-            value: String(value),
-            label: recruitmentName(value)
-          }))}
-          value={filters.type_id}
-          onchange={(value) => {
-            filters.type_id = value;
-            void refresh(true);
-          }}
-        />
-        <MultiSelect
-          id="filter-pool"
-          label="Pool ID"
-          allLabel="All pools"
-          options={options.pools.map((value) => ({ value: String(value), label: String(value) }))}
-          value={filters.pool_id}
-          onchange={(value) => {
-            filters.pool_id = value;
-            void refresh(true);
-          }}
-        />
-        <label
-          >From (UTC)<input
-            type="date"
-            bind:value={filters.date_from}
-            onchange={() => refresh(true)}
-          /></label
-        >
-        <label
-          >To (UTC)<input
-            type="date"
-            bind:value={filters.date_to}
-            onchange={() => refresh(true)}
-          /></label
-        >
-      </form>
-      {#if error}<div class="empty-state" role="alert">
-          <h3>History could not load</h3>
-          <p>{error}</p>
-          <button onclick={() => (profiles.length ? refresh() : initialize())}>Try again</button>
-        </div>{:else if loading && !history.items.length}<div class="empty-state" role="status">
-          Loading your archive…
-        </div>{:else if !history.items.length}<div class="empty-state">
-          <h3>{active ? 'No pulls match these filters' : 'Your ledger is ready'}</h3>
-          <p>
-            {active
-              ? 'Try a broader date range or remove a filter.'
-              : 'Import a saved export or fetch accessible history to begin.'}
-          </p>
-          <button onclick={() => (active ? reset() : (importOpen = true))}
-            >{active ? 'Reset filters' : 'Import history'}</button
-          >
-        </div>{:else}
-        <p id="history-pity-help" class="history-pity-help">
-          Pity is counted separately for each recruitment. A 5★ resets its counter; filters can hide
-          that reward.
-        </p>
-        <div class="table-navigation">
-          <span>Scroll table</span><button
-            aria-label="Scroll table left"
-            aria-controls="pull-history-table"
-            onclick={() => tableScroll?.scrollBy({ left: -250 })}>Left</button
-          ><button
-            aria-label="Scroll table right"
-            aria-controls="pull-history-table"
-            onclick={() => tableScroll?.scrollBy({ left: 250 })}>Right</button
-          >
-        </div>
-        <section
-          class="table-scroll"
-          bind:this={tableScroll}
-          id="pull-history-table"
-          aria-label="Pull history table"
-          aria-busy={loading}
-        >
-          <table aria-describedby="history-pity-help">
-            <thead
-              ><tr
-                ><th>Item</th><th>Rarity / kind</th><th>Pity</th><th>Recorded</th><th
-                  class="quantity">Qty.</th
-                ><th><span class="sr-only">Record details</span></th></tr
-              ></thead
-            ><tbody
-              >{#each history.items as row (row.id)}<tr class:unknown={row.kind === 'unknown'}
-                  ><td
-                    ><span class="item-name">{row.name ?? 'Unknown item'}</span><span
-                      class="item-id">{row.item_id}</span
-                    ></td
-                  ><td
-                    ><span class="rarity-tag" class:elite={row.rarity === 'Elite'}
-                      >{row.rarity ?? 'Unknown'}</span
-                    ><span class="kind-label"
-                      >{row.kind === 'unknown'
-                        ? 'Unresolved'
-                        : row.kind === 'doll'
-                          ? 'Doll'
-                          : 'Weapon'}</span
-                    ></td
-                  ><td class="history-pity"
-                    ><span class="pity-count"
-                      >{row.pity}{#if row.pity_uncertain}<sup
-                          title="History may be missing; pity is uncertain"
-                          aria-label="uncertain">?</sup
-                        >{/if}
-                      <span class="pity-unit">{row.pity === 1 ? 'pull' : 'pulls'}</span></span
-                    >
-                    {#if row.rarity === 'Elite'}<span class="pity-reset">5★ · resets pity</span
-                      >{/if}
-                    <span class="pity-recruitment">{recruitmentName(row.type_id)}</span></td
-                  ><td
-                    ><span>{date(row.timestamp)}</span><span class="cell-secondary"
-                      >{time(row.timestamp)}</span
-                    ></td
-                  ><td class="quantity">{row.quantity}</td><td
-                    ><button
-                      class="details-button"
-                      disabled={loading}
-                      aria-label={`Details for ${row.name ?? row.item_id}`}
-                      aria-expanded={expanded === row.id}
-                      onclick={() => (expanded = expanded === row.id ? null : row.id)}
-                      ><svg
-                        viewBox="0 0 20 20"
-                        aria-hidden="true"
-                        class:rotated={expanded === row.id}><path d="m7 4 6 6-6 6" /></svg
-                      ></button
-                    ></td
-                  ></tr
-                >{#if expanded === row.id}<tr class="detail-row"
-                    ><td colspan="6"
-                      ><div>
-                        <span><strong>Original item ID</strong>{row.item_id}</span>
-                        <span><strong>Item quantity</strong>{row.quantity}</span><span
-                          ><strong>Recruitment</strong>{recruitmentName(row.type_id)} (type {row.type_id})</span
-                        ><span><strong>Pool ID</strong>{row.pool_id}</span><span
-                          ><strong>Source page</strong>{row.source_page}</span
-                        ><span><strong>Catalog region</strong>{row.region ?? 'Unknown'}</span><span
-                          ><strong>Pull group</strong>{row.estimated_group_size > 1
-                            ? '10-pull (assumed from matching timestamps)'
-                            : 'Single pull'}
-                          {#if row.estimated_group_size > 1}<small
-                              >{row.estimated_group_size} saved records in this group</small
-                            >{/if}</span
-                        >
-                      </div></td
-                    ></tr
-                  >{/if}{/each}</tbody
+      <section class="history" aria-labelledby="history-title">
+        <div class="section-heading history-heading">
+          <div class="history-title">
+            <h2 id="history-title" tabindex="-1">Pull history</h2>
+            <span
+              ><LoadingLabel
+                busy={loading}
+                loadingLabel="Loading records…"
+                label={error
+                  ? 'Records unavailable'
+                  : `${number(history.total)} records${active ? ' · filtered' : ''}`}
+              /></span
             >
-          </table>
-        </section>
-        <div class="pagination">
-          <span class="sr-only" role="status"
-            >{loading ? `Loading page ${requestedPage}…` : ''}</span
+          </div>
+          <button class="text-button" onclick={reset} disabled={!active}
+            >Reset filters{active ? ` (${active})` : ''}</button
           >
-          <p>
-            Showing {number((history.page - 1) * history.page_size + 1)}–{number(
-              Math.min(history.page * history.page_size, history.total)
-            )} of {number(history.total)}<span>&nbsp;·&nbsp;Newest first</span>
-          </p>
-          <div>
-            <label class="page-size"
-              ><span>Rows</span><select
-                bind:value={filters.page_size}
-                disabled={loading}
-                onchange={() => refresh(true)}
-                ><option value={20}>20</option><option value={50}>50</option><option value={100}
-                  >100</option
-                ></select
-              ></label
-            ><button
-              aria-label="Previous page"
-              disabled={loading || history.page <= 1}
-              onclick={() => changePage(history.page - 1)}>Previous</button
-            >
-            <form
-              class="page-jump"
-              onsubmit={(event) => {
-                event.preventDefault();
-                if (pageNumber !== undefined) void changePage(pageNumber);
-              }}
-            >
-              <input
-                type="number"
-                aria-label="Page number"
-                aria-describedby="page-total"
-                title="Enter a page number and press Enter"
-                min="1"
-                max={history.pages}
-                step="1"
-                required
-                inputmode="numeric"
-                enterkeyhint="go"
-                bind:value={pageNumber}
-                disabled={loading}
-                onfocus={(event) => event.currentTarget.select()}
-                onblur={() => (pageNumber = history.page)}
-                onkeydown={(event) => {
-                  if (event.key === 'Escape') {
-                    event.preventDefault();
-                    pageNumber = history.page;
-                  }
-                }}
+        </div>
+        <p class="small">Times use your browser's time zone. Date filters use UTC.</p>
+        <form
+          class="filters"
+          onsubmit={(e) => {
+            e.preventDefault();
+            void refresh(true);
+          }}
+        >
+          <label class="search-field"
+            >Search name or item ID
+            <div>
+              <svg viewBox="0 0 20 20" aria-hidden="true"
+                ><circle cx="8.5" cy="8.5" r="5.5" /><path d="m13 13 4 4" /></svg
+              ><input
+                type="search"
+                bind:value={filters.q}
+                oninput={searchChanged}
+                placeholder="Find a doll, weapon, or ID"
               />
-              <span id="page-total" aria-label={`of ${history.pages} pages`}>/ {history.pages}</span
+            </div></label
+          >
+          <MultiSelect
+            id="filter-rarity"
+            label="Rarity"
+            allLabel="All rarities"
+            options={options.rarities.map((value) => ({
+              value,
+              label:
+                value === 'Elite'
+                  ? '5★ Elite'
+                  : value === 'Standard'
+                    ? '4★ Standard'
+                    : value === 'Retired'
+                      ? '3★ Retired'
+                      : 'Unknown'
+            }))}
+            value={filters.rarity}
+            onchange={(value) => {
+              filters.rarity = value;
+              void refresh(true);
+            }}
+          />
+          <MultiSelect
+            id="filter-kind"
+            label="Item kind"
+            allLabel="All kinds"
+            options={options.kinds.map((value) => ({
+              value,
+              label: value === 'doll' ? 'Dolls' : value === 'weapon' ? 'Weapons' : 'Unclassified'
+            }))}
+            value={filters.kind}
+            onchange={(value) => {
+              filters.kind = value;
+              void refresh(true);
+            }}
+          />
+          <MultiSelect
+            id="filter-type"
+            label="Recruitment type"
+            allLabel="All types"
+            options={options.types.map((value) => ({
+              value: String(value),
+              label: recruitmentName(value)
+            }))}
+            value={filters.type_id}
+            onchange={(value) => {
+              filters.type_id = value;
+              void refresh(true);
+            }}
+          />
+          <MultiSelect
+            id="filter-pool"
+            label="Pool ID"
+            allLabel="All pools"
+            options={options.pools.map((value) => ({ value: String(value), label: String(value) }))}
+            value={filters.pool_id}
+            onchange={(value) => {
+              filters.pool_id = value;
+              void refresh(true);
+            }}
+          />
+          <label
+            >From (UTC)<input
+              type="date"
+              bind:value={filters.date_from}
+              onchange={() => refresh(true)}
+            /></label
+          >
+          <label
+            >To (UTC)<input
+              type="date"
+              bind:value={filters.date_to}
+              onchange={() => refresh(true)}
+            /></label
+          >
+        </form>
+        <LoadingRegion
+          busy={loading}
+          message={requestedPage ? `Loading page ${requestedPage}…` : 'Loading your archive…'}
+        >
+          {#if error}<div class="empty-state" role="alert">
+              <h3>History could not load</h3>
+              <p>{error}</p>
+              <button onclick={() => (profiles.length ? refresh() : initialize())}>Try again</button
               >
-            </form>
-            <button
-              aria-label="Next page"
-              bind:this={nextPageButton}
-              disabled={loading || history.page >= history.pages}
-              onclick={() => changePage(history.page + 1)}>Next</button
-            >
-          </div>
-        </div>
-        {#if pageError}
-          <div class="pagination-error" role="alert">
-            <p>
-              Could not load page {requestedPage}. Still showing page {history.page}. {pageError}
+            </div>{:else if !history.items.length}<div class="empty-state">
+              <h3>{active ? 'No pulls match these filters' : 'Your ledger is ready'}</h3>
+              <p>
+                {active
+                  ? 'Try a broader date range or remove a filter.'
+                  : 'Import a saved export or fetch accessible history to begin.'}
+              </p>
+              <button onclick={() => (active ? reset() : (importOpen = true))}
+                >{active ? 'Reset filters' : 'Import history'}</button
+              >
+            </div>{:else}
+            <p id="history-pity-help" class="history-pity-help">
+              Pity is counted separately for each recruitment. A 5★ resets its counter; filters can
+              hide that reward.
             </p>
-            <button onclick={() => requestedPage !== null && changePage(requestedPage)}
-              >Try again</button
+            <div class="table-navigation">
+              <span>Scroll table</span><button
+                aria-label="Scroll table left"
+                aria-controls="pull-history-table"
+                onclick={() => tableScroll?.scrollBy({ left: -250 })}>Left</button
+              ><button
+                aria-label="Scroll table right"
+                aria-controls="pull-history-table"
+                onclick={() => tableScroll?.scrollBy({ left: 250 })}>Right</button
+              >
+            </div>
+            <section
+              class="table-scroll"
+              bind:this={tableScroll}
+              id="pull-history-table"
+              aria-label="Pull history table"
+              aria-busy={loading}
             >
-          </div>
-        {/if}
-      {/if}
-    </section>
-  {/if}
+              <table aria-describedby="history-pity-help">
+                <thead
+                  ><tr
+                    ><th>Item</th><th>Rarity / kind</th><th>Pity</th><th>Recorded</th><th
+                      class="quantity">Qty.</th
+                    ><th><span class="sr-only">Record details</span></th></tr
+                  ></thead
+                ><tbody
+                  >{#each history.items as row (row.id)}<tr class:unknown={row.kind === 'unknown'}
+                      ><td
+                        ><span class="item-name">{row.name ?? 'Unknown item'}</span><span
+                          class="item-id">{row.item_id}</span
+                        ></td
+                      ><td
+                        ><span class="rarity-tag" class:elite={row.rarity === 'Elite'}
+                          >{row.rarity ?? 'Unknown'}</span
+                        ><span class="kind-label"
+                          >{row.kind === 'unknown'
+                            ? 'Unresolved'
+                            : row.kind === 'doll'
+                              ? 'Doll'
+                              : 'Weapon'}</span
+                        ></td
+                      ><td class="history-pity"
+                        ><span class="pity-count"
+                          >{row.pity}{#if row.pity_uncertain}<sup
+                              title="History may be missing; pity is uncertain"
+                              aria-label="uncertain">?</sup
+                            >{/if}
+                          <span class="pity-unit">{row.pity === 1 ? 'pull' : 'pulls'}</span></span
+                        >
+                        {#if row.rarity === 'Elite'}<span class="pity-reset">5★ · resets pity</span
+                          >{/if}
+                        <span class="pity-recruitment">{recruitmentName(row.type_id)}</span></td
+                      ><td
+                        ><span>{date(row.timestamp)}</span><span class="cell-secondary"
+                          >{time(row.timestamp)}</span
+                        ></td
+                      ><td class="quantity">{row.quantity}</td><td
+                        ><button
+                          class="details-button"
+                          disabled={loading}
+                          aria-label={`Details for ${row.name ?? row.item_id}`}
+                          aria-expanded={expanded === row.id}
+                          onclick={() => (expanded = expanded === row.id ? null : row.id)}
+                          ><svg
+                            viewBox="0 0 20 20"
+                            aria-hidden="true"
+                            class:rotated={expanded === row.id}><path d="m7 4 6 6-6 6" /></svg
+                          ></button
+                        ></td
+                      ></tr
+                    >{#if expanded === row.id}<tr class="detail-row"
+                        ><td colspan="6"
+                          ><div>
+                            <span><strong>Original item ID</strong>{row.item_id}</span>
+                            <span><strong>Item quantity</strong>{row.quantity}</span><span
+                              ><strong>Recruitment</strong>{recruitmentName(row.type_id)} (type {row.type_id})</span
+                            ><span><strong>Pool ID</strong>{row.pool_id}</span><span
+                              ><strong>Source page</strong>{row.source_page}</span
+                            ><span><strong>Catalog region</strong>{row.region ?? 'Unknown'}</span
+                            ><span
+                              ><strong>Pull group</strong>{row.estimated_group_size > 1
+                                ? '10-pull (assumed from matching timestamps)'
+                                : 'Single pull'}
+                              {#if row.estimated_group_size > 1}<small
+                                  >{row.estimated_group_size} saved records in this group</small
+                                >{/if}</span
+                            >
+                          </div></td
+                        ></tr
+                      >{/if}{/each}</tbody
+                >
+              </table>
+            </section>
+            <div class="pagination">
+              <p>
+                Showing {number((history.page - 1) * history.page_size + 1)}–{number(
+                  Math.min(history.page * history.page_size, history.total)
+                )} of {number(history.total)}<span>&nbsp;·&nbsp;Newest first</span>
+              </p>
+              <div>
+                <label class="page-size"
+                  ><span>Rows</span><select
+                    bind:value={filters.page_size}
+                    disabled={loading}
+                    onchange={() => refresh(true)}
+                    ><option value={20}>20</option><option value={50}>50</option><option value={100}
+                      >100</option
+                    ></select
+                  ></label
+                ><button
+                  aria-label="Previous page"
+                  disabled={loading || history.page <= 1}
+                  onclick={() => changePage(history.page - 1)}>Previous</button
+                >
+                <form
+                  class="page-jump"
+                  onsubmit={(event) => {
+                    event.preventDefault();
+                    if (pageNumber !== undefined) void changePage(pageNumber);
+                  }}
+                >
+                  <input
+                    type="number"
+                    aria-label="Page number"
+                    aria-describedby="page-total"
+                    title="Enter a page number and press Enter"
+                    min="1"
+                    max={history.pages}
+                    step="1"
+                    required
+                    inputmode="numeric"
+                    enterkeyhint="go"
+                    bind:value={pageNumber}
+                    disabled={loading}
+                    onfocus={(event) => event.currentTarget.select()}
+                    onblur={() => (pageNumber = history.page)}
+                    onkeydown={(event) => {
+                      if (event.key === 'Escape') {
+                        event.preventDefault();
+                        pageNumber = history.page;
+                      }
+                    }}
+                  />
+                  <span id="page-total" aria-label={`of ${history.pages} pages`}
+                    >/ {history.pages}</span
+                  >
+                </form>
+                <button
+                  aria-label="Next page"
+                  bind:this={nextPageButton}
+                  disabled={loading || history.page >= history.pages}
+                  onclick={() => changePage(history.page + 1)}>Next</button
+                >
+              </div>
+            </div>
+            {#if pageError}
+              <div class="pagination-error" role="alert">
+                <p>
+                  Could not load page {requestedPage}. Still showing page {history.page}. {pageError}
+                </p>
+                <button onclick={() => requestedPage !== null && changePage(requestedPage)}
+                  >Try again</button
+                >
+              </div>
+            {/if}
+          {/if}
+        </LoadingRegion>
+      </section>
+    {/if}
+  </LoadingRegion>
   <footer>
     <span>GFL2 Pull Tracker</span>
     <GitHubLink />

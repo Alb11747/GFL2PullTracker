@@ -7,6 +7,7 @@ import '@fontsource/barlow-condensed/500.css';
 import '@fontsource/barlow-condensed/600.css';
 import '../../src/app.css';
 import RewardFixture from './RewardFixture.svelte';
+import LoadingFixture from './LoadingFixture.svelte';
 import type { Pull } from '../../src/lib/api';
 import { REWARD_RARITIES_KEY } from '../../src/lib/reward-history';
 
@@ -140,6 +141,155 @@ run.onclick = async () => {
   results.textContent = '';
   summary.textContent = 'Running…';
   try {
+    await test('Loading regions reserve the larger of previous content and multiline status', async () => {
+      const target = document.createElement('div');
+      fixture.append(target);
+      const loadingFixture = mount(LoadingFixture, { target });
+      const region = () => target.querySelector<HTMLElement>('.loading-region')!;
+      const height = () => region().getBoundingClientRect().height;
+      try {
+        await settle();
+        const oldHeight = height();
+        const buttonWidth = target.querySelector('button')!.getBoundingClientRect().width;
+        loadingFixture.setState({ busy: true, height: 0, text: '', label: 'Retry' });
+        await settle();
+        assert(Math.abs(height() - oldHeight) <= 1, 'Tall previous content collapsed');
+        assert(
+          Math.abs(target.querySelector('button')!.getBoundingClientRect().width - buttonWidth) <=
+            1,
+          'Loading label changed button width'
+        );
+        assert(
+          target.querySelector('[inert][aria-hidden="true"]'),
+          'Stale content remains interactive'
+        );
+        loadingFixture.setState({ message: 'A newer request is still loading…' });
+        await settle();
+        assert(Math.abs(height() - oldHeight) <= 1, 'Overlapping requests lost the settled height');
+        loadingFixture.setState({ busy: false, height: 24, text: 'No matching results.' });
+        await settle();
+        assert(height() < oldHeight, 'Settled empty result retained the old height');
+        assert(
+          target.querySelector('button')!.getBoundingClientRect().width < buttonWidth,
+          'Settled label retained a previous longer action width'
+        );
+        loadingFixture.setState({
+          busy: true,
+          message: 'Loading the selected history and its recruitment summary. '.repeat(12)
+        });
+        await settle();
+        const messageHeight = target
+          .querySelector('.region-message')!
+          .getBoundingClientRect().height;
+        assert(
+          Math.abs(height() - Math.max(24, messageHeight)) <= 1,
+          'Long status clipped or collapsed'
+        );
+        loadingFixture.setState({ width: 240 });
+        await settle();
+        const narrowMessage = target.querySelector('.region-message')!;
+        assert(
+          Math.abs(height() - narrowMessage.getBoundingClientRect().height) <= 1,
+          'Narrow status clipped'
+        );
+        assert(
+          narrowMessage.scrollWidth <= narrowMessage.clientWidth + 1,
+          'Status overflowed horizontally'
+        );
+        loadingFixture.setState({ busy: false, text: 'Load failed. Retry.', height: 24 });
+        await settle();
+        assert(height() < messageHeight, 'Settled error retained the loading height');
+        loadingFixture.setState({
+          width: 500,
+          height: 0,
+          text: 'A saved recruitment result that wraps onto several lines. '.repeat(8),
+          message: 'Loading…'
+        });
+        await settle();
+        loadingFixture.setState({ busy: true });
+        await settle();
+        loadingFixture.setState({ width: 240 });
+        await settle();
+        const contentHeight = target
+          .querySelector('.fixture-content')!
+          .getBoundingClientRect().height;
+        const statusHeight = target
+          .querySelector('.region-message')!
+          .getBoundingClientRect().height;
+        assert(
+          Math.abs(height() - Math.max(contentHeight, statusHeight)) <= 1,
+          'Retained content did not reflow at narrow widths'
+        );
+        target.style.fontSize = '200%';
+        await settle();
+        assert(
+          height() + 1 >= target.querySelector('.fixture-content')!.getBoundingClientRect().height,
+          'Enlarged text was clipped while loading'
+        );
+      } finally {
+        await unmount(loadingFixture);
+        target.remove();
+      }
+    });
+    await test('Loading resize preserves the initial floor after content replacement and overlapping requests', async () => {
+      const target = document.createElement('div');
+      fixture.append(target);
+      const loadingFixture = mount(LoadingFixture, { target });
+      const region = () => target.querySelector<HTMLElement>('.loading-region')!;
+      const height = () => region().getBoundingClientRect().height;
+      const assertFloor = () => {
+        const messageHeight = target
+          .querySelector('.region-message')!
+          .getBoundingClientRect().height;
+        assert(
+          Math.abs(height() - Math.max(200, messageHeight)) <= 1,
+          'A loading resize or overlap discarded the original 200px height floor'
+        );
+      };
+      try {
+        loadingFixture.setState({ height: 200, width: 500, text: 'Previous results' });
+        await settle();
+        assert(Math.abs(height() - 200) <= 1, 'Previous content must establish a 200px baseline');
+        loadingFixture.setState({
+          busy: true,
+          height: 24,
+          text: 'Placeholder',
+          message: 'Loading…'
+        });
+        await settle();
+        assertFloor();
+        loadingFixture.setState({ width: 240 });
+        await settle();
+        assertFloor();
+        loadingFixture.setState({ width: 210, message: 'A newer request is loading…' });
+        await settle();
+        assertFloor();
+        loadingFixture.setState({
+          message: 'Loading the requested archive and its recruitment summary. '.repeat(10)
+        });
+        await settle();
+        assertFloor();
+        assert(height() > 200, 'A taller loading message must still grow naturally');
+        loadingFixture.setState({ width: 500, message: 'Loading…' });
+        await settle();
+        assertFloor();
+        loadingFixture.setState({ busy: false, text: 'Ready' });
+        await settle();
+        assert(Math.abs(height() - 24) <= 1, 'Settling must release the old baseline');
+        loadingFixture.setState({ busy: true });
+        await settle();
+        const nextMessageHeight = target
+          .querySelector('.region-message')!
+          .getBoundingClientRect().height;
+        assert(
+          Math.abs(height() - Math.max(24, nextMessageHeight)) <= 1,
+          'A later loading sequence reused the old 200px baseline'
+        );
+      } finally {
+        await unmount(loadingFixture);
+        target.remove();
+      }
+    });
     localStorage.removeItem(REWARD_RARITIES_KEY);
     await reload();
     await test('Default 5★, two-row preview and incremental expansion', async () => {
@@ -160,9 +310,27 @@ run.onclick = async () => {
       ).gridTemplateColumns.split(/\s+/).length;
       const initial = cards().length;
       assert(initial === columns * 2, 'Preview must contain two rows');
+      assert(
+        mounted!.requests.length === 1,
+        `Initial preview dispatched a correction query: ${JSON.stringify(mounted!.requests)}`
+      );
+      assert(
+        mounted!.requests[0].limit === columns * 2,
+        'First query used an unmeasured preview limit'
+      );
+      assert(
+        cards().every((card) => !card.querySelector('img[loading="lazy"]')),
+        'Visible preview artwork is lazy'
+      );
       button('Show more').click();
       await settle();
       assert(cards().length === Math.min(initial * 2, 30), 'Show more adds two rows');
+      assert(
+        cards()
+          .slice(initial)
+          .every((card) => !card.querySelector('img[loading="eager"]')),
+        'Expanded artwork is eager'
+      );
       button('Show fewer').click();
       await settle();
       assert(cards().length === initial, 'Show fewer restores two rows');
@@ -500,6 +668,14 @@ run.onclick = async () => {
           'Pending query is not marked busy'
         );
         assert(
+          [...fixture.querySelectorAll('[role="status"]')].some(
+            (node) =>
+              node.textContent?.includes('Loading rewards') &&
+              getComputedStyle(node).visibility === 'visible'
+          ),
+          'Pending rewards have no visible loading message'
+        );
+        assert(
           !fixture.querySelector('.spinner, .loading-state, .loading-slot'),
           'Transient spinner returned'
         );
@@ -575,7 +751,7 @@ run.onclick = async () => {
     });
     localStorage.setItem(REWARD_RARITIES_KEY, JSON.stringify(keys));
     await reload();
-    summary.textContent = 'PASS: 13 reward-history browser regression groups';
+    summary.textContent = 'PASS: 15 reward-history and loading browser regression groups';
     results.textContent +=
       'Manual check: activate a reward using Enter/Space, cycle Tab/Shift+Tab inside the modal, press Escape, and verify focus returns. Synthetic key events do not invoke native browser default actions.\n';
   } catch (error) {

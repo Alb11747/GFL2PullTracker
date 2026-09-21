@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
+  import LoadingRegion from './LoadingRegion.svelte';
   import { recruitmentName } from '$lib/recruitment';
   import portraits from '$lib/portraits.json';
   import type { ProfileOverview } from '$lib/reward-query';
@@ -16,7 +17,8 @@
     typeId: number | null,
     rarities: string[],
     offset: number,
-    limit: number
+    limit: number,
+    options?: { consumer: string; preview: boolean }
   ) => Promise<ProfileOverview>;
   export let revision: string | number = 0;
   export let profileId = '';
@@ -48,6 +50,8 @@
   let historyHeading: HTMLHeadingElement;
   let focusWindow = false;
   let previewLimit = 8;
+  let measured = false;
+  let consumer = '';
   let selectedRarities: RewardRarity[] = ['Elite'];
   let dialog: HTMLDialogElement;
   let failedImages = new Set<number>();
@@ -73,7 +77,7 @@
   $: limit =
     showAll || offset > 0 ? windowLimit : Math.min(windowLimit, previewLimit * visibleBatches);
   $: void load(
-    mounted && !loading,
+    mounted && measured && !loading,
     query,
     context,
     profileId,
@@ -143,7 +147,10 @@
     pending = true;
     queryError = '';
     try {
-      const result = await fetchOverview(profile, type, [...rarities], start, count);
+      const result = await fetchOverview(profile, type, [...rarities], start, count, {
+        consumer,
+        preview: !all && start === 0 && count < windowLimit
+      });
       if (!mounted || id !== requestId) return;
       if (all) {
         // Read sequential pages so Show all works in both browser and local-server mode.
@@ -192,6 +199,7 @@
         .gridTemplateColumns.split(/\s+/)
         .filter(Boolean).length;
       previewLimit = Math.min(windowLimit, Math.max(1, columns) * 2);
+      measured = true;
     };
     // Changing the preview count also changes this grid's height. Defer the
     // layout write until after ResizeObserver has delivered its notifications.
@@ -209,6 +217,7 @@
     };
   }
   onMount(() => {
+    consumer = crypto.randomUUID();
     try {
       selectedRarities = readRewardRarities(localStorage.getItem(REWARD_RARITIES_KEY));
     } catch {
@@ -276,11 +285,15 @@
   aria-label="Recruitment overview"
   aria-busy={busy}
 >
+  <!-- The empty probe shares the card grid's width and tracks. It exists before
+       the first query, so the initial request already has the two-row limit. -->
+  <div class="preview-measure" aria-hidden="true" use:measureRows></div>
   {#if failure}
     <p class="state error" role="alert">{failure}</p>
     <button on:click={() => retry++}>Retry recruitment history</button>
   {/if}
   {#if !types.length}
+    {#if busy}<LoadingRegion busy message="Loading recruitment history…" />{/if}
     {#if !busy && !failure}<p class="state">
         Import pull history to see your rewards and rarity breakdown.
       </p>{/if}
@@ -355,43 +368,46 @@
           </fieldset>
         </div>
       </div>
-      <div class="portrait-grid" use:measureRows>
-        {#each shown as row (row.id)}
-          <button
-            class="pull"
-            disabled={busy || Boolean(failure)}
-            class:selected={selectedId === row.id}
-            aria-haspopup="dialog"
-            aria-label={`Details for ${row.name}, ${rewardRarities.find((rarity) => rarity.key === rewardRarity(row.rarity))?.label}, 5★ pity ${row.pity}${row.pity_uncertain ? ', uncertain' : ''}, ${date(row.timestamp, true)}`}
-            on:click={() => openReward(row.id)}
-          >
-            <span class="portrait">
-              {#if imageMap[row.item_id] && !failedImages.has(row.item_id)}
-                <img
-                  src={imageMap[row.item_id]}
-                  alt=""
-                  width="80"
-                  height="80"
-                  loading="lazy"
-                  on:error={() => imageFailed(row.item_id)}
-                />
-              {:else}<span class="missing">No image</span>{/if}
-              <span class="pity"
-                >{row.pity}{#if row.pity_uncertain}<sup title={uncertainty} aria-label=" uncertain"
-                    >?</sup
-                  >{/if}</span
+      <LoadingRegion {busy} message="Loading rewards…">
+        <div class="portrait-grid">
+          {#each shown as row, index (row.id)}
+            <button
+              class="pull"
+              disabled={busy || Boolean(failure)}
+              class:selected={selectedId === row.id}
+              aria-haspopup="dialog"
+              aria-label={`Details for ${row.name}, ${rewardRarities.find((rarity) => rarity.key === rewardRarity(row.rarity))?.label}, 5★ pity ${row.pity}${row.pity_uncertain ? ', uncertain' : ''}, ${date(row.timestamp, true)}`}
+              on:click={() => openReward(row.id)}
+            >
+              <span class="portrait">
+                {#if imageMap[row.item_id] && !failedImages.has(row.item_id)}
+                  <img
+                    src={imageMap[row.item_id]}
+                    alt=""
+                    width="80"
+                    height="80"
+                    loading={index < previewLimit ? 'eager' : 'lazy'}
+                    on:error={() => imageFailed(row.item_id)}
+                  />
+                {:else}<span class="missing">No image</span>{/if}
+                <span class="pity"
+                  >{row.pity}{#if row.pity_uncertain}<sup
+                      title={uncertainty}
+                      aria-label=" uncertain">?</sup
+                    >{/if}</span
+                >
+              </span>
+              <span class="pull-rarity"
+                >{rewardRarities.find((rarity) => rarity.key === rewardRarity(row.rarity))
+                  ?.label}</span
               >
-            </span>
-            <span class="pull-rarity"
-              >{rewardRarities.find((rarity) => rarity.key === rewardRarity(row.rarity))
-                ?.label}</span
-            >
-            <span class="pull-name" title={row.name}>{row.name}</span><span class="pull-date"
-              >{date(row.timestamp)}</span
-            >
-          </button>
-        {/each}
-      </div>
+              <span class="pull-name" title={row.name}>{row.name}</span><span class="pull-date"
+                >{date(row.timestamp)}</span
+              >
+            </button>
+          {/each}
+        </div>
+      </LoadingRegion>
       {#if overview?.total}
         <div
           class="history-pagination"
@@ -677,10 +693,18 @@
     color: var(--muted);
     font-size: 0.9rem;
   }
-  .portrait-grid {
+  .portrait-grid,
+  .preview-measure {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
     gap: 16px;
+  }
+  .preview-measure {
+    position: absolute;
+    inset-inline: 20px;
+    height: 0;
+    visibility: hidden;
+    pointer-events: none;
   }
   .pull {
     display: flex;
@@ -1029,9 +1053,13 @@
     .elite-history {
       padding: 16px 12px;
     }
-    .portrait-grid {
+    .portrait-grid,
+    .preview-measure {
       grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
       gap: 14px 9px;
+    }
+    .preview-measure {
+      inset-inline: 12px;
     }
     .portrait {
       width: 64px;

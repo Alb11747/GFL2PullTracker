@@ -1,5 +1,6 @@
-import { canonical, engineDiagnostics, LocalEngine, validateState } from './engine.ts';
-import { decodeBackup, encodeBackup } from './backup.ts';
+import { canonical, engineDiagnostics, LocalEngine } from './engine.ts';
+import { decodeBackup } from './backup.ts';
+import { createBackupCodec, type CodecMethod } from './codec.ts';
 import {
   readArchive,
   readRevision,
@@ -7,7 +8,9 @@ import {
   writeArchive,
   type StoredArchive
 } from './storage.ts';
-import type { PortableState } from './types.ts';
+import { STABLE_ARCHIVE_NAMESPACE, type PortableState } from './types.ts';
+import { prepareBackupRestore } from './restore.ts';
+import type { Resolutions, SyncConflict } from '../sync/reconcile.ts';
 import {
   applyExclusions,
   removeFromDevice,
@@ -20,19 +23,32 @@ interface Request {
   id: number;
   method: string;
   args: unknown[];
+  previewConsumer?: string;
 }
 const scope = globalThis as unknown as {
   onmessage: (event: MessageEvent<Request>) => void;
   postMessage: (data: unknown) => void;
 };
 const updates =
-  typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('gfl2-archive-updates') : null;
+  typeof BroadcastChannel !== 'undefined'
+    ? new BroadcastChannel(`${STABLE_ARCHIVE_NAMESPACE}-updates`)
+    : null;
 updates?.addEventListener('message', ({ data }: MessageEvent<{ revision: number }>) => {
   if (Number.isSafeInteger(data?.revision) && data.revision >= 0)
     scope.postMessage({ changed: true, revision: data.revision });
 });
 let cached: { stored: StoredArchive; engine: LocalEngine } | undefined;
 let archiveReads = 0;
+// A preview is bounded to one validated backup and never authorizes a stale write.
+let backupPreview:
+  | {
+      id: string;
+      revision: number;
+      state: PortableState;
+      incoming: PortableState;
+      conflicts: SyncConflict[];
+    }
+  | undefined;
 async function archive() {
   const revision = await readRevision();
   if (!cached || cached.stored.revision !== revision) {
@@ -51,6 +67,7 @@ const mutations = new Set([
   'mergeState',
   'replaceState',
   'importBackup',
+  'commitBackup',
   'setPreferences'
 ]);
 const allowed = new Set([
@@ -71,7 +88,8 @@ const allowed = new Set([
   'preferences',
   'recoverySnapshot',
   'readExport',
-  'inspectExiliumProfiles'
+  'inspectExiliumProfiles',
+  'previewBackup'
 ]);
 async function dispatch(method: string, args: unknown[]): Promise<unknown> {
   if (!allowed.has(method)) throw new Error('Unknown local archive operation.');
@@ -90,10 +108,29 @@ async function dispatch(method: string, args: unknown[]): Promise<unknown> {
       ? readExport(files, args[1] as string, args[2] as string | undefined)
       : inspectExiliumProfiles(files);
   }
-  if (method === 'encodeBackup') return encodeBackup(args[0] as PortableState);
-  if (method === 'decodeBackup') return decodeBackup(args[0] as Uint8Array);
-  if (method === 'validateState') return validateState(args[0]);
   if (method === 'recoverySnapshot') return recoverySnapshot();
+  if (method === 'previewBackup') {
+    backupPreview = undefined;
+    const incoming = await decodeBackup(args[0] as Uint8Array);
+    const current = await archive();
+    const prepared = await prepareBackupRestore(
+      current.stored.state,
+      incoming,
+      args[1] === true,
+      (args[2] ?? {}) as Resolutions
+    );
+    backupPreview = {
+      ...prepared,
+      incoming,
+      id: crypto.randomUUID(),
+      revision: current.stored.revision
+    };
+    return {
+      id: backupPreview.id,
+      revision: backupPreview.revision,
+      conflicts: backupPreview.conflicts
+    };
+  }
   const current = await archive();
   // Read requests reuse immutable derived rows. Mutations are isolated until
   // the atomic revision-guarded write succeeds, including quota/error paths.
@@ -106,8 +143,25 @@ async function dispatch(method: string, args: unknown[]): Promise<unknown> {
   let result: unknown;
   let replacement = false;
   let recovery: PortableState | null | undefined;
-  if (method === 'exportBackup') return encodeBackup(engine.exportState());
-  if (method === 'importBackup') {
+  if (method === 'commitBackup') {
+    const preview = backupPreview;
+    if (!preview || preview.id !== args[0])
+      throw Object.assign(new Error('Review this backup again before restoring.'), {
+        name: 'StaleBackupPreviewError'
+      });
+    if (preview.revision !== stored.revision) {
+      backupPreview = undefined;
+      throw Object.assign(
+        new Error('The archive changed. Review the backup conflicts again before restoring.'),
+        { name: 'StaleBackupPreviewError' }
+      );
+    }
+    if (preview.conflicts.length)
+      throw new Error('Resolve every backup conflict before restoring.');
+    result = await engine.replaceState(preview.state);
+    replacement = true;
+    stored.exclusions = restoreExclusions(stored.exclusions, preview.incoming);
+  } else if (method === 'importBackup') {
     const state = await decodeBackup(args[0] as Uint8Array);
     replacement = args[1] === true;
     result = replacement ? await engine.replaceState(state) : await engine.mergeState(state);
@@ -152,12 +206,28 @@ async function dispatch(method: string, args: unknown[]): Promise<unknown> {
       args[1] !== undefined
     )
       return result;
-    await writeArchive(
-      { ...stored, state },
-      stored.revision,
-      recovery !== undefined ? recovery : replacement ? stored.state : undefined
-    );
+    try {
+      await writeArchive(
+        { ...stored, state },
+        stored.revision,
+        recovery !== undefined ? recovery : replacement ? stored.state : undefined
+      );
+    } catch (cause) {
+      if (
+        method === 'commitBackup' &&
+        cause instanceof Error &&
+        cause.name === 'ArchiveRevisionConflictError'
+      ) {
+        backupPreview = undefined;
+        throw Object.assign(
+          new Error('The archive changed. Review the backup conflicts again before restoring.'),
+          { name: 'StaleBackupPreviewError' }
+        );
+      }
+      throw cause;
+    }
     const revision = stored.revision + 1;
+    if (method === 'commitBackup') backupPreview = undefined;
     cached = { stored: { ...stored, state: engine.state, revision }, engine };
     updates?.postMessage({ revision });
     scope.postMessage({ changed: true, revision });
@@ -165,24 +235,69 @@ async function dispatch(method: string, args: unknown[]): Promise<unknown> {
   return result;
 }
 let queue: Promise<unknown> = Promise.resolve();
+const codec = createBackupCodec();
+const codecMethods = new Set(['encodeBackup', 'decodeBackup', 'validateState']);
+let mutationBarrier = 0;
+const latestPreview = new Map<string, number>();
 scope.onmessage = ({ data }) => {
+  const enqueued = performance.now();
+  if (mutations.has(data.method)) mutationBarrier++;
+  const previewKey =
+    data.method === 'rewards' &&
+    typeof data.previewConsumer === 'string' &&
+    data.previewConsumer.length > 0 &&
+    data.previewConsumer.length <= 128
+      ? `${mutationBarrier}:${data.previewConsumer}`
+      : undefined;
+  if (previewKey) latestPreview.set(previewKey, data.id);
   // A single queue also prevents overlapping mutations within this worker.
   queue = queue
     .catch(() => undefined)
     .then(async () => {
-      try {
-        const run = () => dispatch(data.method, data.args);
-        const result =
-          mutations.has(data.method) && typeof navigator !== 'undefined' && navigator.locks
-            ? await navigator.locks.request('gfl2-local-archive', run)
-            : await run();
-        scope.postMessage({ id: data.id, result });
-      } catch (error) {
+      const started = performance.now();
+      const reply = (result: unknown) =>
+        scope.postMessage({
+          id: data.id,
+          result,
+          timing: {
+            queueMs: started - enqueued,
+            executionMs: performance.now() - started,
+            receivedAt: performance.timeOrigin + enqueued,
+            startedAt: performance.timeOrigin + started,
+            finishedAt: performance.timeOrigin + performance.now()
+          }
+        });
+      const reject = (error: unknown) =>
         scope.postMessage({
           id: data.id,
           errorName: error instanceof Error ? error.name : 'Error',
           error: error instanceof Error ? error.message : 'The local archive operation failed.'
         });
+      try {
+        if (previewKey && latestPreview.get(previewKey) !== data.id)
+          throw new DOMException('A newer reward selection replaced this preview.', 'AbortError');
+        if (data.method === 'exportBackup' || codecMethods.has(data.method)) {
+          // Snapshot at this exact FIFO position, after preceding mutations and
+          // before following ones. Codec work uses only that immutable copy; its
+          // reply may complete later without retaining the archive queue lock.
+          const input =
+            data.method === 'exportBackup' ? (await archive()).engine.exportState() : data.args[0];
+          const method =
+            data.method === 'exportBackup' ? 'encodeBackup' : (data.method as CodecMethod);
+          void codec.call(method, input).then(reply, reject);
+          return;
+        }
+        const run = () => dispatch(data.method, data.args);
+        const result =
+          mutations.has(data.method) && typeof navigator !== 'undefined' && navigator.locks
+            ? await navigator.locks.request(`${STABLE_ARCHIVE_NAMESPACE}-archive`, run)
+            : await run();
+        reply(result);
+      } catch (error) {
+        reject(error);
+      } finally {
+        if (previewKey && latestPreview.get(previewKey) === data.id)
+          latestPreview.delete(previewKey);
       }
     });
 };

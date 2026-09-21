@@ -1,4 +1,9 @@
-import { emptyState, type PortableState } from './types.ts';
+import {
+  emptyState,
+  requireArchiveVersion,
+  UnsupportedArchiveVersionError,
+  type PortableState
+} from './types.ts';
 import type { DeviceExclusion } from './device.ts';
 
 export interface StoredArchive {
@@ -6,18 +11,16 @@ export interface StoredArchive {
   revision: number;
   exclusions: DeviceExclusion[];
 }
-const DATABASE = 'gfl2-pull-tracker';
+export const DATABASE = 'gfl2-pull-tracker-stable';
 const STORE = 'archive';
 let opened: Promise<IDBDatabase> | undefined;
 function database(): Promise<IDBDatabase> {
   if (!opened)
     opened = new Promise((resolve, reject) => {
-      // Unreleased archives may be reset. Released schemas must gain explicit migrations.
-      // Older workers cannot reopen version 3 and write an obsolete archive afterward.
-      const request = indexedDB.open(DATABASE, 3);
+      // Stable storage is isolated from prerelease workers. Future upgrades require
+      // explicit, tested migrations; never delete an existing store to open it.
+      const request = indexedDB.open(DATABASE, 1);
       request.onupgradeneeded = () => {
-        if (request.result.objectStoreNames.contains(STORE))
-          request.result.deleteObjectStore(STORE);
         request.result.createObjectStore(STORE);
       };
       request.onsuccess = () => {
@@ -29,7 +32,13 @@ function database(): Promise<IDBDatabase> {
       };
       request.onerror = () => {
         opened = undefined;
-        reject(new Error('Browser storage could not be opened. Check site storage permissions.'));
+        reject(
+          request.error?.name === 'VersionError'
+            ? new UnsupportedArchiveVersionError(
+                'Unsupported browser archive version. Update the tracker; existing data is unchanged.'
+              )
+            : new Error('Browser storage could not be opened. Check site storage permissions.')
+        );
       };
       request.onblocked = () => {
         opened = undefined;
@@ -55,8 +64,15 @@ export async function readArchive(): Promise<StoredArchive> {
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(STORE, 'readonly');
     const request = transaction.objectStore(STORE).get('current');
-    transaction.oncomplete = () =>
-      resolve(request.result ?? { state: emptyState(), revision: 0, exclusions: [] });
+    transaction.oncomplete = () => {
+      const archive = request.result ?? { state: emptyState(), revision: 0, exclusions: [] };
+      try {
+        requireArchiveVersion(archive.state?.version);
+        resolve(archive);
+      } catch (error) {
+        reject(error);
+      }
+    };
     transaction.onerror = () => reject(new Error('Browser storage could not be read.'));
   });
 }
@@ -66,7 +82,14 @@ export async function recoverySnapshot(): Promise<PortableState | null> {
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(STORE, 'readonly');
     const request = transaction.objectStore(STORE).get('recovery');
-    transaction.oncomplete = () => resolve(request.result ?? null);
+    transaction.oncomplete = () => {
+      try {
+        if (request.result) requireArchiveVersion(request.result.version);
+        resolve(request.result ?? null);
+      } catch (error) {
+        reject(error);
+      }
+    };
     transaction.onerror = () => reject(new Error('Recovery snapshot could not be read.'));
   });
 }
@@ -77,10 +100,22 @@ export async function writeArchive(
   expectedRevision: number,
   recovery?: PortableState | null
 ): Promise<void> {
+  requireArchiveVersion(archive.state.version);
+  if (recovery) requireArchiveVersion(recovery.version);
   const db = await database();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(STORE, 'readwrite');
     const store = transaction.objectStore(STORE);
+    const current = store.get('current');
+    let unsupported: unknown;
+    current.onsuccess = () => {
+      try {
+        if (current.result) requireArchiveVersion(current.result.state?.version);
+      } catch (error) {
+        unsupported = error;
+        transaction.abort();
+      }
+    };
     const request = store.get('revision');
     let changed = false;
     request.onsuccess = () => {
@@ -96,11 +131,15 @@ export async function writeArchive(
     transaction.oncomplete = () => resolve();
     transaction.onabort = () =>
       reject(
-        new Error(
-          changed
-            ? 'The archive changed in another tab. Refresh and try again.'
-            : 'Browser storage could not save this change. Your previous archive is intact; check available storage.'
-        )
+        unsupported ??
+          Object.assign(
+            new Error(
+              changed
+                ? 'The archive changed in another tab. Refresh and try again.'
+                : 'Browser storage could not save this change. Your previous archive is intact; check available storage.'
+            ),
+            { name: changed ? 'ArchiveRevisionConflictError' : 'Error' }
+          )
       );
     transaction.onerror = () => {
       /* onabort reports transaction failures, including quota errors. */

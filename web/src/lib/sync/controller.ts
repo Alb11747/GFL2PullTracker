@@ -1,3 +1,4 @@
+import { loadIdentity } from './identity.ts';
 import { emptyState, type PortableState } from '../local/types.ts';
 import { canonical, type Choices, type Resolutions, type SyncConflict } from './reconcile.ts';
 import { createMergeWorker } from './merge-worker.ts';
@@ -33,57 +34,6 @@ export interface ResolutionSubmission {
   generation: string | null;
   choices: Choices;
 }
-interface TokenResponse {
-  access_token?: string;
-  expires_in?: number;
-  scope?: string;
-  error?: string;
-}
-interface GoogleIdentity {
-  accounts: {
-    oauth2: {
-      initTokenClient(options: {
-        client_id: string;
-        scope: string;
-        include_granted_scopes: boolean;
-        callback: (response: TokenResponse) => void;
-        error_callback: () => void;
-      }): { requestAccessToken(options: { prompt: string }): void };
-    };
-  };
-}
-type BrowserWithGoogle = Window & { google?: GoogleIdentity };
-let identityLoading: Promise<GoogleIdentity> | null = null;
-function loadIdentity(): Promise<GoogleIdentity> {
-  if (typeof window === 'undefined')
-    return Promise.reject(new Error('Google authorization requires a browser.'));
-  const available = (window as BrowserWithGoogle).google;
-  if (available) return Promise.resolve(available);
-  if (!identityLoading)
-    identityLoading = new Promise((resolve, reject) => {
-      const script = document.createElement('script');
-      script.src = 'https://accounts.google.com/gsi/client';
-      script.async = true;
-      script.onload = () => {
-        const google = (window as BrowserWithGoogle).google;
-        if (google) resolve(google);
-        else {
-          identityLoading = null;
-          reject(new Error('Google authorization could not load.'));
-        }
-      };
-      script.onerror = () => {
-        identityLoading = null;
-        script.remove();
-        reject(
-          new Error('Google authorization could not load. Check your connection and reconnect.')
-        );
-      };
-      document.head.append(script);
-    });
-  return identityLoading;
-}
-
 export interface DriveSyncOptions {
   clientId: string;
   store: SyncStore;
@@ -109,9 +59,13 @@ export function createDriveSync(options: DriveSyncOptions) {
   let expiresAt = 0;
   let epoch = 0;
   let disposed = false;
+  let cancelAuthorization: (() => void) | undefined;
   let baseline = emptyState();
   let baselineHeads: string[] = [];
   let busy: Promise<void> | null = null;
+  let pauseCount = 0;
+  let deferredSubmission: ResolutionSubmission | undefined;
+  let deferredWaiters: Array<() => void> = [];
   let applying = false;
   let dirty = false;
   let debounce: ReturnType<typeof setTimeout> | undefined;
@@ -165,6 +119,10 @@ export function createDriveSync(options: DriveSyncOptions) {
     token();
   };
   function schedule() {
+    if (pauseCount) {
+      dirty = true;
+      return;
+    }
     if (
       disposed ||
       !accessToken ||
@@ -221,8 +179,23 @@ export function createDriveSync(options: DriveSyncOptions) {
       };
       // Drain the entire unseen-file audit before reporting success. Downloads
       // remain serial and decoded snapshots are bounded by the small cache.
-      for (const revision of revisions.filter((item) => !audited.has(revisionKey(item))))
-        await readValid(revision);
+      const invalidPayloads: Revision[] = [];
+      for (const revision of revisions.filter((item) => !audited.has(revisionKey(item)))) {
+        try {
+          await decode(revision);
+        } catch (error) {
+          if (!(error instanceof DriveError) || error.code !== 'invalid') throw error;
+          invalidPayloads.push(revision);
+        }
+      }
+      active(startedEpoch);
+      // An unsupported future payload must stop the entire pass before any cleanup,
+      // including cleanup of earlier corrupt payloads or malformed metadata.
+      for (const fileId of transport.pendingInvalidFiles?.() ?? []) {
+        await transport.delete(fileId);
+        active(startedEpoch);
+      }
+      for (const revision of invalidPayloads) await remove(revision);
       active(startedEpoch);
       const cloudKey = canonical(
         revisions
@@ -422,6 +395,12 @@ export function createDriveSync(options: DriveSyncOptions) {
     }
   }
   function sync(submission?: ResolutionSubmission): Promise<void> {
+    if (disposed || !accessToken) return Promise.resolve();
+    if (pauseCount) {
+      dirty = true;
+      if (submission) deferredSubmission = structuredClone(submission);
+      return new Promise((resolve) => deferredWaiters.push(resolve));
+    }
     if (busy) {
       dirty = true;
       return busy;
@@ -434,6 +413,32 @@ export function createDriveSync(options: DriveSyncOptions) {
       }
     });
     return busy;
+  }
+  /** Claim ownership synchronously, then wait until any existing sync has stopped writing. */
+  async function acquirePause(): Promise<() => void> {
+    pauseCount++;
+    clearTimeout(debounce);
+    await busy;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      pauseCount--;
+      if (pauseCount || disposed) return;
+      if (deferredWaiters.length) {
+        const waiters = deferredWaiters;
+        const submission = deferredSubmission;
+        deferredWaiters = [];
+        deferredSubmission = undefined;
+        dirty = false;
+        void sync(submission).finally(() => {
+          for (const resolve of waiters) resolve();
+        });
+      } else if (dirty) {
+        dirty = false;
+        schedule();
+      }
+    };
   }
   const unsubscribeStore = options.store.subscribe(() => {
     if (!applying) {
@@ -452,6 +457,12 @@ export function createDriveSync(options: DriveSyncOptions) {
   const interval = setInterval(onWake, options.intervalMs ?? 60_000);
   function disconnect() {
     epoch++;
+    cancelAuthorization?.();
+    cancelAuthorization = undefined;
+    dirty = false;
+    deferredSubmission = undefined;
+    for (const resolve of deferredWaiters) resolve();
+    deferredWaiters = [];
     accessToken = '';
     expiresAt = 0;
     baseline = emptyState();
@@ -471,6 +482,7 @@ export function createDriveSync(options: DriveSyncOptions) {
     });
   }
   async function connect() {
+    if (disposed) return;
     if (!options.clientId && !options.authorize) {
       setStatus({
         phase: 'error',
@@ -481,18 +493,26 @@ export function createDriveSync(options: DriveSyncOptions) {
     }
     disconnect();
     const connectingEpoch = epoch;
+    let cancelAttempt!: () => void;
+    const cancelled = new Promise<null>((resolve) => {
+      cancelAttempt = () => resolve(null);
+      cancelAuthorization = cancelAttempt;
+    });
     setStatus({ phase: 'connecting', message: 'Waiting for Google authorization…' });
     try {
-      let authorized: { token: string; expiresIn: number };
-      if (options.authorize) authorized = await options.authorize();
-      else {
+      const authorize = async () => {
+        if (disposed || epoch !== connectingEpoch) return null;
+        if (options.authorize) return options.authorize();
+        // The shared script request can outlive this controller's sign-in.
         const google = await loadIdentity();
-        authorized = await new Promise((resolve, reject) => {
+        if (disposed || epoch !== connectingEpoch) return null;
+        return new Promise<{ token: string; expiresIn: number }>((resolve, reject) => {
           const client = google.accounts.oauth2.initTokenClient({
             client_id: options.clientId,
             scope: DRIVE_SCOPE,
             include_granted_scopes: false,
             callback: (response) => {
+              if (disposed || epoch !== connectingEpoch) return;
               if (
                 response.error ||
                 !response.access_token ||
@@ -505,17 +525,20 @@ export function createDriveSync(options: DriveSyncOptions) {
                   expiresIn: Number(response.expires_in ?? 0)
                 });
             },
-            error_callback: () =>
+            error_callback: () => {
+              if (disposed || epoch !== connectingEpoch) return;
               reject(
                 new Error(
                   'Google authorization was cancelled or the popup was blocked. Reconnect to try again.'
                 )
-              )
+              );
+            }
           });
           client.requestAccessToken({ prompt: 'select_account' });
         });
-      }
-      if (disposed || epoch !== connectingEpoch) return;
+      };
+      const authorized = await Promise.race([authorize(), cancelled]);
+      if (!authorized || disposed || epoch !== connectingEpoch) return;
       if (!authorized.token || !Number.isFinite(authorized.expiresIn) || authorized.expiresIn <= 0)
         throw new Error('Google returned invalid authorization. Reconnect to try again.');
       accessToken = authorized.token;
@@ -540,9 +563,12 @@ export function createDriveSync(options: DriveSyncOptions) {
           phase: 'error',
           message: error instanceof Error ? error.message : 'Google authorization failed.'
         });
+    } finally {
+      if (cancelAuthorization === cancelAttempt) cancelAuthorization = undefined;
     }
   }
   return {
+    acquirePause,
     connect,
     disconnect,
     sync: () => sync(),
