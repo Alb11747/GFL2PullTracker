@@ -51,7 +51,10 @@ function safeFrameUrl(value: unknown, origin: string): string | undefined {
   if (typeof value !== 'string') return;
   try {
     const url = new URL(value, origin);
-    if (url.origin !== origin || !/^\/_app\/immutable\/[a-zA-Z0-9_./-]+\.js$/.test(url.pathname))
+    if (
+      url.origin !== origin ||
+      !/^\/_app\/(?:[a-f0-9]{40}\/)?immutable\/[a-zA-Z0-9_./-]+\.js$/.test(url.pathname)
+    )
       return;
     return url.origin + url.pathname;
   } catch {
@@ -105,11 +108,16 @@ function sanitizeExceptions(value: unknown, origin: string): unknown[] {
           {
             platform: 'web:javascript',
             filename,
+            function: '?',
             in_app: true,
-            ...(Number.isSafeInteger(frame.lineno) && Number(frame.lineno) > 0
+            ...(Number.isSafeInteger(frame.lineno) &&
+            Number(frame.lineno) > 0 &&
+            Number(frame.lineno) <= 4_294_967_295
               ? { lineno: frame.lineno }
               : {}),
-            ...(Number.isSafeInteger(frame.colno) && Number(frame.colno) >= 0
+            ...(Number.isSafeInteger(frame.colno) &&
+            Number(frame.colno) >= 0 &&
+            Number(frame.colno) <= 4_294_967_295
               ? { colno: frame.colno }
               : {}),
             ...(typeof frame.chunk_id === 'string' && uuid.test(frame.chunk_id)

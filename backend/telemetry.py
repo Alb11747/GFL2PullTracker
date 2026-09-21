@@ -28,7 +28,7 @@ def exception_properties(error, operation, release):
         code = trace.tb_frame.f_code
         path = Path(code.co_filename).resolve()
         if path in SOURCES and re.fullmatch(r'[A-Za-z_][A-Za-z_0-9<>]{0,79}', code.co_name):
-            frames.append({'filename': path.relative_to(ROOT).as_posix(),
+            frames.append({'platform': 'python', 'filename': path.relative_to(ROOT).as_posix(),
                            'function': code.co_name, 'lineno': trace.tb_lineno, 'in_app': True})
         trace = trace.tb_next
     kind = type(error).__name__
@@ -37,7 +37,10 @@ def exception_properties(error, operation, release):
     return {'service': 'api', 'environment': 'production', 'release': release,
             'operation': operation, '$process_person_profile': False, '$geoip_disable': True,
             '$exception_list': [{'type': kind, 'value': 'Unexpected tracker service error',
-                                 'stacktrace': {'frames': frames[-20:]}}]}
+                                 'mechanism': {'type': 'generic', 'handled': True},
+                                 # Cymbal requires platform on each frame and a raw
+                                 # stacktrace discriminator to create an error issue.
+                                 'stacktrace': {'type': 'raw', 'frames': frames[-20:]}}]}
 
 
 def before_send(event):

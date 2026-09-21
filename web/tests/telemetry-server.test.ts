@@ -158,7 +158,20 @@ test('Node SDK resolves injected chunk IDs and sends only allowlisted exception 
     batch: {
       event: string;
       properties: {
-        $exception_list: { stacktrace: { frames: { chunk_id?: string; filename: string }[] } }[];
+        $exception_list: {
+          type: string;
+          stacktrace: {
+            type: string;
+            frames: {
+              chunk_id?: string;
+              filename: string;
+              function: string;
+              platform: string;
+              lineno?: number;
+              colno?: number;
+            }[];
+          };
+        }[];
         $release_id?: string;
         release?: string;
         $process_person_profile?: boolean;
@@ -212,6 +225,15 @@ test('Node SDK resolves injected chunk IDs and sends only allowlisted exception 
     for (const event of events) {
       assert.equal(event.event, '$exception');
       const frame = event.properties.$exception_list[0].stacktrace.frames[0];
+      // Check the consumer contract on actual SDK output, not just properties
+      // accepted by its looser TypeScript types. Cymbal RawNodeFrame requires
+      // filename + function; RawFrame requires platform, Stacktrace type + frames.
+      assert.equal(typeof event.properties.$exception_list[0].type, 'string');
+      assert.equal(event.properties.$exception_list[0].stacktrace.type, 'raw');
+      assert.equal(frame.function, '?');
+      assert.equal(frame.platform, 'node:javascript');
+      assert.equal(typeof frame.lineno, 'number');
+      assert.equal(typeof frame.colno, 'number');
       assert.equal(frame.chunk_id, chunk);
       assert.equal(frame.filename, 'app:///build/server/chunks/telemetry-test.js');
       assert.equal(event.properties.$release_id, releaseId);
@@ -268,6 +290,42 @@ test('Node final send boundary drops context enrichment and rejects invalid chun
   assert.ok(event);
   assert.equal(event.properties?.release, 'unknown');
   assert.equal(event.properties?.$exception_list[0].stacktrace.frames.length, 1);
+  assert.equal(event.properties?.$exception_list[0].stacktrace.frames[0].function, '?');
   assert.doesNotMatch(JSON.stringify(event), /SECRET|context_line|groups/);
   assert.equal(sanitizeServerEvent({ event: 'anything', distinctId: 'SECRET' }, ''), null);
+});
+
+test('Node frame coordinates remain compatible with Cymbal unsigned 32-bit fields', () => {
+  // Consumer schema: rust/cymbal/src/core/types/langs/node.rs (RawNodeFrame).
+  for (const coordinate of [-1, 0x100000000, Number.MAX_SAFE_INTEGER, 1.5, NaN]) {
+    const event = sanitizeServerEvent(
+      {
+        event: '$exception',
+        properties: {
+          $exception_list: [
+            {
+              type: 'Error',
+              stacktrace: {
+                frames: [
+                  {
+                    filename: 'build/server/chunks/api.js',
+                    function: 'SECRET',
+                    lineno: coordinate,
+                    colno: coordinate
+                  }
+                ],
+                type: 'raw'
+              }
+            }
+          ]
+        }
+      },
+      ''
+    );
+    const frame = event?.properties?.$exception_list[0].stacktrace.frames[0];
+    assert.equal(frame.function, '?');
+    assert.equal(frame.lineno, undefined);
+    assert.equal(frame.colno, undefined);
+    assert.doesNotMatch(JSON.stringify(event), /SECRET/);
+  }
 });

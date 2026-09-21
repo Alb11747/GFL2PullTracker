@@ -21,6 +21,7 @@ type Client = Pick<
   | 'opt_out_capturing'
   | 'startSessionRecording'
   | 'stopSessionRecording'
+  | 'shutdown'
 >;
 type Environment = {
   origin: string;
@@ -39,6 +40,8 @@ export function createTelemetry(environment: Environment, loadSdk: () => Promise
   let permitted = true;
   let client: Client | undefined;
   let loading: Promise<void> | undefined;
+  let consentEpoch = 0;
+  let transport: AbortController | undefined;
   let listening = false;
   let lastPath: string | undefined;
   let pending: Array<() => void> = [];
@@ -88,72 +91,103 @@ export function createTelemetry(environment: Environment, loadSdk: () => Promise
   const stop = () => {
     pending = [];
     lastPath = undefined;
+    consentEpoch++;
+    loading = undefined;
+    transport?.abort();
+    const retired = client;
+    client = undefined;
     // Opt out first: stopping a recorder can flush buffered events.
-    safely(() => client?.opt_out_capturing());
-    safely(() => client?.stopSessionRecording());
+    safely(() => retired?.opt_out_capturing());
+    safely(() => retired?.stopSessionRecording());
+    // Shutdown flushes SDK queues. Their permanently aborted transport discards these sends.
+    safely(() => {
+      void retired?.shutdown().catch(() => {});
+    });
   };
-  const sdkConfig = (): Partial<PostHogConfig> => ({
-    api_host: config.host,
-    ui_host: 'https://us.posthog.com',
-    defaults: '2026-05-30',
-    autocapture: false,
-    capture_pageview: false,
-    capture_pageleave: false,
-    capture_exceptions: false,
-    capture_performance: false,
-    capture_heatmaps: false,
-    capture_dead_clicks: false,
-    rageclick: false,
-    person_profiles: 'never',
-    ip: false,
-    save_referrer: false,
-    save_campaign_params: false,
-    disable_capture_url_hashes: true,
-    disable_surveys: true,
-    disable_product_tours: true,
-    disable_conversations: true,
-    advanced_disable_feature_flags: true,
-    advanced_disable_feature_flags_on_first_load: true,
-    advanced_disable_toolbar_metrics: true,
-    opt_in_site_apps: false,
-    enable_recording_console_log: false,
-    logs: { captureConsoleLogs: false, beforeSend: () => null },
-    metrics: { network: false, beforeSend: () => null },
-    persistence: 'localStorage',
-    persistence_name: 'gfl2_posthog',
-    cross_subdomain_cookie: false,
-    opt_out_capturing_by_default: true,
-    get_current_url: (url) => safePageUrl(url, environment.origin),
-    session_recording: {
-      sampleRate: 1,
-      maskAllInputs: true,
-      maskTextSelector: '*',
-      maskAllElementAttributes: true,
-      blockClass: 'ph-no-capture',
-      blockSelector:
-        'input[type="hidden"], input[type="file"], canvas, iframe, img, video, audio, object, embed',
-      recordHeaders: false,
-      recordBody: false,
-      recordCrossOriginIframes: false,
-      captureJsonLd: false,
-      collectFonts: false,
-      inlineStylesheet: false,
-      captureCanvas: { recordCanvas: false },
-      compress_events: false,
-      slimDOMOptions: 'all',
-      maskCapturedNetworkRequestFn: (request) =>
-        request.isInitial
-          ? { ...request, name: safePageUrl(request.name, environment.origin) }
-          : null
-    },
-    before_send: (event) =>
-      sanitizeCapture(event, {
-        origin: environment.origin,
-        release: config.release,
-        key: config.key,
-        enabled: enabled()
-      })
-  });
+  const sdkConfig = (epochTransport: AbortController): Partial<PostHogConfig> => {
+    // posthog-js 1.434.2 passes fetch_options through to native RequestInit, while its
+    // public type lists only caching fields. This narrow extension is wire-tested.
+    // Keep a distinct SDK instance per consent epoch: SDK retries otherwise read a
+    // replacement config and could resurrect an old event after a later opt-in.
+    const fetchOptions: NonNullable<PostHogConfig['fetch_options']> & Pick<RequestInit, 'signal'> =
+      {
+        get signal() {
+          if (!enabled()) epochTransport.abort();
+          return epochTransport.signal;
+        }
+      };
+    return {
+      api_host: config.host,
+      ui_host: 'https://us.posthog.com',
+      defaults: '2026-05-30',
+      autocapture: false,
+      capture_pageview: false,
+      capture_pageleave: false,
+      capture_exceptions: false,
+      capture_performance: false,
+      capture_heatmaps: false,
+      capture_dead_clicks: false,
+      rageclick: false,
+      person_profiles: 'never',
+      ip: false,
+      save_referrer: false,
+      save_campaign_params: false,
+      disable_capture_url_hashes: true,
+      disable_surveys: true,
+      disable_product_tours: true,
+      disable_conversations: true,
+      advanced_disable_feature_flags: true,
+      advanced_disable_feature_flags_on_first_load: true,
+      advanced_disable_toolbar_metrics: true,
+      opt_in_site_apps: false,
+      enable_recording_console_log: false,
+      logs: { captureConsoleLogs: false, beforeSend: () => null },
+      metrics: { network: false, beforeSend: () => null },
+      persistence: 'localStorage',
+      persistence_name: 'gfl2_posthog',
+      cross_subdomain_cookie: false,
+      opt_out_capturing_by_default: true,
+      request_batching: false,
+      api_transport: 'fetch',
+      disable_beacon: true,
+      fetch_options: fetchOptions,
+      get_current_url: (url) => safePageUrl(url, environment.origin),
+      session_recording: {
+        sampleRate: 1,
+        maskAllInputs: true,
+        maskTextSelector: '*',
+        maskAllElementAttributes: true,
+        blockClass: 'ph-no-capture',
+        blockSelector:
+          'input[type="hidden"], input[type="file"], canvas, iframe, img, video, audio, object, embed',
+        recordHeaders: false,
+        recordBody: false,
+        recordCrossOriginIframes: false,
+        captureJsonLd: false,
+        collectFonts: false,
+        inlineStylesheet: false,
+        captureCanvas: { recordCanvas: false },
+        compress_events: false,
+        slimDOMOptions: 'all',
+        maskCapturedNetworkRequestFn: (request) =>
+          request.isInitial || Object.keys(request).every((key) => key === 'name')
+            ? {
+                name: safePageUrl(request.name, environment.origin),
+                duration: 0,
+                startTime: 0,
+                entryType: 'navigation'
+              }
+            : null
+      },
+      before_send: (event) =>
+        sanitizeCapture(event, {
+          origin: environment.origin,
+          release: config.release,
+          key: config.key,
+          enabled: enabled() && !epochTransport.signal.aborted
+        })
+    };
+  };
   const start = () => {
     if (!enabled()) return;
     if (client) {
@@ -169,20 +203,23 @@ export function createTelemetry(environment: Environment, loadSdk: () => Promise
       return;
     }
     if (loading) return;
-    loading = loadSdk()
+    const epoch = consentEpoch;
+    const task = loadSdk()
       .then((sdk) => {
-        if (!enabled()) return;
-        sdk.init(config.key, sdkConfig());
+        if (!enabled() || epoch !== consentEpoch) return;
+        transport = new AbortController();
+        sdk.init(config.key, sdkConfig(transport));
         client = sdk;
         start();
         for (const event of pending.splice(0)) if (enabled()) safely(event);
       })
       .catch(() => {
-        pending = [];
+        if (epoch === consentEpoch) pending = [];
       })
       .finally(() => {
-        loading = undefined;
+        if (loading === task) loading = undefined;
       });
+    loading = task;
   };
   const send = (action: () => void) => {
     if (!enabled()) return;
@@ -314,7 +351,7 @@ function instance() {
         window.addEventListener('unhandledrejection', (event) => listener(event.reason));
       }
     },
-    async () => (await import('posthog-js')).default
+    async () => new (await import('posthog-js')).PostHog()
   ));
 }
 

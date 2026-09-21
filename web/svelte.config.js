@@ -1,6 +1,14 @@
 import adapter from '@sveltejs/adapter-node';
+const telemetryBuild = process.env.POSTHOG_SOURCEMAPS === '1';
+const revision = process.env.GFL2_RELEASE;
+if (telemetryBuild && !/^[a-f0-9]{40}$/.test(revision ?? '')) {
+  throw new Error('Source-map builds require the deployed Git revision.');
+}
 export default {
   kit: {
+    // CLI injection happens after Vite hashes assets. A release namespace prevents
+    // immutable browser/CDN caches from serving bytes with another release's IDs.
+    appDir: telemetryBuild ? `_app/${revision}` : '_app',
     adapter: adapter(),
     csp: {
       mode: 'auto',

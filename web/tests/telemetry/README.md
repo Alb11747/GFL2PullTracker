@@ -4,6 +4,11 @@ From `web`, run `node tests/telemetry/run.mjs` with an existing Playwright
 installation. If Playwright is not resolvable in this project, set
 `PLAYWRIGHT_MODULE` to its absolute `index.mjs` path. Optionally set
 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to an installed Chrome/Chromium executable.
+Set `RRWEB_REPLAYER` to an existing rrweb installation's `dist/rrweb.umd.cjs`
+(verified with rrweb 2.1.6); the fixture also resolves that file from local
+`node_modules` if available. This is required to verify actual visible playback,
+and is never silently skipped. Install this optional validation tool outside the
+repository when it is not already available.
 The fixture uses a fresh isolated browser context and a random loopback port.
 
 This imports the production telemetry controller and installed `posthog-js` SDK.
@@ -15,8 +20,11 @@ context because PostHog intentionally drops bot/automated browser traffic.
 
 Assertions require real rrweb full and incremental snapshots, test synthetic
 secrets in text, inputs, attributes, blocked content, URL query/hash, and errors,
-and verify navigation/error deduplication. A second tab checks opt-out
+and verify navigation/error deduplication. It reconstructs the transmitted
+snapshots with the real rrweb replayer and requires visible iframe dimensions and
+masked document nodes. A second tab checks opt-out
 propagation, reload/navigation persistence, and no subsequent event/replay
-ingestion. Blocked network and runtime disable checks cover non-throwing
+ingestion, including pending event batches and retries from rejected ingestion.
+Blocked network and runtime disable checks cover non-throwing
 telemetry calls; production import/restore usability belongs to the separate
 application routing regression suite.

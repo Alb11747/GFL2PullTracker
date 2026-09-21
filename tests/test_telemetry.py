@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 import pytest
 
-from backend.public_app import create_public_app
+from backend.public_app import create_public_app, public_origin
 from backend.public_jobs import PublicJobs, prepare
 from backend.public_store import PublicStore
 from backend.telemetry import Telemetry, before_send
@@ -229,3 +229,24 @@ def test_real_sdk_send_boundary_omits_system_and_identity_context():
         assert events[0]['distinct_id'] == 'gfl2-api'
     finally:
         telemetry.close()
+
+
+def test_manual_exception_has_ingestion_stack_schema_without_private_context():
+    """An ingested event must also deserialize into an error-tracking issue."""
+    recorder = Recorder()
+    telemetry = Telemetry(recorder)
+    try:
+        public_origin('https://example.com/' + SENTINEL)
+    except RuntimeError as error:
+        telemetry.report(error, allowed=True)
+    exception = recorder.events[0]['properties']['$exception_list'][0]
+    assert exception['mechanism'] == {'type': 'generic', 'handled': True}
+    assert exception['stacktrace']['type'] == 'raw'
+    frames = exception['stacktrace']['frames']
+    assert frames, 'Use a real application traceback to exercise frame serialization'
+    for frame in frames:
+        assert frame['platform'] == 'python'
+        assert isinstance(frame['lineno'], int) and frame['lineno'] > 0
+        assert frame['filename'].startswith(('backend/', 'scripts/'))
+        assert set(frame) == {'platform', 'filename', 'function', 'lineno', 'in_app'}
+    assert SENTINEL not in json.dumps(recorder.events)

@@ -78,12 +78,19 @@ export function sanitizeServerEvent(
         return [
           {
             filename: `app:///build/${path}`,
+            // Cymbal requires this field even though the SDK types mark it optional.
+            // Original function names can contain data, so keep the SDK's unknown label.
+            function: '?',
             platform: 'node:javascript',
             in_app: true,
-            ...(Number.isSafeInteger(frame.lineno) && Number(frame.lineno) > 0
+            ...(Number.isSafeInteger(frame.lineno) &&
+            Number(frame.lineno) > 0 &&
+            Number(frame.lineno) <= 0xffffffff
               ? { lineno: frame.lineno }
               : {}),
-            ...(Number.isSafeInteger(frame.colno) && Number(frame.colno) >= 0
+            ...(Number.isSafeInteger(frame.colno) &&
+            Number(frame.colno) >= 0 &&
+            Number(frame.colno) <= 0xffffffff
               ? { colno: frame.colno }
               : {}),
             ...(typeof frame.chunk_id === 'string' && uuid.test(frame.chunk_id)

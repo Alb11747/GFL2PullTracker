@@ -16,7 +16,8 @@ RUN --mount=type=secret,id=posthog_cli \
       test -s /run/secrets/posthog_cli && test -n "$GFL2_RELEASE" \
       && POSTHOG_SOURCEMAPS=1 npm run build \
       && POSTHOG_CLI_PROJECT_ID="$POSTHOG_PROJECT_ID" npx --no-install posthog-cli --dotenv-file /run/secrets/posthog_cli sourcemap inject --directory build --release-name GFL2PullTracker --release-version "$GFL2_RELEASE" --release-mode symbol-set \
-      && POSTHOG_CLI_PROJECT_ID="$POSTHOG_PROJECT_ID" npx --no-install posthog-cli --dotenv-file /run/secrets/posthog_cli sourcemap upload --directory build --release-name GFL2PullTracker --release-version "$GFL2_RELEASE" --release-mode symbol-set --delete-after; \
+      && POSTHOG_CLI_PROJECT_ID="$POSTHOG_PROJECT_ID" npx --no-install posthog-cli --dotenv-file /run/secrets/posthog_cli sourcemap upload --directory build --release-name GFL2PullTracker --release-version "$GFL2_RELEASE" --release-mode symbol-set --delete-after \
+      && node scripts/compress-telemetry-assets.mjs; \
     else npm run build; fi \
     && find build -name '*.map' -type f -delete \
     && npm prune --omit=dev

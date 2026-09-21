@@ -13,6 +13,9 @@ const { chromium } = playwright
 const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE;
 const root = fileURLToPath(new URL('.', import.meta.url));
 const sdkDist = new URL('../../node_modules/posthog-js/dist/', import.meta.url);
+const replayerPath =
+  process.env.RRWEB_REPLAYER ??
+  fileURLToPath(new URL('../../node_modules/rrweb/dist/rrweb.umd.cjs', import.meta.url));
 const server = await createServer({
   configFile: false,
   root,
@@ -39,6 +42,7 @@ const events = [];
 const requests = [];
 const errors = [];
 let blocked = false;
+let failIngestion = false;
 
 function decode(request) {
   const body = request.postDataBuffer();
@@ -111,7 +115,12 @@ try {
     } catch (error) {
       errors.push(String(error));
     }
-    return route.fulfill({ headers, contentType: 'application/json', body: '{"status":1}' });
+    return route.fulfill({
+      status: failIngestion ? 503 : 200,
+      headers,
+      contentType: 'application/json',
+      body: failIngestion ? '{"status":0}' : '{"status":1}'
+    });
   });
   const page = await context.newPage();
   page.on('pageerror', (error) => errors.push(error.message));
@@ -188,19 +197,84 @@ try {
     snapshots.some((event) => event.type === 2),
     'a real rrweb full DOM snapshot was decoded'
   );
+  assert.ok(
+    snapshots.some((event) => event.type === 4 && event.data.width > 0 && event.data.height > 0),
+    'real rrweb metadata preserves viewport dimensions required for visible playback'
+  );
   const captured = JSON.stringify(events);
   const leaked = captured.match(/SENTINEL_[A-Z_]+/g);
   assert.equal(leaked, null, `synthetic secrets reached ingestion: ${leaked}`);
   assert.ok(!requests.some((path) => path.includes('/flags')), 'feature flag API is unused');
   assert.deepEqual(errors, []);
+  const replay = await context.newPage();
+  await replay.setContent(
+    '<!doctype html><title>Masked replay assertion</title><main id="replay"></main>'
+  );
+  await replay.addScriptTag({ content: await readFile(replayerPath, 'utf8') });
+  await replay.evaluate((snapshots) => {
+    const player = new rrweb.Replayer(snapshots, {
+      root: document.querySelector('#replay'),
+      mouseTail: false
+    });
+    player.play();
+  }, snapshots);
+  await replay
+    .waitForFunction(() => {
+      const frame = document.querySelector('iframe');
+      return (
+        frame?.getBoundingClientRect().width > 0 &&
+        frame?.getBoundingClientRect().height > 0 &&
+        frame?.contentDocument?.body?.querySelectorAll('*').length >= 6
+      );
+    })
+    .catch(async (error) => {
+      console.error({
+        records: snapshots.map((s) => ({
+          type: s.type,
+          time: s.timestamp,
+          data: s.type === 4 ? s.data : undefined
+        })),
+        iframe: await replay.evaluate(() => ({
+          html: document.querySelector('iframe')?.outerHTML,
+          nodes: document.querySelector('iframe')?.contentDocument?.body?.querySelectorAll('*')
+            .length
+        }))
+      });
+      throw error;
+    });
+  const playback = await replay.evaluate(() => {
+    const frame = document.querySelector('iframe');
+    const bounds = frame.getBoundingClientRect();
+    return {
+      width: bounds.width,
+      height: bounds.height,
+      text: frame.contentDocument.body.innerText,
+      nodes: frame.contentDocument.body.querySelectorAll('*').length
+    };
+  });
+  assert.ok(
+    playback.width > 0 && playback.height > 0 && playback.nodes >= 6,
+    'actual transmitted replay produces a visible reconstructed document'
+  );
+  assert.ok(
+    playback.text.includes('***') && !playback.text.includes('SENTINEL_'),
+    'actual replay playback masks private text'
+  );
+  await replay.close();
   console.log(
     `PASS actual SDK: ${events.length} events, ${snapshots.length} replay records; no synthetic input/text/attribute/URL/error secrets; pageviews and errors deduplicated`
   );
 
+  failIngestion = true;
+  const beforeSecondTab = events.length;
   const second = await context.newPage();
   await second.goto(origin);
   await second.waitForFunction(() => window.telemetryFixture?.telemetryEnabled());
-  await page.evaluate(() => window.telemetryFixture.setTelemetryEnabled(false));
+  await waitFor(() => events.length > beforeSecondTab, 'a server-rejected batch queued for retry');
+  await page.evaluate(() => {
+    window.telemetryFixture.capturePageview('/profiles');
+    window.telemetryFixture.setTelemetryEnabled(false);
+  });
   await second.waitForFunction(() => !window.telemetryFixture.telemetryEnabled());
   // Let any request already dispatched before the click settle before checking future collection.
   await new Promise((resolve) => setTimeout(resolve, 500));
@@ -226,7 +300,7 @@ try {
     'no collection after opt-out across tabs, reload, and navigation'
   );
   console.log(
-    'PASS opt-out: persistent after reload/navigation, synchronized across tabs, no subsequent event or replay ingestion'
+    'PASS opt-out: persistent after reload/navigation, synchronized across tabs, no queued event, replay, or failed-request retry ingestion'
   );
 
   blocked = true;

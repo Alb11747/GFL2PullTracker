@@ -84,6 +84,8 @@ public environment variables. Set `POSTHOG_CLI_ENV_FILE` to its path so
 `compose.posthog.yaml` supplies it as a BuildKit secret. Failed authentication/upload stops the
 build before services change. Source maps are injected into the actual shipped
 build, uploaded with the revision, and removed from the runtime image.
+Telemetry builds use a revision-specific asset URL and regenerate compressed
+JavaScript after injection so browsers and CDNs receive matching symbol IDs.
 
 Use both Compose files and set
 `POSTHOG_CLI_ENV_FILE` to the private dotenv path. Ordinary `npm run build` does
@@ -97,6 +99,13 @@ anonymization. The application applies text/input masking and blocks private
 content independently of remote settings. Verify ingestion, safe error frames,
 replay masking and opt-out with synthetic data after rollout. SDK or collector
 failure must not interfere with imports, archives or sync.
+
+Replay deliberately removes arbitrary attributes, styles, and private content;
+playback shows a simplified masked page rather than the full visual design.
+For release verification, check that synthetic exceptions become error-tracking
+issues with resolved source locations, not just accepted `$exception` events.
+Decode replay payloads and play them back: a successful ingestion response alone
+does not establish privacy or playback correctness.
 
 ### Health and functional checks
 

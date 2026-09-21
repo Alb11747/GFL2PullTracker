@@ -104,7 +104,51 @@ test('exceptions discard messages, causes, private frames and locals while retai
   const list = result.properties.$exception_list;
   assert.equal(list[0].stacktrace.frames.length, 1);
   assert.equal(list[0].stacktrace.frames[0].chunk_id, id);
+  assert.equal(list[0].stacktrace.frames[0].function, '?');
   assert.equal(JSON.stringify(result).includes('secret'), false);
+});
+
+test('exception frames accept revision-namespaced assets while rejecting arbitrary path segments', () => {
+  const revision = 'a'.repeat(40);
+  const filename = `${origin}/_app/${revision}/immutable/chunks/app.js`;
+  const error = new Error('secret');
+  error.stack = `Error: secret\n    at ${filename}?secret:7:42\n    at ${origin}/_app/private-account/immutable/chunks/app.js:7:42`;
+  assert.equal(
+    sanitizeError(error, origin)?.stack,
+    `Error: Application error\n    at ${filename}:7:42`
+  );
+  const clean = sanitizeCapture(
+    event('$exception', {
+      $exception_list: [
+        {
+          type: 'Error',
+          value: 'secret',
+          stacktrace: {
+            frames: [
+              { filename: `${filename}?secret`, lineno: 7, colno: 42, chunk_id: id },
+              {
+                filename: `${origin}/_app/private-account/immutable/chunks/app.js`,
+                lineno: 7,
+                colno: 42
+              }
+            ]
+          }
+        }
+      ]
+    }),
+    context
+  )!;
+  assert.deepEqual(clean.properties.$exception_list[0].stacktrace.frames, [
+    {
+      platform: 'web:javascript',
+      filename,
+      function: '?',
+      in_app: true,
+      lineno: 7,
+      colno: 42,
+      chunk_id: id
+    }
+  ]);
 });
 
 test('replay metadata strips private URLs and drops custom/network/console plugin events', () => {
@@ -332,6 +376,7 @@ test('singleton initialization, navigation deduplication, error deduplication an
   assert.equal(h.events.length, count);
   assert.equal(h.client.enabled(), false);
   h.client.setEnabled(true);
+  await h.loaded();
   assert.deepEqual(h.calls.slice(-2), ['in', 'start']);
   assert.match(h.cookie, /^gfl2_telemetry=1;/);
 });
@@ -354,10 +399,40 @@ test('SDK settings pin privacy controls and optional capture off', async () => {
   assert.equal(replay.recordBody, false);
   assert.equal(replay.sampleRate, 1);
   assert.equal(replay.compress_events, false);
+  assert.equal(options.request_batching, false);
+  assert.equal(options.disable_beacon, true);
+  assert.equal(
+    replay.maskCapturedNetworkRequestFn!({ name: `${origin}/history?secret` } as never)?.name,
+    `${origin}/history`
+  );
   assert.equal(
     replay.maskCapturedNetworkRequestFn!({ name: '/secret', method: 'GET' } as never),
     null
   );
+});
+
+test('opt-out permanently aborts old transport and retry options across a later opt-in', async () => {
+  const h = harness();
+  h.client.init(config);
+  await h.loaded();
+  const oldConfig = h.sdkConfig!;
+  const oldFetchOptions = oldConfig.fetch_options as RequestInit;
+  assert.equal(oldFetchOptions.signal?.aborted, false);
+  h.client.pageview('/history');
+  h.storageChange('0');
+  assert.equal(oldFetchOptions.signal?.aborted, true);
+  h.client.setEnabled(true);
+  await h.loaded();
+  assert.notEqual(h.sdkConfig?.fetch_options, oldFetchOptions);
+  assert.equal((h.sdkConfig?.fetch_options as RequestInit).signal?.aborted, false);
+  // The native fetch boundary rejects retained request options before dispatch,
+  // even if an SDK retry runs after a new consent epoch has started.
+  await assert.rejects(fetch('data:text/plain,retired-telemetry', oldFetchOptions), {
+    name: 'AbortError'
+  });
+  assert.equal(typeof oldConfig.before_send, 'function');
+  if (typeof oldConfig.before_send === 'function')
+    assert.equal(oldConfig.before_send(event('$pageview', {})), null);
 });
 
 test('shared cookie immediately blocks another tab when localStorage is unavailable', async () => {
