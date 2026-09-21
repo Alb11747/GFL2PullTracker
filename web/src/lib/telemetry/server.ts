@@ -1,4 +1,5 @@
 import { PostHog, type PostHogOptions } from 'posthog-node';
+import { telemetryEnvironment } from './deployment.ts';
 import { safeServerError, sanitizeServerEvent, type ServerOperation } from './server-policy.ts';
 
 type Client = Pick<PostHog, 'captureException' | 'on' | 'shutdown'>;
@@ -29,7 +30,15 @@ export function createServerTelemetry(
       fetchRetryCount: 0,
       enableExceptionAutocapture: false,
       disableGeoip: true,
-      before_send: (event) => sanitizeServerEvent(event, environment.PUBLIC_APP_RELEASE ?? '')
+      before_send: (event) =>
+        sanitizeServerEvent(
+          event,
+          environment.PUBLIC_APP_RELEASE ?? '',
+          telemetryEnvironment(
+            environment.GFL2_TELEMETRY_ENVIRONMENT,
+            environment.NODE_ENV === 'development'
+          )
+        )
     });
     client.on('error', () => {});
     // adapter-node emits this after draining HTTP requests on SIGTERM/SIGINT.

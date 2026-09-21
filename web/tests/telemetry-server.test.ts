@@ -119,7 +119,7 @@ test('only proxy transport failures report, once, unless opted out', async () =>
   );
 });
 
-test('Node reporting is disabled outside configured public production and respects request opt-out', () => {
+test('Node reporting is disabled outside configured public deployments and respects request opt-out', () => {
   const valid = {
     GFL2_MODE: 'public',
     PUBLIC_POSTHOG_KEY: 'phc_synthetic',
@@ -139,6 +139,48 @@ test('Node reporting is disabled outside configured public production and respec
     createServerTelemetry(environment, factory).report(new Error('SECRET'), 'request', true);
   createServerTelemetry(valid, factory).report(new Error('SECRET'), 'request', false);
   assert.equal(created, 0);
+});
+
+test('Node send boundary labels deployment environments and overrides production during dev', () => {
+  for (const [configured, node, expected] of [
+    ['production', 'production', 'production'],
+    ['staging', 'production', 'staging'],
+    ['test', 'production', 'test'],
+    ['development', 'production', 'development'],
+    ['production', 'development', 'development'],
+    [undefined, 'production', 'development'],
+    ['SECRET', 'production', 'development']
+  ]) {
+    let sent: ReturnType<typeof sanitizeServerEvent>;
+    const telemetry = createServerTelemetry(
+      {
+        GFL2_MODE: 'public',
+        PUBLIC_POSTHOG_KEY: 'synthetic',
+        PUBLIC_POSTHOG_HOST: 'https://us.i.posthog.com',
+        GFL2_TELEMETRY_ENVIRONMENT: configured,
+        NODE_ENV: node
+      },
+      (_key, options) => ({
+        captureException() {
+          const send = options.before_send;
+          assert.equal(typeof send, 'function');
+          if (typeof send !== 'function') throw Error('Missing send boundary');
+          sent = send({
+            event: '$exception',
+            properties: { environment: 'SECRET' }
+          });
+        },
+        on() {
+          return () => {};
+        },
+        async shutdown() {}
+      }),
+      () => {}
+    );
+    telemetry.report(new Error('SECRET'), 'request', true);
+    assert.equal(sent!.properties?.environment, expected);
+    assert.doesNotMatch(JSON.stringify(sent!), /SECRET/);
+  }
 });
 
 test('Node SDK resolves injected chunk IDs and sends only allowlisted exception metadata', async () => {

@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
 import type { EventMessage } from 'posthog-node';
+import { telemetryEnvironment } from './deployment.ts';
 
 /** Only normalized preferences cross the private API boundary. Any opt-out wins. */
 export function requestTelemetryAllowed(headers: Headers): boolean {
@@ -52,7 +53,8 @@ export function safeServerError(error: unknown): Error {
 /** SDK context and source-line enrichment are untrusted at the final send boundary. */
 export function sanitizeServerEvent(
   event: EventMessage | null,
-  release: string
+  release: string,
+  environment?: string
 ): EventMessage | null {
   if (!event || event.event !== '$exception') return null;
   const input = record(event.properties);
@@ -120,7 +122,7 @@ export function sanitizeServerEvent(
       $exception_level: 'error',
       $process_person_profile: false,
       service: 'web',
-      environment: 'production',
+      environment: telemetryEnvironment(environment),
       operation: input.operation === 'proxy' ? 'proxy' : 'request',
       release: /^[a-f0-9]{40}$/.test(release) ? release : 'unknown',
       ...(typeof input.$release_id === 'string' && uuid.test(input.$release_id)

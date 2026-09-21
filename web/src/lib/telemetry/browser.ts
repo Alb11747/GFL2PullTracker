@@ -10,7 +10,13 @@ import {
   type TelemetryOutcome
 } from './privacy.ts';
 
-export type TelemetryConfig = { enabled: boolean; key: string; host: string; release: string };
+export type TelemetryConfig = {
+  enabled: boolean;
+  key: string;
+  host: string;
+  release: string;
+  environment?: string;
+};
 export const TELEMETRY_STORAGE_KEY = 'gfl2.telemetry.enabled';
 type Client = Pick<
   PostHog,
@@ -183,6 +189,7 @@ export function createTelemetry(environment: Environment, loadSdk: () => Promise
         sanitizeCapture(event, {
           origin: environment.origin,
           release: config.release,
+          environment: config.environment,
           key: config.key,
           enabled: enabled() && !epochTransport.signal.aborted
         })

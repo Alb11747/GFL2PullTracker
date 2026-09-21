@@ -1,4 +1,5 @@
 import type { CaptureResult } from 'posthog-js';
+import { telemetryEnvironment } from './deployment.ts';
 
 export const OPERATIONS = ['import', 'backup', 'restore', 'drive_sync'] as const;
 export const OUTCOMES = ['success', 'failed', 'cancelled', 'partial'] as const;
@@ -255,7 +256,7 @@ function sanitizeSnapshots(value: unknown, origin: string): unknown[] {
 /** Last boundary before transmission. Rebuild properties instead of deleting known secrets. */
 export function sanitizeCapture(
   event: CaptureResult | null,
-  context: { origin: string; release: string; key: string; enabled: boolean }
+  context: { origin: string; release: string; key: string; enabled: boolean; environment?: string }
 ): CaptureResult | null {
   if (
     !event ||
@@ -267,7 +268,7 @@ export function sanitizeCapture(
   const properties: Record<string, unknown> = {
     token: context.key,
     service: 'browser',
-    environment: 'production',
+    environment: telemetryEnvironment(context.environment),
     release: /^[a-f0-9]{40}$/.test(context.release) ? context.release : 'unknown',
     $lib: 'web',
     $process_person_profile: false,

@@ -19,7 +19,12 @@ def permitted(request):
     return request.headers.getlist('x-gfl2-telemetry') == ['1']
 
 
-def exception_properties(error, operation, release):
+def telemetry_environment(value):
+    # Match the browser/web allowlist; never forward arbitrary configuration text.
+    return value if value in ('production', 'staging', 'test') else 'development'
+
+
+def exception_properties(error, operation, release, environment='development'):
     # Messages, causes, source text, locals and absolute paths may contain captures.
     # Inspect only executable metadata from this repository's known source files.
     frames = []
@@ -34,7 +39,7 @@ def exception_properties(error, operation, release):
     kind = type(error).__name__
     if type(error).__module__ != 'builtins' or getattr(builtins, kind, None) is not type(error):
         kind = 'Error'
-    return {'service': 'api', 'environment': 'production', 'release': release,
+    return {'service': 'api', 'environment': telemetry_environment(environment), 'release': release,
             'operation': operation, '$process_person_profile': False, '$geoip_disable': True,
             '$exception_list': [{'type': kind, 'value': 'Unexpected tracker service error',
                                  'mechanism': {'type': 'generic', 'handled': True},
@@ -55,9 +60,10 @@ def before_send(event):
 
 
 class Telemetry:
-    def __init__(self, client=None, release='unknown'):
+    def __init__(self, client=None, release='unknown', environment='development'):
         self.client = client
         self.release = release
+        self.environment = telemetry_environment(environment)
 
     @classmethod
     def from_environment(cls):
@@ -76,7 +82,7 @@ class Telemetry:
                              enable_exception_autocapture=False, capture_exception_code_variables=False,
                              log_captured_exceptions=False, enable_local_evaluation=False,
                              capture_trace_context=False, before_send=before_send)
-            return cls(client, release)
+            return cls(client, release, os.environ.get('GFL2_TELEMETRY_ENVIRONMENT'))
         except Exception:
             # Optional monitoring cannot prevent the application from starting.
             return cls()
@@ -86,7 +92,7 @@ class Telemetry:
             return
         try:
             self.client.capture('$exception', distinct_id='gfl2-api',
-                                properties=exception_properties(error, operation, self.release))
+                                properties=exception_properties(error, operation, self.release, self.environment))
         except Exception:
             # The error boundary must preserve the original response/job semantics.
             pass

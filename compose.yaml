@@ -12,6 +12,7 @@ services:
       POSTHOG_KEY: ${PUBLIC_POSTHOG_KEY:-}
       POSTHOG_HOST: ${PUBLIC_POSTHOG_HOST:-https://us.i.posthog.com}
       GFL2_RELEASE: ${GFL2_RELEASE:-}
+      GFL2_TELEMETRY_ENVIRONMENT: ${GFL2_TELEMETRY_ENVIRONMENT:-production}
     volumes:
       - tracker-data:/app/data
     networks: [backend]
@@ -47,6 +48,7 @@ services:
       PUBLIC_POSTHOG_KEY: ${PUBLIC_POSTHOG_KEY:-}
       PUBLIC_POSTHOG_HOST: ${PUBLIC_POSTHOG_HOST:-https://us.i.posthog.com}
       PUBLIC_APP_RELEASE: ${GFL2_RELEASE:-}
+      GFL2_TELEMETRY_ENVIRONMENT: ${GFL2_TELEMETRY_ENVIRONMENT:-production}
       BODY_SIZE_LIMIT: 16777216
     depends_on:
       api:

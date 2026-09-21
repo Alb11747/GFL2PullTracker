@@ -157,6 +157,28 @@ def test_runtime_configuration_is_disabled_locally_and_in_tests(monkeypatch):
     assert Telemetry.from_environment().client is None
 
 
+@pytest.mark.parametrize('environment,expected', [
+    ('production', 'production'), ('development', 'development'), ('staging', 'staging'),
+    ('test', 'test'), (None, 'development'), (SENTINEL, 'development')])
+def test_runtime_environment_labels_are_safe(monkeypatch, environment, expected):
+    recorder = Recorder()
+    monkeypatch.setenv('GFL2_MODE', 'public')
+    monkeypatch.setenv('POSTHOG_KEY', 'synthetic')
+    monkeypatch.setenv('POSTHOG_HOST', 'https://us.i.posthog.com')
+    monkeypatch.delenv('PYTEST_CURRENT_TEST')
+    if environment is None:
+        monkeypatch.delenv('GFL2_TELEMETRY_ENVIRONMENT', raising=False)
+    else:
+        monkeypatch.setenv('GFL2_TELEMETRY_ENVIRONMENT', environment)
+    monkeypatch.setattr('posthog.Posthog', lambda *args, **kwargs: recorder)
+    telemetry = Telemetry.from_environment()
+    telemetry.report(RuntimeError(SENTINEL), allowed=True)
+    sent = before_send(recorder.events[0])
+    assert sent['properties']['environment'] == expected
+    assert SENTINEL not in json.dumps(sent)
+    telemetry.close()
+
+
 def test_sdk_configuration_and_shutdown_order(tmp_path, monkeypatch):
     options = {}
     recorder = Recorder()

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import type { CaptureResult, PostHogConfig } from 'posthog-js';
 import { createTelemetry, TELEMETRY_STORAGE_KEY } from '../src/lib/telemetry/browser.ts';
 import { safePath, sanitizeCapture, sanitizeError } from '../src/lib/telemetry/privacy.ts';
+import { telemetryEnvironment } from '../src/lib/telemetry/deployment.ts';
 
 const origin = 'https://tracker.example';
 const id = '01996542-3456-7456-8456-0123456789ab';
@@ -218,6 +219,47 @@ test('replay full and incremental snapshots scrub all DOM strings and discard un
   assert.equal(JSON.stringify(result).includes('secret'), false);
   assert.equal(result.properties.$snapshot_data[0].data.node.attributes.rr_width, '100px');
   assert.equal(result.properties.$snapshot_data[2].data.text, '******');
+});
+
+test('deployment labels are allowlisted and dev builds cannot claim production', () => {
+  for (const value of ['production', 'staging', 'test', 'development']) {
+    assert.equal(telemetryEnvironment(value), value);
+    assert.equal(telemetryEnvironment(value, true), 'development');
+  }
+  for (const value of [undefined, '', 'private-configuration', {}, null])
+    assert.equal(telemetryEnvironment(value), 'development');
+});
+
+test('browser send boundary labels events and replay from deployment configuration', async () => {
+  for (const [environment, expected] of [
+    ['production', 'production'],
+    ['staging', 'staging'],
+    ['test', 'test'],
+    ['development', 'development'],
+    [undefined, 'development'],
+    ['SECRET', 'development']
+  ]) {
+    const h = harness();
+    h.client.init({ ...config, environment });
+    await h.loaded();
+    const send = h.sdkConfig!.before_send;
+    assert.equal(typeof send, 'function');
+    for (const name of ['$pageview', 'tracker_operation', '$exception', '$snapshot']) {
+      const clean = (send as (value: CaptureResult) => CaptureResult | null)(
+        event(name, {
+          distinct_id: id,
+          environment: 'SECRET',
+          operation: 'import',
+          outcome: 'success',
+          $exception_list: [{ type: 'Error', value: 'SECRET' }],
+          $snapshot_data: [{ type: 4, data: { href: origin, width: 800, height: 600 } }]
+        })
+      );
+      assert.ok(clean);
+      assert.equal(clean.properties.environment, expected);
+      assert.doesNotMatch(JSON.stringify(clean), /SECRET/);
+    }
+  }
 });
 
 function harness(saved: string | null = null, privacySignal = false) {

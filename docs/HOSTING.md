@@ -74,6 +74,21 @@ browser and server telemetry. Local-server mode never enables telemetry. Set
 `POSTHOG_PROJECT_ID` for source-map uploads and set `GFL2_RELEASE` to the
 exact Git revision for both services.
 
+Compose labels telemetry `environment=production` by default. For a dev, staging,
+or QA deployment with telemetry explicitly configured, set
+`GFL2_TELEMETRY_ENVIRONMENT=development`, `staging`, or `test` in its runtime
+environment. This applies to browser events/replays and both backend services.
+The Vite dev server always labels its browser and web-service events
+`development`; standalone services without a valid setting also default to
+`development`. Local mode and ordinary automated tests still send no telemetry.
+
+In PostHog project settings, **Filter out internal and test users** should keep
+only events where `environment` is not `development`, `staging`, or `test`,
+alongside any existing internal-user exclusions. Enable the default checkbox
+for new insights and enable it on existing dashboard insights. This filters
+reports without deleting dev diagnostics; turn the filter off to inspect them.
+Use event properties because the tracker does not create person profiles.
+
 Authenticate `web/node_modules/.bin/posthog-cli login` separately. Keep a private
 dotenv file at `/absolute/private/posthog-cli.env`, readable only by
 the deploying account, containing `POSTHOG_CLI_API_KEY`, `POSTHOG_CLI_PROJECT_ID`,
