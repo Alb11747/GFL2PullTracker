@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tick, untrack } from 'svelte';
+  import DriveIcon from './DriveIcon.svelte';
   import type { Profile } from '$lib/api';
   import type { createLocalClient } from '$lib/local/client';
   import { MAX_COMPRESSED_BYTES } from '$lib/local/backup';
@@ -442,7 +443,7 @@
                     await drive?.connect();
                     await onchanged();
                   })}
-                >{sync.phase === 'reconnect'
+                ><DriveIcon />{sync.phase === 'reconnect'
                   ? 'Reconnect Google Drive'
                   : 'Connect Google Drive'}</button
               >
@@ -456,7 +457,7 @@
                   run(async () => {
                     await drive?.sync();
                     await onchanged();
-                  })}>Sync now</button
+                  })}><DriveIcon />Sync now</button
               ><button disabled={busy || !drive} onclick={() => drive?.disconnect()}
                 >Disconnect</button
               >{/if}
@@ -466,7 +467,7 @@
                   run(async () => {
                     await drive?.connect();
                     await onchanged();
-                  })}>Reconnect Google Drive</button
+                  })}><DriveIcon />Reconnect Google Drive</button
               >{/if}
           </div>
           {#if sync.conflicts.length}

@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 export default defineConfig({
   root: fileURLToPath(new URL('.', import.meta.url)),
+  publicDir: fileURLToPath(new URL('../../static', import.meta.url)),
   cacheDir: fileURLToPath(new URL('../../node_modules/.vite-browser-regressions', import.meta.url)),
   plugins: [svelte({ configFile: false })],
   resolve: { alias: { $lib: fileURLToPath(new URL('../../src/lib', import.meta.url)) } },

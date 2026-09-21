@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://127.0.0.1:14194; object-src 'none'; base-uri 'none'"
+    />
+    <title>Reward history browser regressions</title>
+    <style>
+      main {
+        max-width: 1040px;
+        margin: 24px auto;
+        padding-inline: 16px;
+      }
+      .harness-controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      #results {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Reward history browser regressions</h1>
+      <p>
+        Production component and styles with synthetic rewards. Preferences use only this isolated
+        test origin.
+      </p>
+      <div class="harness-controls">
+        <button id="run">Run tests</button>
+        <button id="reload">Reload fixture</button>
+        <button id="profile">Switch profile</button>
+      </div>
+      <p id="summary" role="status">Ready</p>
+      <pre id="results" aria-label="Test results"></pre>
+      <div id="fixture"></div>
+    </main>
+    <script type="module" src="/rewards.ts"></script>
+  </body>
+</html>

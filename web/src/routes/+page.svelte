@@ -2,6 +2,7 @@
   import { onMount, tick } from 'svelte';
   import MultiSelect from '$lib/components/MultiSelect.svelte';
   import EliteHistory from '$lib/components/EliteHistory.svelte';
+  import GitHubLink from '$lib/components/GitHubLink.svelte';
   import { capturePaginationAnchor } from '$lib/pagination-anchor';
   import { recruitmentName } from '$lib/recruitment';
   import { createProfileHistoryLoader, profileFilters } from '$lib/profile-history';
@@ -798,7 +799,7 @@
   /></svelte:head
 >
 
-<header class="masthead">
+<header class="masthead" class:with-tabs={hosted}>
   <a class="wordmark" href="/" aria-label="Girls’ Frontline 2: Exilium Pull Tracker home"
     ><svg viewBox="0 0 32 32" aria-hidden="true"
       ><path d="M4 4h24v24H4zM10 4v24M4 11h24M16 17h7M16 22h7" /></svg
@@ -808,6 +809,19 @@
       ><span class="wordmark-sub">PULL TRACKER</span></span
     ></a
   >
+  {#if hosted}
+    <nav class="archive-nav" aria-label="Tracker navigation">
+      {#each [['tracker', 'My history'], ['backup', 'Backup & sync'], ['profiles', 'Profiles'], ['statistics', 'Community statistics'], ['privacy', 'Privacy']] as [id, label]}
+        <button
+          class:chosen={section === id}
+          aria-current={section === id ? 'page' : undefined}
+          onclick={() => {
+            section = id as typeof section;
+          }}>{label}</button
+        >
+      {/each}
+    </nav>
+  {/if}
   <div class="header-controls">
     <label class="profile-select"
       ><span>Profile</span><select
@@ -833,20 +847,6 @@
     >
   </div>
 </header>
-
-{#if hosted}
-  <nav class="archive-nav" aria-label="Tracker navigation">
-    {#each [['tracker', 'My history'], ['backup', 'Backup & sync'], ['profiles', 'Profiles'], ['statistics', 'Community statistics'], ['privacy', 'Privacy']] as [id, label]}
-      <button
-        class:chosen={section === id}
-        aria-current={section === id ? 'page' : undefined}
-        onclick={() => {
-          section = id as typeof section;
-        }}>{label}</button
-      >
-    {/each}
-  </nav>
-{/if}
 
 <main>
   {#if !importOpen || section !== 'tracker'}{@render importStatus()}{/if}
@@ -1127,7 +1127,12 @@
           >
         </div>
       </div>
-      <EliteHistory rows={overviewRows} loading={overviewLoading} error={overviewError} />
+      <EliteHistory
+        rows={overviewRows}
+        profileId={filters.profile_id}
+        loading={overviewLoading}
+        error={overviewError}
+      />
       {#if overviewError}<button class="text-button" onclick={() => refresh()}
           >Refresh overview</button
         >{/if}
@@ -1450,6 +1455,7 @@
   {/if}
   <footer>
     <span>GFL2 Pull Tracker</span>
+    <GitHubLink />
     <a href="/privacy">Privacy</a>
     <a
       href="https://github.com/Infernal-Crack-LED/gfl2-team-builder"

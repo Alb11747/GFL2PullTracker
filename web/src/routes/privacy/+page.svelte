@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { PageData } from './$types';
+  import GitHubLink from '$lib/components/GitHubLink.svelte';
   let { data }: { data: PageData } = $props();
 </script>
 
@@ -123,7 +124,11 @@
     </p>
   </section>
 
-  <footer><span>GFL2 Pull Tracker</span><a href="/">Return to your archive</a></footer>
+  <footer>
+    <span>GFL2 Pull Tracker</span>
+    <GitHubLink />
+    <a href="/">Return to your archive</a>
+  </footer>
 </main>
 
 <style>

@@ -1,17 +1,29 @@
 <script lang="ts">
+  import { onMount, tick } from 'svelte';
   import type { Pull } from '$lib/api';
   import { recruitmentName } from '$lib/recruitment';
   import portraits from '$lib/portraits.json';
   import { eliteSummary } from '$lib/elite-summary';
+  import {
+    filterRewards,
+    readRewardRarities,
+    rewardRarities,
+    rewardRarity,
+    REWARD_RARITIES_KEY,
+    type RewardRarity
+  } from '$lib/reward-history';
 
   export let rows: Pull[] = [];
+  export let profileId = '';
   export let loading = false;
   export let error = '';
 
   let selectedType: number | null = null;
   let selectedId: number | null = null;
-  let expanded = false;
+  let visibleBatches = 1;
   let previewLimit = 8;
+  let selectedRarities: RewardRarity[] = ['Elite'];
+  let dialog: HTMLDialogElement;
   let failedImages = new Set<number>();
   const imageMap = portraits as Record<string, string>;
   const uncertainty = 'History may be missing; pity is uncertain';
@@ -32,14 +44,29 @@
   $: if (selectedType === null || !types.includes(selectedType)) {
     selectedType = types.includes(3) ? 3 : (types[0] ?? null);
     selectedId = null;
-    expanded = false;
+    visibleBatches = 1;
   }
   $: ({ scoped, elites, currentPity, currentUncertain, average } = eliteSummary(
     rows,
     selectedType
   ));
-  $: shown = expanded ? elites : elites.slice(0, previewLimit);
-  $: selected = elites.find((row) => row.id === selectedId);
+  $: filtered = filterRewards(scoped, selectedRarities);
+  $: shown = filtered.slice(0, previewLimit * visibleBatches);
+  $: selected = loading || error ? undefined : shown.find((row) => row.id === selectedId);
+  $: availableRarities = rewardRarities.filter(
+    (rarity) =>
+      rarity.key !== 'Unknown' ||
+      selectedRarities.includes('Unknown') ||
+      scoped.some((row) => rewardRarity(row.rarity) === 'Unknown')
+  );
+  $: historyTitle = selectedRarities.length
+    ? `${rewardRarities
+        .filter((rarity) => selectedRarities.includes(rarity.key))
+        .map((rarity) => rarity.label)
+        .join(' + ')} history`
+    : 'Reward history';
+  $: resetContext(profileId, selectedType);
+  $: if (!selected && dialog?.open) dialog.close();
   $: breakdown = rarityLabels
     .map((rarity) => {
       const count = scoped.filter((row) =>
@@ -52,20 +79,57 @@
     .filter((rarity) => rarity.key !== 'Unknown' || rarity.count > 0);
 
   function measureRows(node: HTMLElement) {
+    let frame = 0;
     const measure = () => {
       const columns = getComputedStyle(node)
         .gridTemplateColumns.split(/\s+/)
         .filter(Boolean).length;
       previewLimit = Math.max(1, columns) * 2;
     };
-    const observer = new ResizeObserver(measure);
+    // Changing the preview count also changes this grid's height. Defer the
+    // layout write until after ResizeObserver has delivered its notifications.
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(measure);
+    });
     observer.observe(node);
     measure();
-    return { destroy: () => observer.disconnect() };
+    return {
+      destroy: () => {
+        observer.disconnect();
+        cancelAnimationFrame(frame);
+      }
+    };
   }
-  function changeType() {
+  onMount(() => {
+    try {
+      selectedRarities = readRewardRarities(localStorage.getItem(REWARD_RARITIES_KEY));
+    } catch {
+      selectedRarities = ['Elite'];
+    }
+  });
+  // IDs are scoped to a profile. Never retain a selection across profile changes.
+  function resetContext(_profile: string, _type: number | null) {
     selectedId = null;
-    expanded = false;
+    visibleBatches = 1;
+  }
+  function toggleRarity(key: RewardRarity) {
+    selectedRarities = selectedRarities.includes(key)
+      ? selectedRarities.filter((rarity) => rarity !== key)
+      : rewardRarities
+          .filter((rarity) => rarity.key === key || selectedRarities.includes(rarity.key))
+          .map((rarity) => rarity.key);
+    resetContext(profileId, selectedType);
+    try {
+      localStorage.setItem(REWARD_RARITIES_KEY, JSON.stringify(selectedRarities));
+    } catch {
+      // The current selection still works when browser storage is unavailable.
+    }
+  }
+  async function openReward(id: number) {
+    selectedId = id;
+    await tick();
+    if (selected && !dialog.open) dialog.showModal();
   }
   function imageFailed(id: number) {
     failedImages = new Set([...failedImages, id]);
@@ -78,12 +142,12 @@
   {:else if error}
     <p class="state error" role="alert">{error}</p>
   {:else if !rows.length}
-    <p class="state">Import pull history to see your 5★ rewards and rarity breakdown.</p>
+    <p class="state">Import pull history to see your rewards and rarity breakdown.</p>
   {:else}
     <div class="overview-toolbar">
       <label class="recruitment-select"
         >Recruitment
-        <select bind:value={selectedType} on:change={changeType}>
+        <select bind:value={selectedType}>
           {#each types as type}<option value={type}>{recruitmentName(type)}</option>{/each}
         </select>
       </label>
@@ -114,20 +178,33 @@
         </p>
       </div>
     </div>
-    <section class="elite-history" aria-label="5★ history">
+    <section class="elite-history" aria-label={historyTitle}>
       <div class="section-heading">
-        <h2>5★ history <span>{elites.length.toLocaleString()} Elite rewards</span></h2>
+        <h2>{historyTitle} <span>{filtered.length.toLocaleString()} rewards</span></h2>
         <span>Newest first</span>
       </div>
-      {#if elites.length}
+      <fieldset class="rarity-controls">
+        <legend>Show rarities</legend>
+        {#each availableRarities as rarity}
+          <label class:chosen={selectedRarities.includes(rarity.key)}>
+            <input
+              type="checkbox"
+              checked={selectedRarities.includes(rarity.key)}
+              on:change={() => toggleRarity(rarity.key)}
+            />
+            {rarity.label}
+          </label>
+        {/each}
+      </fieldset>
+      {#if filtered.length}
         <div class="portrait-grid" use:measureRows>
           {#each shown as row (row.id)}
             <button
               class="pull"
               class:selected={selectedId === row.id}
-              aria-pressed={selectedId === row.id}
-              aria-label={`${row.name}, pity ${row.pity}${row.pity_uncertain ? ', uncertain' : ''}, ${date(row.timestamp, true)}`}
-              on:click={() => (selectedId = selectedId === row.id ? null : row.id)}
+              aria-haspopup="dialog"
+              aria-label={`Details for ${row.name}, ${rewardRarities.find((rarity) => rarity.key === rewardRarity(row.rarity))?.label}, 5★ pity ${row.pity}${row.pity_uncertain ? ', uncertain' : ''}, ${date(row.timestamp, true)}`}
+              on:click={() => openReward(row.id)}
             >
               <span class="portrait">
                 {#if imageMap[row.item_id] && !failedImages.has(row.item_id)}
@@ -147,45 +224,37 @@
                     >{/if}</span
                 >
               </span>
+              <span class="pull-rarity"
+                >{rewardRarities.find((rarity) => rarity.key === rewardRarity(row.rarity))
+                  ?.label}</span
+              >
               <span class="pull-name" title={row.name}>{row.name}</span><span class="pull-date"
                 >{date(row.timestamp)}</span
               >
             </button>
           {/each}
         </div>
-        {#if selected}
-          <div class="selection" role="status">
-            <strong>{selected.name}</strong><span
-              >{date(selected.timestamp, true)} · {new Date(selected.timestamp).toLocaleTimeString(
-                undefined,
-                { hour: '2-digit', minute: '2-digit' }
-              )}</span
+        <div class="history-pagination">
+          {#if shown.length < filtered.length}
+            <button on:click={() => (visibleBatches += 1)}>Show more</button>
+          {/if}
+          {#if visibleBatches > 1}
+            <button
+              on:click={() => {
+                visibleBatches = 1;
+                selectedId = null;
+              }}>Show fewer</button
             >
-            <span
-              >Pity {selected.pity}{#if selected.pity_uncertain}<sup
-                  title={uncertainty}
-                  aria-label=" uncertain">?</sup
-                >{/if}</span
-            >
-            <span
-              >{recruitmentName(selected.type_id)} · Pool {selected.pool_id} · Item {selected.item_id}</span
-            >
-            {#if selected.gap_before}<span>History is missing before this pull.</span>{/if}
-          </div>
-        {/if}
-        {#if elites.length > previewLimit}
-          <button
-            class="show-more"
-            aria-expanded={expanded}
-            on:click={() => {
-              expanded = !expanded;
-              if (!expanded) selectedId = null;
-            }}
-          >
-            {expanded ? 'Show fewer' : `Show all ${elites.length} Elite rewards`}
-          </button>
-        {/if}
-      {:else}<p class="empty">No 5★ rewards in this recruitment history yet.</p>{/if}
+          {/if}
+          {#if filtered.length > previewLimit}<span role="status"
+              >Showing {shown.length} of {filtered.length} rewards</span
+            >{/if}
+        </div>
+      {:else}<p class="empty" role="status">
+          {selectedRarities.length
+            ? 'No rewards match the selected rarities in this recruitment.'
+            : 'Select a rarity to show rewards.'}
+        </p>{/if}
       <p class="scope-note">Pull log filters below do not change this recruitment overview.</p>
       <details class="pity-help">
         <summary>About pity and missing history</summary>
@@ -226,6 +295,89 @@
     </section>
   {/if}
 </section>
+
+<dialog
+  bind:this={dialog}
+  class="reward-dialog"
+  aria-labelledby="reward-detail-title"
+  on:close={() => (selectedId = null)}
+  on:keydown={(event) => {
+    // Close is the dialog's only interactive control; keep Tab inside it.
+    if (event.key === 'Tab') {
+      event.preventDefault();
+      event.currentTarget.querySelector('button')?.focus();
+    }
+  }}
+>
+  {#if selected}
+    <div class="dialog-heading">
+      <h2 id="reward-detail-title">{selected.name}</h2>
+      <button type="button" on:click={() => dialog.close()}>Close</button>
+    </div>
+    <div class="reward-detail">
+      <div class="large-portrait">
+        {#if imageMap[selected.item_id] && !failedImages.has(selected.item_id)}
+          <img
+            src={imageMap[selected.item_id]}
+            alt={selected.name}
+            width="256"
+            height="256"
+            on:error={() => imageFailed(selected.item_id)}
+          />
+        {:else}<span class="missing">No image available</span>{/if}
+      </div>
+      <dl class="reward-facts">
+        <div>
+          <dt>Rarity</dt>
+          <dd>
+            {rarityLabels.find((rarity) => rarity.key === rewardRarity(selected.rarity))?.label}
+          </dd>
+        </div>
+        <div>
+          <dt>Item kind</dt>
+          <dd>
+            {selected.kind === 'doll' ? 'Doll' : selected.kind === 'weapon' ? 'Weapon' : 'Unknown'}
+          </dd>
+        </div>
+        <div class="wide">
+          <dt>Recruited</dt>
+          <dd>
+            {date(selected.timestamp, true)} · {new Date(selected.timestamp).toLocaleTimeString()}
+          </dd>
+        </div>
+        <div class="wide">
+          <dt>5★ pity at this pull</dt>
+          <dd>
+            {selected.pity}{#if selected.pity_uncertain}<sup
+                title={uncertainty}
+                aria-label=" uncertain">?</sup
+              >{/if}
+          </dd>
+        </div>
+        <div class="wide">
+          <dt>Recruitment</dt>
+          <dd>{recruitmentName(selected.type_id)}</dd>
+        </div>
+        <div>
+          <dt>Quantity</dt>
+          <dd>{selected.quantity}</dd>
+        </div>
+        <div>
+          <dt>Pool ID</dt>
+          <dd>{selected.pool_id}</dd>
+        </div>
+        <div>
+          <dt>Item ID</dt>
+          <dd>{selected.item_id}</dd>
+        </div>
+      </dl>
+    </div>
+    {#if selected.pity_uncertain}<p class="detail-note">
+        History may be incomplete; the pity count is uncertain.
+      </p>{/if}
+    {#if selected.gap_before}<p class="detail-note">History is missing before this pull.</p>{/if}
+  {/if}
+</dialog>
 
 <style>
   .elite-overview {
@@ -363,8 +515,7 @@
     display: block;
     width: 100%;
     height: 100%;
-    object-fit: cover;
-    object-position: top center;
+    object-fit: contain;
   }
   .pity {
     position: absolute;
@@ -404,20 +555,127 @@
     color: var(--muted);
     font-size: 0.85rem;
   }
-  .selection {
+  .history-pagination {
     display: flex;
+    align-items: center;
     flex-wrap: wrap;
-    gap: 6px 16px;
+    gap: 12px;
     margin-top: 18px;
-    padding: 12px 0;
-    border-block: 1px solid var(--line);
     color: var(--muted);
   }
-  .selection strong {
-    color: var(--ink);
+  .history-pagination:empty {
+    display: none;
   }
-  .show-more {
-    margin-top: 18px;
+  .pull-rarity {
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  .rarity-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    border: 0;
+    padding: 0;
+    margin: 0 0 20px;
+  }
+  .rarity-controls legend {
+    margin-bottom: 8px;
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+  .rarity-controls label {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border: 1px solid var(--control-line);
+    border-radius: 3px;
+    cursor: pointer;
+  }
+  .rarity-controls label:hover {
+    background: var(--surface-hover);
+  }
+  .rarity-controls label.chosen {
+    border-color: var(--accent-text);
+  }
+  .rarity-controls input {
+    margin: 0;
+    width: 16px;
+    height: 16px;
+    accent-color: var(--accent-text);
+  }
+  .reward-dialog {
+    width: min(700px, calc(100vw - 32px));
+    max-height: calc(100dvh - 32px);
+    padding: 24px;
+    border: 1px solid var(--control-line);
+    background: var(--paper);
+    color: var(--ink);
+    overflow-y: auto;
+  }
+  .reward-dialog::backdrop {
+    background: rgb(20 25 31 / 65%);
+  }
+  .dialog-heading {
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .dialog-heading h2 {
+    font-size: 2rem;
+    overflow-wrap: anywhere;
+  }
+  .reward-detail {
+    display: grid;
+    grid-template-columns: minmax(0, 256px) minmax(0, 1fr);
+    gap: 24px;
+    align-items: start;
+  }
+  .large-portrait {
+    aspect-ratio: 1;
+    background: var(--surface);
+  }
+  .large-portrait img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+  .reward-facts {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px 16px;
+    margin: 0;
+  }
+  .reward-facts .wide {
+    grid-column: 1 / -1;
+  }
+  .reward-facts dt {
+    margin-bottom: 3px;
+    font-size: 0.85rem;
+  }
+  .reward-facts dd {
+    overflow-wrap: anywhere;
+  }
+  .detail-note {
+    margin: 20px 0 0;
+    color: var(--muted);
+  }
+  @media (max-width: 520px) {
+    .reward-dialog {
+      padding: 20px;
+    }
+    .reward-detail {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 20px;
+    }
+    .large-portrait {
+      width: min(100%, 224px);
+      margin-inline: auto;
+    }
   }
   .scope-note {
     margin: 16px 0 0;

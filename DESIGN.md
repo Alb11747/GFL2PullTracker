@@ -172,6 +172,10 @@ The secondary overview leads with **What you recruited**: Dolls, Weapons, and Un
 
 Current pity sits beside the recruitment selector, above the portrait history, with the number of pulls since the last 5★ and that reward's name and date. Incomplete intervals use an explicit uncertainty message; histories without an Elite describe pulls before the first 5★. The counter stacks below the selector on mobile.
 
+The portrait history defaults to 5★, with independent 5★, 4★, and 3★ checkbox controls. Unknown is available when unresolved rewards exist or that filter is already selected. The device remembers the mix; it affects only portraits, never recruitment statistics or the pull log. Initially show two rows, reveal two more at a time, and offer Show fewer. Each portrait retains a text rarity label. Clicking a reward opens a native dialog with contained artwork and pull facts; weapon images retain their rectangular proportions. Name the counter **5★ pity at this pull** for every rarity, retain uncertainty and gap messages, and return keyboard focus when the dialog closes.
+
+Drive actions include a locally bundled multicolor Drive mark beside their text. Main and privacy footers link to the project's GitHub repository with a compact monochrome mark, alongside existing links.
+
 Each ledger pity cell includes its recruitment name. Elite rows mark the counter reset, and a short explanation above the scroll region describes separate counters and filtered-out rewards. Keep this explanation readable without horizontal scrolling. Record log filters do not change the recruitment overview.
 
 At 760px and below, hide the Qty. column; item quantity remains available in expanded record details at every width.
@@ -206,5 +210,7 @@ The current system has no reusable elevated card component. The sidecar records 
 ## Public tracker extension
 
 Public mode adds a compact navigation row for My history, Profiles, Backup & sync, Community statistics, and Privacy. These surfaces reuse the existing cool paper, charcoal, orange, thin rules, Barlow typography, and visible focus treatments. Settings use aligned form groups and inline confirmations; consent and unavailable-provider messages appear beside the action they affect. Mobile settings stack, and history overflow stays within its table region.
+
+Public navigation sits inline inside the charcoal masthead, between the responsive wordmark and profile/import controls. Tabs use text without a separate background or border; an orange underline and `aria-current` identify the active section. At 960px and below, the tabs wrap onto a full-width row inside the same header. The profile selector is width-bounded so long names cannot push controls out of view. Local mode retains its existing header without navigation.
 
 Local storage and cloud synchronization have separate status messages. Empty community statistics show the minimum contribution threshold, not illustrative totals. Captures are never reflected in errors, and unavailable Google or provider configuration is explained before submission.
