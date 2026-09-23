@@ -107,10 +107,11 @@
     <p>
       Configured public deployments use PostHog’s US service for page visits, import, backup,
       restore, and Drive-sync outcomes, sanitized error reports, and masked session replay.
-      Collection is on by default during beta and will be off by default after beta. Turn off <a href="/privacy"
-        >Analytics &amp; diagnostics in Privacy</a
+      Collection is on by default during beta and will be off by default after beta. Turn off <a
+        href="/privacy">Analytics &amp; diagnostics in Privacy</a
       >
-      to stop new collection on this device. Local-server mode does not collect this telemetry.
+      to stop automatic uploads and session replay on this device. Local-server mode does not collect
+      this telemetry.
     </p>
     <p>
       Analytics use a random browser identifier, not your game or Google account. Operation reports
@@ -131,6 +132,27 @@
       or change the permission of a job already running. Clearing site data resets this preference.
       PostHog processes connection metadata when receiving requests; see its
       <a href="https://posthog.com/privacy">privacy policy</a>.
+    </p>
+  </section>
+
+  <section aria-labelledby="manual-diagnostics">
+    <h2 id="manual-diagnostics">Optional error reports when analytics are off</h2>
+    <p>
+      With analytics off, the browser keeps a small, sanitized diagnostic buffer in memory only. It
+      contains recent page labels, operation outcomes and durations, and technical error details
+      such as error type and app code locations. It contains no session replay, form contents, game
+      captures, credentials, or pull history. Reloading or leaving the site clears this buffer.
+    </p>
+    <p>
+      If an error occurs, a prompt lets you send that report to PostHog’s US service, dismiss it
+      this time, or dismiss future prompts on this device. Nothing from the buffer is uploaded
+      unless you choose <strong>Send error data</strong>. Sending uses a new report identifier and
+      does not enable automatic analytics. Reports are not retried automatically.
+    </p>
+    <p>
+      <strong>Dismiss forever</strong> discards pending diagnostics and remembers only your prompt
+      preference on this device, outside backups and Drive sync. You can allow prompts again in
+      <a href="/privacy">Privacy</a>. Browser privacy signals continue to disable diagnostics.
     </p>
   </section>
 

@@ -1,9 +1,22 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { page } from '$app/state';
-  import { setTelemetryEnabled, subscribeTelemetry } from '$lib/telemetry/browser';
+  import {
+    setTelemetryEnabled,
+    subscribeTelemetry,
+    subscribeDiagnostics,
+    restoreDiagnosticPrompts
+  } from '$lib/telemetry/browser';
   let enabled = $state(false);
-  onMount(() => subscribeTelemetry((value) => (enabled = value)));
+  let promptsMuted = $state(false);
+  onMount(() => {
+    const unsubscribeTelemetry = subscribeTelemetry((value) => (enabled = value));
+    const unsubscribeDiagnostics = subscribeDiagnostics((value) => (promptsMuted = value.muted));
+    return () => {
+      unsubscribeTelemetry();
+      unsubscribeDiagnostics();
+    };
+  });
 </script>
 
 <section aria-labelledby="analytics-heading">
@@ -20,13 +33,26 @@
       <span>Allow analytics, error reports, and masked session replay</span>
     </label>
     <p id="analytics-description">
-      On by default during beta. After beta, analytics and diagnostics will be off by default.
-      Your choice stays on this device and is not included in backups or Drive sync.
+      On by default during beta. After beta, analytics and diagnostics will be off by default. Your
+      choice stays on this device and is not included in backups or Drive sync.
     </p>
     <p>
-      Turning this off stops new browser collection and excludes subsequent server requests and
-      newly submitted jobs. Already submitted reports and running jobs are unaffected.
+      Turning this off stops automatic browser uploads and session replay, and excludes subsequent
+      server requests and newly submitted jobs. Already submitted reports and running jobs are
+      unaffected.
     </p>
+    <p>
+      While analytics are off, a small set of sanitized diagnostics stays in memory until you leave
+      or reload this page. If an error occurs, you can choose to send that report, dismiss it this
+      time, or dismiss all future prompts on this device. Sending a report does not enable
+      analytics.
+    </p>
+    {#if promptsMuted}
+      <p>Error-report prompts are dismissed on this device.</p>
+      <button class="restore-prompts" onclick={restoreDiagnosticPrompts}
+        >Allow error-report prompts again</button
+      >
+    {/if}
   {:else}
     <p>Analytics and diagnostics are disabled for this deployment.</p>
   {/if}
@@ -79,12 +105,19 @@
     background: var(--ink);
   }
   @media (forced-colors: active) {
-    input { appearance: auto; }
-    input::before { display: none; }
+    input {
+      appearance: auto;
+    }
+    input::before {
+      display: none;
+    }
   }
   p {
     margin: 12px 0 0;
     line-height: 1.6;
     color: var(--muted);
+  }
+  .restore-prompts {
+    margin-top: 12px;
   }
 </style>

@@ -1,6 +1,6 @@
 import type { ImportInput } from './api.ts';
 import type { Identity } from './local/types.ts';
-import { telemetryEnabled } from './telemetry/browser.ts';
+import { telemetryEnabled, reportLocalServiceError } from './telemetry/browser.ts';
 
 export interface VerifiedAccount {
   account_id: string;
@@ -80,6 +80,7 @@ export function createPublicClient(fetcher: typeof fetch = fetch) {
         ...(body === undefined ? {} : { body: JSON.stringify(body) })
       });
     } catch {
+      reportLocalServiceError();
       throw new PublicApiError(
         mutation
           ? (uncertainMessage ??
@@ -92,6 +93,7 @@ export function createPublicClient(fetcher: typeof fetch = fetch) {
     if (response.status === 204) return undefined as T;
     const data = await response.json().catch(() => null);
     if (!response.ok) {
+      if (response.status >= 500) reportLocalServiceError();
       // Never surface upstream error bodies or captured credentials through an API error.
       const messages: Record<number, string> = {
         400: 'The public service rejected the request. Check the supplied data.',
@@ -108,12 +110,14 @@ export function createPublicClient(fetcher: typeof fetch = fetch) {
         response.status
       );
     }
-    if (data === null)
+    if (data === null) {
+      reportLocalServiceError();
       throw new PublicApiError(
         uncertainMessage ?? 'The public service returned an unreadable response.',
         response.status,
         mutation
       );
+    }
     return data as T;
   }
   const accountPath = (path: string, accountId: string) =>

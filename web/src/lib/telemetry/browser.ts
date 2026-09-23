@@ -1,4 +1,6 @@
 import type { PostHog, PostHogConfig } from 'posthog-js';
+import { createLocalDiagnostics, type LocalDiagnosticsState } from './local-diagnostics.ts';
+import type { CaptureResult } from 'posthog-js';
 import {
   OPERATIONS,
   OUTCOMES,
@@ -38,7 +40,29 @@ type Environment = {
   listenErrors(callback: (error: unknown) => void): void;
   privacySignal?(): boolean;
   broadcastPreference?(enabled: boolean): void;
+  sendReport?(payload: CaptureResult): Promise<void>;
 };
+
+/** A manual report has no SDK, ambient credentials, retries, or recording side effects. */
+export async function sendDiagnosticReport(payload: CaptureResult, fetcher: typeof fetch = fetch) {
+  const response = await fetcher('https://us.i.posthog.com/i/v0/e/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...payload,
+      api_key: payload.properties.token,
+      distinct_id: payload.properties.distinct_id
+    }),
+    credentials: 'omit',
+    referrerPolicy: 'no-referrer',
+    redirect: 'error',
+    cache: 'no-store',
+    signal: AbortSignal.timeout(10_000)
+  });
+  if (!response.ok) throw new Error('Report submission could not be confirmed.');
+  const result = await response.json();
+  if (result?.status !== 1) throw new Error('Report submission could not be confirmed.');
+}
 
 /** Isolated controller allows lifecycle/privacy tests without starting a real SDK. */
 export function createTelemetry(environment: Environment, loadSdk: () => Promise<Client>) {
@@ -53,6 +77,11 @@ export function createTelemetry(environment: Environment, loadSdk: () => Promise
   let pending: Array<() => void> = [];
   const listeners = new Set<(enabled: boolean) => void>();
   const seenErrors = new WeakSet<object>();
+  const diagnostics = createLocalDiagnostics({
+    origin: environment.origin,
+    storage: environment.storage,
+    send: environment.sendReport ?? sendDiagnosticReport
+  });
   const eligible = () =>
     config.enabled &&
     !!config.key &&
@@ -77,7 +106,17 @@ export function createTelemetry(environment: Environment, loadSdk: () => Promise
       /* Analytics must never interrupt the tracker. */
     }
   };
-  const notify = () => listeners.forEach((listener) => safely(() => listener(enabled())));
+  const refreshDiagnostics = () =>
+    diagnostics.configure({
+      available: eligible() && !enabled(),
+      key: config.key,
+      release: config.release,
+      environment: config.environment
+    });
+  const notify = () => {
+    refreshDiagnostics();
+    listeners.forEach((listener) => safely(() => listener(enabled())));
+  };
   const cookie = () =>
     safely(() =>
       environment.writeCookie(
@@ -234,7 +273,11 @@ export function createTelemetry(environment: Environment, loadSdk: () => Promise
     else if (pending.length < 30) pending.push(action);
   };
   const reportError = (error: unknown, operation?: TelemetryOperation) => {
-    if (!enabled()) return;
+    refreshDiagnostics();
+    if (!enabled()) {
+      diagnostics.report(error, operation);
+      return;
+    }
     if (error && typeof error === 'object') {
       if (seenErrors.has(error)) return;
       seenErrors.add(error);
@@ -255,6 +298,7 @@ export function createTelemetry(environment: Environment, loadSdk: () => Promise
         permitted = readPreference();
         listening = true;
         environment.listenStorage((key, value) => {
+          diagnostics.storageChanged(key, value);
           if (key !== TELEMETRY_STORAGE_KEY && key !== null) return;
           permitted = value === '1'; // Clearing preferences must not silently opt an existing tab in.
           cookie();
@@ -279,6 +323,7 @@ export function createTelemetry(environment: Environment, loadSdk: () => Promise
       else stop();
     },
     enabled,
+    diagnostics,
     subscribe(listener: (enabled: boolean) => void) {
       listeners.add(listener);
       listener(enabled());
@@ -287,7 +332,11 @@ export function createTelemetry(environment: Environment, loadSdk: () => Promise
       };
     },
     pageview(path: string) {
-      if (!enabled()) return;
+      refreshDiagnostics();
+      if (!enabled()) {
+        diagnostics.pageview(path);
+        return;
+      }
       const clean = safePath(path);
       if (clean === lastPath) return;
       lastPath = clean;
@@ -300,6 +349,12 @@ export function createTelemetry(environment: Environment, loadSdk: () => Promise
     },
     operation(operation: TelemetryOperation, outcome: TelemetryOutcome, durationMs: number) {
       if (!OPERATIONS.includes(operation) || !OUTCOMES.includes(outcome)) return;
+      refreshDiagnostics();
+      if (!enabled()) {
+        diagnostics.operation(operation, outcome, durationMs);
+        if (outcome === 'failed') diagnostics.report(new Error('Operation failed'), operation);
+        return;
+      }
       send(() =>
         client?.capture('tracker_operation', { operation, outcome, duration_ms: durationMs })
       );
@@ -386,4 +441,22 @@ export function trackOperation(
 }
 export function reportBrowserError(error: unknown, operation?: TelemetryOperation) {
   instance()?.reportError(error, operation);
+}
+
+/** Handled service failures are reported by the server when analytics are on. */
+export function reportLocalServiceError() {
+  const target = instance();
+  if (target && !target.enabled()) target.reportError(new Error('Service request failed'));
+}
+export function subscribeDiagnostics(callback: (state: LocalDiagnosticsState) => void) {
+  return instance()?.diagnostics.subscribe(callback) ?? (() => {});
+}
+export function sendPendingDiagnosticReport() {
+  return instance()?.diagnostics.sendReport();
+}
+export function dismissDiagnosticReport(forever = false) {
+  instance()?.diagnostics.dismiss(forever);
+}
+export function restoreDiagnosticPrompts() {
+  instance()?.diagnostics.restorePrompts();
 }

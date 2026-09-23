@@ -11,6 +11,7 @@
   import { afterNavigate } from '$app/navigation';
   import { initTelemetry, capturePageview } from '$lib/telemetry/browser';
   import TelemetryNotice from '$lib/components/TelemetryNotice.svelte';
+  import ErrorReportNotice from '$lib/components/ErrorReportNotice.svelte';
   let { children, data } = $props();
   const BETA_DISMISSED_KEY = 'gfl2.beta-banner-dismissed';
   let betaVisible = $state(true);
@@ -47,6 +48,7 @@
 {/if}
 {@render children()}
 {#if data.telemetry.enabled}<TelemetryNotice />{/if}
+{#if data.telemetry.enabled}<ErrorReportNotice />{/if}
 
 <style>
   .beta-banner {

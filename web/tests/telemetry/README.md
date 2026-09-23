@@ -28,3 +28,9 @@ ingestion, including pending event batches and retries from rejected ingestion.
 Blocked network and runtime disable checks cover non-throwing
 telemetry calls; production import/restore usability belongs to the separate
 application routing regression suite.
+
+The mounted error-report toast also verifies the analytics-off path: local errors
+send nothing until explicit approval, then send exactly one sanitized report without
+enabling analytics. Handled service failures, both dismissal choices, and persistent
+prompt suppression are exercised. Set `GFL2_TELEMETRY_SCREENSHOTS` to a directory
+outside the repository to capture the desktop and mobile toast for visual review.

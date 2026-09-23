@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { gunzipSync } from 'node:zlib';
 import { createServer } from 'vite';
+import { svelte } from '@sveltejs/vite-plugin-svelte';
 
 // Use an existing Playwright installation; the tracker does not ship a browser/test runner.
 const playwright = process.env.PLAYWRIGHT_MODULE;
@@ -19,6 +21,8 @@ const replayerPath =
 const server = await createServer({
   configFile: false,
   root,
+  plugins: [svelte({ configFile: false })],
+  resolve: { alias: { $lib: fileURLToPath(new URL('../../src/lib', import.meta.url)) } },
   server: {
     host: '127.0.0.1',
     port: 0,
@@ -301,6 +305,41 @@ try {
   );
   console.log(
     'PASS opt-out: persistent after reload/navigation, synchronized across tabs, no queued event, replay, or failed-request retry ingestion'
+  );
+
+  failIngestion = false;
+  await page.evaluate(() =>
+    window.telemetryFixture.reportBrowserError(new TypeError('SENTINEL_MANUAL_REPORT'))
+  );
+  await page.getByRole('button', { name: 'Send error data', exact: true }).waitFor();
+  assert.equal(events.length, afterOptOut, 'local error prompt sends nothing');
+  if (process.env.GFL2_TELEMETRY_SCREENSHOTS) {
+    await mkdir(process.env.GFL2_TELEMETRY_SCREENSHOTS, { recursive: true });
+    await page.screenshot({ path: join(process.env.GFL2_TELEMETRY_SCREENSHOTS, 'desktop.png') });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: join(process.env.GFL2_TELEMETRY_SCREENSHOTS, 'mobile.png') });
+    await page.setViewportSize({ width: 1280, height: 720 });
+  }
+  await page.getByRole('button', { name: 'Send error data', exact: true }).click();
+  await page.getByRole('heading', { name: 'Error report sent', exact: true }).waitFor();
+  assert.equal(events.length, afterOptOut + 1, 'exactly one manual report sent');
+  assert.equal(events.at(-1).event, '$exception');
+  assert.ok(!JSON.stringify(events.at(-1)).includes('SENTINEL_'));
+  assert.equal(await page.evaluate(() => window.telemetryFixture.telemetryEnabled()), false);
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await page.evaluate(() => window.telemetryFixture.trackOperation('restore', 'failed', 5));
+  await page.getByRole('button', { name: 'Dismiss this time', exact: true }).click();
+  await page.evaluate(() => window.telemetryFixture.serviceFailure());
+  await page.getByRole('button', { name: 'Dismiss this time', exact: true }).click();
+  await page.evaluate(() => window.telemetryFixture.trackOperation('backup', 'failed', 8));
+  await page.getByRole('button', { name: 'Dismiss forever', exact: true }).click();
+  await page.reload();
+  await page.waitForFunction(() => !!window.telemetryFixture);
+  await page.evaluate(() => window.telemetryFixture.trackOperation('import', 'failed', 10));
+  assert.equal(await page.getByRole('button', { name: 'Send error data', exact: true }).count(), 0);
+  assert.equal(events.length, afterOptOut + 1, 'dismissals and reload transmit nothing');
+  console.log(
+    'PASS manual diagnostics: no upload before approval, one sanitized report, analytics stay off, both dismissals and persisted mute'
   );
 
   blocked = true;

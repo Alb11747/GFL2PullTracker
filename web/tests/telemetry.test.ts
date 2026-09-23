@@ -1,7 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CaptureResult, PostHogConfig } from 'posthog-js';
-import { createTelemetry, TELEMETRY_STORAGE_KEY } from '../src/lib/telemetry/browser.ts';
+import {
+  createTelemetry,
+  TELEMETRY_STORAGE_KEY,
+  sendDiagnosticReport
+} from '../src/lib/telemetry/browser.ts';
 import { safePath, sanitizeCapture, sanitizeError } from '../src/lib/telemetry/privacy.ts';
 import { telemetryEnvironment } from '../src/lib/telemetry/deployment.ts';
 
@@ -272,6 +276,7 @@ function harness(saved: string | null = null, privacySignal = false) {
   let loads = 0;
   const calls: string[] = [];
   const events: Array<{ event: string; properties: unknown }> = [];
+  const reports: CaptureResult[] = [];
   const storage = new Map<string, string>(saved === null ? [] : [[TELEMETRY_STORAGE_KEY, saved]]);
   let cookie = '';
   const sdk = {
@@ -301,6 +306,9 @@ function harness(saved: string | null = null, privacySignal = false) {
   const client = createTelemetry(
     {
       origin,
+      sendReport: async (payload) => {
+        reports.push(payload);
+      },
       privacySignal: () => privacySignal,
       storage: {
         getItem: (key) => storage.get(key) ?? null,
@@ -330,6 +338,7 @@ function harness(saved: string | null = null, privacySignal = false) {
     client,
     calls,
     events,
+    reports,
     storage,
     get loads() {
       return loads;
@@ -546,4 +555,68 @@ test('shared cookie immediately blocks another tab when localStorage is unavaila
   if (typeof beforeSend === 'function') assert.equal(beforeSend(event('$pageview', {})), null);
   tabs[1].refreshCookie();
   assert.deepEqual(tabs[1].calls.slice(-2), ['out', 'stop']);
+});
+
+test('analytics off buffers diagnostics and sends one explicit report without loading the SDK', async () => {
+  const h = harness('0');
+  h.client.init(config);
+  h.client.pageview('/history?token=secret');
+  h.client.operation('import', 'success', 125);
+  h.error(new TypeError('private capture'));
+  assert.equal(h.loads, 0);
+  assert.equal(h.reports.length, 0);
+  assert.equal(h.client.diagnostics.state.pending, true);
+  await h.client.diagnostics.sendReport();
+  assert.equal(h.reports.length, 1);
+  assert.equal(h.loads, 0);
+  assert.equal(h.client.enabled(), false);
+  assert.equal(h.storage.get(TELEMETRY_STORAGE_KEY), '0');
+  assert.match(h.cookie, /^gfl2_telemetry=0;/);
+  assert.doesNotMatch(JSON.stringify(h.reports), /secret|private capture/);
+});
+
+test('failed operations prompt only in analytics-off mode; opting in discards pending reports', async () => {
+  const h = harness('0');
+  h.client.init(config);
+  h.client.operation('restore', 'failed', 42);
+  assert.equal(h.client.diagnostics.state.pending, true);
+  h.client.setEnabled(true);
+  assert.equal(h.client.diagnostics.state.pending, false);
+  await h.loaded();
+  h.client.operation('backup', 'failed', 5);
+  assert.equal(h.client.diagnostics.state.pending, false);
+  assert.equal(h.events.at(-1)?.event, 'tracker_operation');
+  assert.equal(h.reports.length, 0);
+});
+
+test('disabled deployment and privacy signals do not create local report prompts', () => {
+  for (const [privacySignal, enabled] of [
+    [true, true],
+    [false, false]
+  ]) {
+    const h = harness('0', privacySignal);
+    h.client.init({ ...config, enabled });
+    h.error(new Error('failure'));
+    h.client.operation('backup', 'failed', 0);
+    assert.equal(h.client.diagnostics.state.pending, false);
+    assert.equal(h.loads, 0);
+  }
+});
+
+test('manual report transport makes one credential-free bounded request and never retries', async () => {
+  let calls = 0;
+  const payload = event('$exception', { token: 'test' });
+  await assert.rejects(
+    sendDiagnosticReport(payload, async (url, options) => {
+      calls++;
+      assert.equal(url, 'https://us.i.posthog.com/i/v0/e/');
+      assert.equal(options?.credentials, 'omit');
+      assert.equal(options?.redirect, 'error');
+      assert.equal(options?.referrerPolicy, 'no-referrer');
+      assert.ok(options?.signal);
+      assert.deepEqual(JSON.parse(String(options?.body)), { ...payload, api_key: 'test' });
+      return new Response('', { status: 503 });
+    })
+  );
+  assert.equal(calls, 1);
 });
