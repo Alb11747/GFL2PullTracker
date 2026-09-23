@@ -7,19 +7,23 @@
 </script>
 
 <section aria-labelledby="analytics-heading">
-  <h3 id="analytics-heading">Analytics &amp; diagnostics</h3>
+  <h2 id="analytics-heading">Analytics &amp; diagnostics</h2>
   {#if page.data.telemetry?.enabled}
     <label>
       <input
         type="checkbox"
         role="switch"
+        aria-describedby="analytics-description"
         checked={enabled}
         onchange={(event) => setTelemetryEnabled(event.currentTarget.checked)}
       />
-      Allow analytics, error reports, and masked session replay
+      <span>Allow analytics, error reports, and masked session replay</span>
     </label>
+    <p id="analytics-description">
+      On by default during beta. After beta, analytics and diagnostics will be off by default.
+      Your choice stays on this device and is not included in backups or Drive sync.
+    </p>
     <p>
-      On by default. Your choice stays on this device and is not included in backups or Drive sync.
       Turning this off stops new browser collection and excludes subsequent server requests and
       newly submitted jobs. Already submitted reports and running jobs are unaffected.
     </p>
@@ -30,26 +34,57 @@
 
 <style>
   section {
-    margin: 24px 0;
+    margin: 0 0 32px;
+    max-width: 72ch;
   }
-  h3 {
-    margin: 0 0 12px;
+  h2 {
+    margin: 0 0 20px;
   }
   label {
     display: flex;
+    flex-direction: row;
     align-items: center;
-    gap: 10px;
-    font-weight: 500;
+    gap: 12px;
+    min-height: 44px;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--ink);
   }
   input {
-    accent-color: var(--ink);
-    width: 18px;
-    height: 18px;
+    appearance: none;
+    width: 44px;
+    height: 24px;
+    min-height: 0;
+    padding: 3px;
+    margin: 0;
+    border: 1px solid var(--control-line);
+    border-radius: 12px;
+    background: var(--surface);
     flex-shrink: 0;
   }
+  input::before {
+    content: '';
+    display: block;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--muted);
+  }
+  input:checked {
+    background: var(--accent);
+    border-color: var(--accent-text);
+  }
+  input:checked::before {
+    transform: translateX(20px);
+    background: var(--ink);
+  }
+  @media (forced-colors: active) {
+    input { appearance: auto; }
+    input::before { display: none; }
+  }
   p {
-    margin: 10px 0 0;
-    max-width: 72ch;
+    margin: 12px 0 0;
     line-height: 1.6;
+    color: var(--muted);
   }
 </style>

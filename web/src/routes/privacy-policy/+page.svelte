@@ -107,7 +107,7 @@
     <p>
       Configured public deployments use PostHog’s US service for page visits, import, backup,
       restore, and Drive-sync outcomes, sanitized error reports, and masked session replay.
-      Collection is on by default. Turn off <a href="/privacy"
+      Collection is on by default during beta and will be off by default after beta. Turn off <a href="/privacy"
         >Analytics &amp; diagnostics in Privacy</a
       >
       to stop new collection on this device. Local-server mode does not collect this telemetry.

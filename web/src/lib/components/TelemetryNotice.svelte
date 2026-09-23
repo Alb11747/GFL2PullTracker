@@ -40,7 +40,8 @@
     <div>
       <h2 id="telemetry-notice-title">Analytics &amp; diagnostics</h2>
       <p>
-        Analytics, error reports, and masked session replay are on. Private archive content is
+        Analytics, error reports, and masked session replay are on by default during beta and will
+        be off by default after beta. Private archive content is
         blocked from replay. You can turn collection off on this device in <a href="/privacy"
           >Privacy</a
         >.
