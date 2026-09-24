@@ -13,6 +13,7 @@ const routes = new Set([
   '/profiles',
   '/statistics',
   '/privacy',
+  '/about',
   '/privacy-policy',
   '/guides/exilium'
 ]);

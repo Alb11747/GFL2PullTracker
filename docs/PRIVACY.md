@@ -82,3 +82,25 @@ Operators and PostHog can receive ordinary connection metadata such as IP
 addresses. Operators must publish contact details, retention policy, and hosting
 jurisdiction before offering a public service. This project does not add
 advertising. See [PostHog's privacy policy](https://posthog.com/privacy).
+
+## Voluntary feedback and bug reports
+
+The hosted tracker's About tab lets you explicitly send feedback or report a bug
+through a dedicated PostHog survey. A submission includes your selected category,
+message, and optional email address so the operator can contact you. Do not include
+game captures, credentials, private account information, or pull history in your
+message. Drafts stay in browser memory across tracker tabs and clear when you leave
+or reload the page; they are not saved in browser storage, backups, or Drive.
+
+Sending is available even when automatic analytics are off. It uses a fresh random
+identifier for each submission, includes the deployed revision and environment,
+and does not use the analytics identity, create a person profile, or change your
+analytics preference. Feedback fields are excluded from automatic capture and
+session replay. Only pressing Send uploads their contents.
+
+For a bug report, you may separately choose to attach a pending sanitized technical
+diagnostic snapshot. This unchecked option includes the existing in-memory report,
+not session replay, form contents, or pull history. It shares the pending report
+with the error prompt to prevent simultaneous duplicate sends. Submissions are not
+retried automatically. If delivery cannot be confirmed, the draft is retained and
+sending it again may create a duplicate.

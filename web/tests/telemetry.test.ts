@@ -620,3 +620,13 @@ test('manual report transport makes one credential-free bounded request and neve
   );
   assert.equal(calls, 1);
 });
+
+test('manual reports recognize cloud and legacy acknowledgements but reject uncertain bodies', async () => {
+  const payload = event('survey sent', { token: 'test' });
+  for (const status of ['Ok', 1]) {
+    await sendDiagnosticReport(payload, async () => Response.json({ status }));
+  }
+  for (const body of ['{"status":0}', '{}', 'null', 'not json']) {
+    await assert.rejects(sendDiagnosticReport(payload, async () => new Response(body)));
+  }
+});

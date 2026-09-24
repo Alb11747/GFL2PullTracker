@@ -66,6 +66,31 @@ consume collection capacity. An interrupted capture job needs a new capture.
 
 ## Verify a running release
 
+### About feedback form
+
+Create an API survey in the same PostHog project as the ingestion token, named
+`Tracker feedback`, with these questions in order: single choice `Category`
+(`Give feedback`, `Report a bug`), required open-text `Message`, and optional
+open-text `Email (optional)`. Disable partial responses. Launch the API survey;
+the tracker renders it itself and never enables automatic survey display.
+
+Set these public runtime identifiers in the deployment `.env`:
+`PUBLIC_FEEDBACK_SURVEY_ID`, `PUBLIC_FEEDBACK_CATEGORY_ID`,
+`PUBLIC_FEEDBACK_MESSAGE_ID`, and `PUBLIC_FEEDBACK_EMAIL_ID`. Use the stable
+survey/question UUIDs returned by PostHog, not question indexes. Compose passes
+them to the web service. An incomplete configuration leaves About available
+with a GitHub fallback. No personal API key belongs in browser configuration.
+
+The form submits one completed `survey sent` event directly through the existing
+US ingestion endpoint, even when automatic analytics are off. It uses a fresh
+anonymous identity per submission and preserves analytics preferences. Text and
+email are intentionally included only on explicit submission; the normal event
+sanitizer continues to reject survey events. Optional diagnostics consume the
+already-sanitized local error once, preventing a duplicate toast submission.
+Network uncertainty never triggers an automatic retry. Validate with isolated
+network fixtures, then confirm a clearly marked test response in Surveys after
+deployment; ingestion acknowledgement alone does not prove survey rendering.
+
 ### Optional PostHog diagnostics
 
 Set `PUBLIC_POSTHOG_KEY` to the project's public ingestion token and

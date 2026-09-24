@@ -33,6 +33,10 @@ locks, history focus, and a production backup file handed across routes and
 restored. The smoke command checks actual built public/local HTTP routes,
 redirects, unknown slugs, and runtime privacy-policy disclosures.
 
+Open <http://127.0.0.1:14195/about?archive-failure=1> for a separate direct-entry
+check that forces archive worker initialization to fail and verifies About remains
+visible. Reload that address to exercise refresh under the same failure.
+
 Also inspect desktop/mobile appearance and keyboard navigation manually. Open a
 navigation link in a new tab and refresh each panel to verify browser entry and
 hydration. The scripted suite does not automate browser tabs or viewport sizing,

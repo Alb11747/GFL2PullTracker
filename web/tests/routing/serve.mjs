@@ -23,6 +23,11 @@ async function application(mode) {
       ADDRESS_HEADER: 'x-real-ip',
       GFL2_MODE: mode, PUBLIC_ORIGIN: 'https://routing.invalid',
       PUBLIC_GOOGLE_CLIENT_ID: 'synthetic-routing-client',
+      PUBLIC_POSTHOG_KEY: 'phc_synthetic_routing_fixture', PUBLIC_POSTHOG_HOST: 'https://us.i.posthog.com',
+      PUBLIC_FEEDBACK_SURVEY_ID: '11111111-1111-4111-8111-111111111111',
+      PUBLIC_FEEDBACK_CATEGORY_ID: '22222222-2222-4222-8222-222222222222',
+      PUBLIC_FEEDBACK_MESSAGE_ID: '33333333-3333-4333-8333-333333333333',
+      PUBLIC_FEEDBACK_EMAIL_ID: '44444444-4444-4444-8444-444444444444',
       GFL2_API_URL: 'http://127.0.0.1:1', GFL2_API_ALLOWED_ORIGINS: 'http://127.0.0.1:1',
       PUBLIC_SUPPORT_EMAIL: 'routing@example.invalid',
       PUBLIC_HOSTING_DETAILS: 'Synthetic routing fixture', PUBLIC_LOG_RETENTION: 'No fixture logs retained'
@@ -54,7 +59,7 @@ async function smoke() {
       for (const path of ['/not-a-section', '/History', '/backup/unknown']) {
         assert.equal((await fetch(base + path, { headers: { 'x-real-ip': '127.0.0.1' } })).status, 404, `${mode} ${path}`);
       }
-      for (const path of ['/', '/backup', '/profiles', '/statistics', '/privacy']) {
+      for (const path of ['/', '/backup', '/profiles', '/statistics', '/privacy', '/about']) {
         const response = await fetch(base + path, { redirect: 'manual', headers: { 'x-real-ip': '127.0.0.1' } });
         if (mode === 'public' && path !== '/') {
           assert.equal(response.status, 200, path);
@@ -62,6 +67,7 @@ async function smoke() {
           const anchor = html.match(new RegExp(`<a\\b[^>]*href="${path}"[^>]*>`))?.[0] ?? '';
           assert.match(anchor, /aria-current="page"/, `${path} current on first render`);
           assert.match(anchor, /class="[^"]*\bchosen\b[^"]*"/, `${path} chosen on first render`);
+          if (path === '/about') assert.ok(html.includes('About'), 'About renders without waiting for the archive');
           assert.ok(!html.includes('id="history-title"'), `${path} does not flash history while initializing`);
         }
         else {

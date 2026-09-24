@@ -47,6 +47,8 @@ const requests = [];
 const errors = [];
 let blocked = false;
 let failIngestion = false;
+let releaseSurvey;
+let holdSurvey = false;
 
 function decode(request) {
   const body = request.postDataBuffer();
@@ -119,11 +121,15 @@ try {
     } catch (error) {
       errors.push(String(error));
     }
+    if (holdSurvey && decode(request).some((event) => event.event === 'survey sent'))
+      await new Promise((resolve) => {
+        releaseSurvey = resolve;
+      });
     return route.fulfill({
       status: failIngestion ? 503 : 200,
       headers,
       contentType: 'application/json',
-      body: failIngestion ? '{"status":0}' : '{"status":1}'
+      body: failIngestion ? '{"status":0}' : '{"status":"Ok"}'
     });
   });
   const page = await context.newPage();
@@ -161,6 +167,10 @@ try {
     'pageview and error ingestion'
   );
   const mutationStart = Date.now();
+  await page.evaluate(() => window.telemetryFixture.showAbout());
+  await page.locator('#feedback-message').fill('SENTINEL_FEEDBACK_DRAFT');
+  await page.locator('#feedback-email').fill('SENTINEL_EMAIL@example.test');
+  await page.evaluate(() => window.telemetryFixture.showAbout(false));
   await page.locator('#private-input').fill('SENTINEL_RECORDED_INPUT');
   await page.evaluate(() => {
     document.querySelector('#private-text').textContent = 'SENTINEL_RECORDED_MUTATION';
@@ -340,6 +350,140 @@ try {
   assert.equal(events.length, afterOptOut + 1, 'dismissals and reload transmit nothing');
   console.log(
     'PASS manual diagnostics: no upload before approval, one sanitized report, analytics stay off, both dismissals and persisted mute'
+  );
+
+  await page.evaluate(() => window.telemetryFixture.showAbout());
+  const beforeFeedback = events.length;
+  const beforeRequests = requests.length;
+  const preferences = await page.evaluate(() => ({ ...localStorage }));
+  await page.locator('#feedback-message').fill('   ');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await page.getByRole('alert').filter({ hasText: 'Enter a message' }).waitFor();
+  assert.equal(events.length, beforeFeedback, 'invalid draft is never submitted');
+  await page.locator('#feedback-message').fill('SENTINEL_EXPLICIT_FEEDBACK');
+  await page.locator('#feedback-email').fill('SENTINEL_CONTACT@example.test');
+  await page.evaluate(() => {
+    window.telemetryFixture.showAbout(false);
+    window.telemetryFixture.navigate('/history');
+    window.telemetryFixture.showAbout();
+  });
+  assert.equal(await page.locator('#feedback-message').inputValue(), 'SENTINEL_EXPLICIT_FEEDBACK');
+  assert.equal(
+    requests.length,
+    beforeRequests,
+    'typing and tab changes while opted out make no requests'
+  );
+  await page.locator('#feedback-category').focus();
+  await page.keyboard.press('Tab');
+  assert.equal(
+    await page.locator('#feedback-message').evaluate((node) => node === document.activeElement),
+    true
+  );
+  await page.keyboard.press('Tab');
+  assert.equal(
+    await page.locator('#feedback-email').evaluate((node) => node === document.activeElement),
+    true
+  );
+  if (process.env.GFL2_TELEMETRY_SCREENSHOTS) {
+    await page.screenshot({
+      path: join(process.env.GFL2_TELEMETRY_SCREENSHOTS, 'about-desktop.png'),
+      fullPage: true
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(
+      await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+      true,
+      'mobile form has no horizontal overflow'
+    );
+    await page.screenshot({
+      path: join(process.env.GFL2_TELEMETRY_SCREENSHOTS, 'about-mobile.png'),
+      fullPage: true
+    });
+    await page.setViewportSize({ width: 1280, height: 720 });
+  }
+  holdSurvey = true;
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await waitFor(() => !!releaseSurvey, 'survey awaiting response');
+  await page.locator('form').evaluate((form) => {
+    form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+  });
+  assert.equal(events.length, beforeFeedback + 1, 'concurrent submission is prevented');
+  releaseSurvey();
+  holdSurvey = false;
+  releaseSurvey = undefined;
+  await page.getByText('Thank you. Your feedback was sent.', { exact: false }).waitFor();
+  const submitted = events.at(-1);
+  assert.equal(submitted.event, 'survey sent');
+  assert.equal(
+    submitted.properties['$survey_response_00000000-0000-4000-8000-000000000002'],
+    'Give feedback'
+  );
+  assert.equal(
+    submitted.properties['$survey_response_00000000-0000-4000-8000-000000000003'],
+    'SENTINEL_EXPLICIT_FEEDBACK'
+  );
+  assert.equal(
+    submitted.properties['$survey_response_00000000-0000-4000-8000-000000000004'],
+    'SENTINEL_CONTACT@example.test'
+  );
+  assert.equal(submitted.properties.$process_person_profile, false);
+  assert.equal(submitted.properties.$survey_completed, true);
+  assert.equal(await page.locator('#feedback-message').inputValue(), '');
+  assert.equal(await page.locator('#feedback-email').inputValue(), '');
+  assert.equal(await page.evaluate(() => window.telemetryFixture.telemetryEnabled()), false);
+  assert.deepEqual(await page.evaluate(() => ({ ...localStorage })), preferences);
+  assert.deepEqual(
+    requests.slice(beforeRequests).filter((path) => path !== '/i/v0/e/'),
+    [],
+    'only approved direct endpoint is used'
+  );
+
+  await page.evaluate(() => {
+    window.telemetryFixture.restoreDiagnosticPrompts();
+    window.telemetryFixture.reportBrowserError(new TypeError('SENTINEL_BUG_DIAGNOSTIC'));
+  });
+  await page.locator('#feedback-category').selectOption('bug');
+  const diagnostic = page.getByRole('checkbox', { name: 'Include technical diagnostics' });
+  assert.equal(await diagnostic.isChecked(), false);
+  await diagnostic.check();
+  await page.locator('#feedback-message').fill('SENTINEL_BUG_MESSAGE');
+  holdSurvey = true;
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await waitFor(() => !!releaseSurvey, 'diagnostic survey awaiting response');
+  const withDiagnostic = events.length;
+  await page.evaluate(() => window.telemetryFixture.sendPendingDiagnosticReport());
+  assert.equal(
+    events.length,
+    withDiagnostic,
+    'toast cannot send diagnostics already claimed by feedback'
+  );
+  releaseSurvey();
+  holdSurvey = false;
+  releaseSurvey = undefined;
+  await page.getByRole('button', { name: 'Send', exact: true }).waitFor();
+  assert.ok(events.at(-1).properties.technical_diagnostics);
+  assert.ok(!JSON.stringify(events.at(-1).properties.technical_diagnostics).includes('SENTINEL_'));
+  assert.equal(
+    events.at(-1).properties['$survey_response_00000000-0000-4000-8000-000000000004'],
+    undefined
+  );
+  assert.notEqual(events.at(-1).properties.distinct_id, submitted.properties.distinct_id);
+
+  failIngestion = true;
+  await page.locator('#feedback-message').fill('SENTINEL_UNCERTAIN_DRAFT');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await page.getByText('Could not confirm delivery.', { exact: false }).waitFor();
+  assert.equal(await page.locator('#feedback-message').inputValue(), 'SENTINEL_UNCERTAIN_DRAFT');
+  const afterUncertain = events.length;
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  assert.equal(events.length, afterUncertain, 'uncertain delivery has no automatic retry');
+  failIngestion = false;
+  assert.ok(
+    !JSON.stringify(events.filter((event) => event.event !== 'survey sent')).includes('SENTINEL_'),
+    'drafts and contact text never enter automatic capture or replay'
+  );
+  console.log(
+    'PASS feedback: validation, keyboard order, in-memory draft, one explicit anonymous survey, optional email and diagnostics, competing toast exclusion, unchanged opt-out, uncertain draft retention; automatic capture/replay excludes drafts'
   );
 
   blocked = true;

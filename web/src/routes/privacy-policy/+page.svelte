@@ -20,7 +20,7 @@
       Your pull history stays in your browser unless you choose to send it elsewhere. You do not
       need a website account or Google connection to use the tracker.
     </p>
-    <p class="updated">Last updated September 21, 2026</p>
+    <p class="updated">Last updated September 23, 2026</p>
   </header>
 
   <section aria-labelledby="browser-data">
@@ -146,13 +146,38 @@
     <p>
       If an error occurs, a prompt lets you send that report to PostHog’s US service, dismiss it
       this time, or dismiss future prompts on this device. Nothing from the buffer is uploaded
-      unless you choose <strong>Send error data</strong>. Sending uses a new report identifier and
+      unless you choose <strong>Send error data</strong> or explicitly attach it to an About bug report.
+      Sending uses a new report identifier and
       does not enable automatic analytics. Reports are not retried automatically.
     </p>
     <p>
       <strong>Dismiss forever</strong> discards pending diagnostics and remembers only your prompt
       preference on this device, outside backups and Drive sync. You can allow prompts again in
       <a href="/privacy">Privacy</a>. Browser privacy signals continue to disable diagnostics.
+    </p>
+  </section>
+
+  <section aria-labelledby="feedback-data">
+    <h2 id="feedback-data">Voluntary feedback and bug reports</h2>
+    <p>
+      The <a href="/about">About tab</a> lets you send a category, message, and optional email
+      address to a dedicated PostHog survey. Providing an email lets the operator contact you.
+      Do not include captures, credentials, private account information, or pull history in your
+      message. Drafts stay in memory across tracker tabs and clear when you leave or reload the
+      page. They are not saved in browser storage, backups, or Drive.
+    </p>
+    <p>
+      Feedback is sent only when you press <strong>Send</strong>, including when automatic
+      analytics are off. Each submission uses a fresh random identifier, deployed revision, and
+      environment. It does not use your analytics identity, create a person profile, or change
+      your analytics preference. Feedback fields are excluded from automatic capture and session replay.
+    </p>
+    <p>
+      A bug report can optionally include a pending sanitized technical diagnostic snapshot.
+      This unchecked choice excludes session replay, form contents, and pull history. The About
+      form and error prompt share the pending report to prevent simultaneous duplicate sends.
+      Submissions are not retried automatically. If delivery cannot be confirmed, your draft stays
+      available and sending it again may create a duplicate.
     </p>
   </section>
 

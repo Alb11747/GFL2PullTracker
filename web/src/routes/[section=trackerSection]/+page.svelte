@@ -6,6 +6,7 @@
   import { trackerPages, type TrackerSection } from '$lib/tracker-routes';
   import MultiSelect from '$lib/components/MultiSelect.svelte';
   import EliteHistory from '$lib/components/EliteHistory.svelte';
+  import AboutPanel from '$lib/components/AboutPanel.svelte';
   import GitHubLink from '$lib/components/GitHubLink.svelte';
   import LoadingRegion from '$lib/components/LoadingRegion.svelte';
   import LoadingLabel from '$lib/components/LoadingLabel.svelte';
@@ -128,14 +129,19 @@
     $state<typeof import('$lib/components/CommunityStatistics.svelte').default>();
   let SettingsPanel = $state<typeof import('$lib/components/ArchiveSettings.svelte').default>();
   let panelError = $state('');
+  let aboutVisited = $state(false);
+  $effect(() => {
+    if (hosted && section === 'about') aboutVisited = true;
+  });
   const panelLoading = $derived(
     hosted &&
       section !== 'history' &&
+      section !== 'about' &&
       (initializing ||
         (!panelError && (section === 'statistics' ? !StatisticsPanel : !SettingsPanel)))
   );
   $effect(() => {
-    if (!hosted || section === 'history') return;
+    if (!hosted || section === 'history' || section === 'about') return;
     const target = section;
     panelError = '';
     if (target === 'statistics') {
@@ -1118,7 +1124,9 @@
 <main class="ph-no-capture">
   {#if !importOpen || section !== 'history'}{@render importStatus()}{/if}
   <LoadingRegion busy={panelLoading} message={`Loading ${currentPage.label.toLowerCase()}…`}>
-    {#if hosted && section !== 'history' && initializing}
+    {#if hosted && section === 'about'}
+      <!-- About is independent of the archive and its lazy settings module. -->
+    {:else if hosted && section !== 'history' && initializing}
       <div></div>
     {:else if hosted && section !== 'history' && !local}
       <section class="empty-state" aria-label={currentPage.title}>
@@ -1750,6 +1758,11 @@
       </section>
     {/if}
   </LoadingRegion>
+  {#if hosted && (section === 'about' || aboutVisited)}
+    <div id="about-panel" hidden={section !== 'about'}>
+      <AboutPanel config={data.feedback} />
+    </div>
+  {/if}
   <footer>
     <span>GFL2 Pull Tracker</span>
     <GitHubLink />

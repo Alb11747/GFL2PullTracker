@@ -183,6 +183,12 @@ export function createLocalDiagnostics(environment: Environment) {
       fingerprints.clear();
       saveMuted(false);
     },
+    takeForFeedback() {
+      if (!available() || !pending || sending) return;
+      const payload = pending;
+      clear();
+      return payload;
+    },
     async sendReport() {
       if (!available() || !pending || sending) return;
       const payload = pending;

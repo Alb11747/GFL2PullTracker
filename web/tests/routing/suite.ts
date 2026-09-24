@@ -4,6 +4,37 @@
   'use strict';
   const origin = 'http://127.0.0.1:14195';
   if (location.origin !== origin) throw new Error('Routing fixture refused a non-test origin.');
+  // The routing fixture exercises voluntary feedback while automatic telemetry stays off.
+  localStorage.setItem('gfl2.telemetry.enabled', '0');
+  // A separate direct-entry run proves feedback remains reachable when the archive fails.
+  if (location.pathname === '/about' && new URLSearchParams(location.search).has('archive-failure')) {
+    let attempted = false;
+    window.Worker = new Proxy(window.Worker, {
+      construct() {
+        attempted = true;
+        throw new DOMException('Synthetic archive unavailable', 'InvalidStateError');
+      }
+    });
+    document.addEventListener('DOMContentLoaded', () => {
+      const result = document.createElement('aside');
+      result.id = 'routing-fixture';
+      result.textContent = 'Checking About with unavailable browser storage…';
+      document.body.append(result);
+      const deadline = Date.now() + 15000;
+      const check = () => {
+        const about = document.querySelector<HTMLElement>('#about-panel');
+        if (attempted && about && !about.hidden && about.textContent?.includes('About')) {
+          result.dataset.result = 'pass';
+          result.textContent = 'PASS direct About entry remains usable after archive failure';
+        } else if (Date.now() > deadline) {
+          result.dataset.result = 'fail';
+          result.textContent = 'FAIL About unavailable after archive failure';
+        } else setTimeout(check, 50);
+      };
+      check();
+    });
+    return;
+  }
   const RUN = 'gfl2.routing.run';
   if (location.pathname === '/__routing/reset') {
     localStorage.clear();
@@ -217,14 +248,14 @@
     element.dispatchEvent(new Event('change', { bubbles: true }));
   }
   const search = () => required(document.querySelector<HTMLInputElement>('input[type="search"]'), 'history search');
-  type Slug = 'history' | 'backup' | 'profiles' | 'statistics' | 'privacy';
+  type Slug = 'history' | 'backup' | 'profiles' | 'statistics' | 'privacy' | 'about';
   async function navigate(slug: Slug) {
     const link = document.querySelector<HTMLAnchorElement>(`.archive-nav a[href="/${slug}"]`);
     assert(link, `Ordinary navigation link /${slug}`);
     link.click();
     await until(() => location.pathname === `/${slug}` && link.getAttribute('aria-current') === 'page', `navigate ${slug}`);
     assert(document.querySelectorAll('.archive-nav [aria-current="page"]').length === 1, 'One current page');
-    const title = { history: 'Recruitment ledger', backup: 'Backup & sync', profiles: 'Profiles', statistics: 'Community statistics', privacy: 'Privacy & recovery' }[slug];
+    const title = { history: 'Recruitment ledger', backup: 'Backup & sync', profiles: 'Profiles', statistics: 'Community statistics', privacy: 'Privacy & recovery', about: 'About' }[slug];
     assert(document.title.includes(title), `Page title matches ${slug}`);
   }
 
@@ -289,22 +320,25 @@
     await navigate('history');
     input(search(), '1001');
     await wait(250);
-    for (const slug of ['backup', 'statistics', 'privacy', 'history'] as const) await navigate(slug);
+    for (const slug of ['backup', 'statistics', 'privacy', 'about', 'history'] as const) await navigate(slug);
     assert(activeProfile().value === primary && search().value === '1001', 'Profile and filter retained');
     log('PASS route links, titles, current page, retained profile and filter');
     await navigate('backup');
     await wait(250);
     const previousQueries = workerQueries.length;
-    for (const slug of ['profiles', 'statistics', 'privacy', 'backup'] as const) await navigate(slug);
+    for (const slug of ['profiles', 'statistics', 'privacy', 'about', 'backup'] as const) await navigate(slug);
     await wait(250);
     assert(workerQueries.length === previousQueries,
       `Non-history routes issued archive queries: ${workerQueries.slice(previousQueries).join(', ')}`);
     log('PASS unrelated routes issue no archive history, reward, summary, or filter queries');
 
-    await navigate('profiles');
+    await navigate('about');
+    const feedbackDraft = required(document.querySelector<HTMLTextAreaElement>('#feedback-message'), 'feedback draft');
+    input(feedbackDraft, 'Routing draft retained in memory');
     await navigate('backup');
     history.back();
-    await until(() => location.pathname === '/profiles', 'Back');
+    await until(() => location.pathname === '/about', 'Back');
+    assert(document.querySelector<HTMLTextAreaElement>('#feedback-message')?.value === 'Routing draft retained in memory', 'About draft survives tracker navigation');
     history.forward();
     await until(() => location.pathname === '/backup', 'Forward');
     log('PASS browser Back and Forward');
@@ -338,7 +372,7 @@
     await until(() => findButton('Fetch accessible history')?.matches(':enabled'), 'capture submission enabled');
     clickButton('Fetch accessible history');
     await until(() => releaseCapture, 'capture request held');
-    for (const slug of ['backup', 'statistics', 'privacy', 'history'] as const) {
+    for (const slug of ['backup', 'statistics', 'privacy', 'about', 'history'] as const) {
       await navigate(slug);
       assert(activeProfile().disabled, 'Import operation retains profile lock');
       assert(captureSignal && !captureSignal.aborted, 'Capture survives route navigation');

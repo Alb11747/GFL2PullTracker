@@ -61,7 +61,9 @@ export async function sendDiagnosticReport(payload: CaptureResult, fetcher: type
   });
   if (!response.ok) throw new Error('Report submission could not be confirmed.');
   const result = await response.json();
-  if (result?.status !== 1) throw new Error('Report submission could not be confirmed.');
+  // Cloud ingestion acknowledges with "Ok"; older endpoints use numeric 1.
+  if (result?.status !== 'Ok' && result?.status !== 1)
+    throw new Error('Report submission could not be confirmed.');
 }
 
 /** Isolated controller allows lifecycle/privacy tests without starting a real SDK. */
@@ -453,6 +455,9 @@ export function subscribeDiagnostics(callback: (state: LocalDiagnosticsState) =>
 }
 export function sendPendingDiagnosticReport() {
   return instance()?.diagnostics.sendReport();
+}
+export function takeFeedbackDiagnostics() {
+  return instance()?.diagnostics.takeForFeedback();
 }
 export function dismissDiagnosticReport(forever = false) {
   instance()?.diagnostics.dismiss(forever);

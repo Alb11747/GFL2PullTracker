@@ -34,3 +34,15 @@ send nothing until explicit approval, then send exactly one sanitized report wit
 enabling analytics. Handled service failures, both dismissal choices, and persistent
 prompt suppression are exercised. Set `GFL2_TELEMETRY_SCREENSHOTS` to a directory
 outside the repository to capture the desktop and mobile toast for visual review.
+
+The production About form is mounted with synthetic survey/question identifiers.
+Feedback coverage checks automatic analytics/replay exclusion while typing, no
+requests for drafts with analytics off, accessible keyboard order, validation,
+draft retention when the panel is hidden for tab navigation, completed survey
+mapping, optional email, fresh anonymous identity, unchanged analytics preferences,
+and confirmed-success clearing. A held response verifies concurrent submit
+prevention and that the toast cannot send a diagnostic claimed by the form. A
+rejected response verifies the uncertain-delivery warning, retained draft, and no
+automatic retry. The screenshot option also captures `about-desktop.png` and
+`about-mobile.png`; mobile capture checks horizontal overflow. Full hosted routing
+and archive/import lifecycle coverage belongs to the application routing suite.

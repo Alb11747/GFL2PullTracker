@@ -5,6 +5,17 @@ import { env as publicEnv } from '$env/dynamic/public';
 import type { LayoutServerLoad } from './$types';
 
 export const load: LayoutServerLoad = () => ({
+  feedback: {
+    enabled: env.GFL2_MODE === 'public' && Boolean(publicEnv.PUBLIC_POSTHOG_KEY),
+    key: publicEnv.PUBLIC_POSTHOG_KEY || '',
+    host: publicEnv.PUBLIC_POSTHOG_HOST || 'https://us.i.posthog.com',
+    release: publicEnv.PUBLIC_APP_RELEASE || '',
+    environment: telemetryEnvironment(env.GFL2_TELEMETRY_ENVIRONMENT, dev),
+    surveyId: publicEnv.PUBLIC_FEEDBACK_SURVEY_ID || '',
+    categoryId: publicEnv.PUBLIC_FEEDBACK_CATEGORY_ID || '',
+    messageId: publicEnv.PUBLIC_FEEDBACK_MESSAGE_ID || '',
+    emailId: publicEnv.PUBLIC_FEEDBACK_EMAIL_ID || ''
+  },
   telemetry: {
     enabled: env.GFL2_MODE === 'public' && Boolean(publicEnv.PUBLIC_POSTHOG_KEY),
     key: publicEnv.PUBLIC_POSTHOG_KEY || '',
