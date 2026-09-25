@@ -19,11 +19,8 @@ dist/
 .env.*
 posthog-cli.env
 !.env.example
-.impeccable/mocks/
-.impeccable/review/
-.impeccable/build/
-.impeccable/config.local.json
-.impeccable/questions/
+# Personal operations and agent state belong outside the public repository.
+.impeccable/
 test-results/
 playwright-report/
 .playwright-cli/

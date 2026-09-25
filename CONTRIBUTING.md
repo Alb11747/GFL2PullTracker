@@ -4,6 +4,14 @@ Use Python 3.11 or later, uv, and Node.js 24. Install the locked dependencies wi
 `uv sync --frozen` and `npm --prefix web ci`. Run `uv run --frozen pytest`,
 `npm --prefix web run check`, `npm --prefix web test`, and `npm --prefix web run build`.
 
+Commit reusable project code and documentation only. Keep personal deployment
+scripts, account-specific publication tools, machine configuration, and agent
+state in a separate local repository without a public remote. Do not include
+real names, private contact details, or local machine paths in examples or fixtures.
+Public project links, support contacts, and contributor attribution can remain.
+Keep any personal publication checks in local Git hooks outside this repository.
+Review reachable history as well as the final files before pushing.
+
 Keep synthetic fixtures free of real credentials and player histories. Preserve
 occurrence multiplicity, account identity boundaries, source ordering, coverage
 gaps, and the distinction between uploaded and server-fetched history. The
