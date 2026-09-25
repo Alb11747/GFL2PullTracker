@@ -87,7 +87,7 @@
   <section aria-labelledby="capture-data">
     <h2 id="capture-data">Game captures and server features</h2>
     <p>
-      With server backup and community contribution both off, capture import first requests records
+      With server history submission and recovery off, capture import first requests records
       directly from the official game service. If that fails, you can explicitly choose a server
       relay. The relay receives your capture, including game authentication material, in server
       memory to fetch records and return them to your browser. Captures, game tokens, and
@@ -95,10 +95,26 @@
       capture in a support message.
     </p>
     <p>
-      Private server backups, game-account recovery, and community contributions are currently
-      disabled until trustworthy game-account ownership verification is available. Google
-      authorization does not grant access to server backups. The backup and contribution choices are
-      independent, and Drive sync cannot enable either one.
+      Server history submission and recovery are currently disabled because this release has no
+      audited production provider verifier. When available, the combined “Contribute to community
+      statistics / Save server backup” choice defaults on. Explicit opt-out is remembered on this
+      device and stops future submissions; it does not delete previously saved history. Recovery
+      defaults off and runs separately without submitting history. Drive sync cannot enable either
+      action.
+    </p>
+    <p>
+      Server-collected history and uploaded history you explicitly submit after account verification
+      share one normalized store, associated with your verified game UID, provider, server, and
+      channel and retaining source and snapshot fingerprint provenance. This same data supports
+      private recovery and community statistics. Verifying account ownership does not independently
+      verify the authenticity of uploaded pull records. Public statistics contain only aggregates;
+      cohorts with fewer than five contributors are suppressed.
+    </p>
+    <p>
+      Submission, recovery, and deletion require fresh authenticated capture proof through a
+      supported provider. Google authorization alone does not grant access, and there is no recovery
+      key. “Delete server history” removes the server backup and contribution to future statistics
+      together. Your local browser and Google Drive copies remain untouched.
     </p>
   </section>
 

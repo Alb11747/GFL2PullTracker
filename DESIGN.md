@@ -209,9 +209,11 @@ The current system has no reusable elevated card component. The sidecar records 
 
 ## Public tracker extension
 
-Public mode adds a compact navigation row for My history, Profiles, Backup & sync, Community statistics, and Privacy. These surfaces reuse the existing cool paper, charcoal, orange, thin rules, Barlow typography, and visible focus treatments. Settings use aligned form groups and inline confirmations; consent and unavailable-provider messages appear beside the action they affect. Mobile settings stack, and history overflow stays within its table region.
+Public mode adds a compact navigation row for My history, Statistics, Profiles, Backup & sync, and Privacy. These surfaces reuse the existing cool paper, charcoal, orange, thin rules, Barlow typography, and visible focus treatments. Settings use aligned form groups and inline confirmations; consent and unavailable-provider messages appear beside the action they affect. Mobile settings stack, and history overflow stays within its table region.
 
 Public navigation occupies a dedicated, left-aligned second row inside the charcoal masthead, below the responsive wordmark and profile/import controls. Header and content gutters align. A subtle charcoal divider (#2d343b) has 10px gaps at both masthead edges; only the active tab has an orange underline. Tabs preserve full labels and scroll horizontally on narrow screens. DOM and keyboard order follow the visual order: home, account controls, then navigation. The profile selector is width-bounded so long names cannot push controls out of view. Local mode retains its existing header without navigation.
+
+The combined **Contribute to community statistics / Save server backup** choice defaults on when available, remembers explicit opt-out, and explains that saved history supports both recovery and aggregate statistics. **Recover server history** defaults off and runs separately without submitting history. **Delete server history** removes both server uses, leaving local and Drive copies untouched. Unavailable ownership providers keep these controls disabled.
 
 Local storage and cloud synchronization have separate status messages. Empty community statistics show the minimum contribution threshold, not illustrative totals. Captures are never reflected in errors, and unavailable Google or provider configuration is explained before submission.
 

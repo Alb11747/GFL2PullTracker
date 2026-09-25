@@ -178,12 +178,12 @@ test('public client initializes CSRF and sends a single explicit mutation', asyn
     return Response.json({ id: 'job', status: 'queued' });
   }) as typeof fetch);
   await assert.rejects(
-    client.fetchCapture({ capture: 'secret', save_backup: false, contribute: false }),
+    client.fetchCapture({ capture: 'secret', submit_history: false }),
     /Initialize/
   );
   assert.equal(calls.length, 0);
   await client.config();
-  await client.fetchCapture({ capture: 'secret', save_backup: false, contribute: false });
+  await client.fetchCapture({ capture: 'secret', submit_history: false });
   assert.equal(calls.length, 2);
   assert.equal((calls[1].init?.headers as Record<string, string>)['X-CSRF-Token'], 'csrf-test');
   assert.equal(calls[1].init?.credentials, 'same-origin');

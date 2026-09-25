@@ -28,8 +28,8 @@ Users open a local browser app, import saved collector exports or paste a captur
 - Use an independent, attributed item catalog. Unknown names, rarity, and pools stay visibly unknown.
 - Provide totals, rarity and type/pool distributions, recorded dates, estimated multi-pull groups, search, combined filters, and pagination.
 - Deliver an interactive impeccable mockup with synthetic records before connecting the backend. Mockups remain outside the maintained repository.
-- Public mode stores personal profiles in the browser, supports compressed two-way Drive sync, and offers separately controlled private server backup and aggregate contributions. No website login is required.
-- Server recovery and contributions remain disabled until a provider adapter proves credential-to-account binding. Google OAuth and authenticated imports require deployment-origin live validation.
+- Public mode stores personal profiles in the browser, supports compressed two-way Drive sync, and offers a combined community-statistics contribution and server-backup choice, defaulting on when available with remembered explicit opt-out. No website login is required.
+- Server history submission and recovery remain disabled until an audited provider adapter proves credential-to-account binding. Explicitly submitted uploaded histories and server-collected histories share one normalized store; uploaded record authenticity is not independently verified. Recovery defaults off and never submits history. One server-history deletion removes backup and statistics data together, leaving local and Drive copies untouched. Google OAuth and authenticated imports require deployment-origin live validation.
 - Pity preserves source-order and gap uncertainty. Guarantees, public profile sharing, and automatic token capture remain outside this release.
 
 ## Evidence on Hand

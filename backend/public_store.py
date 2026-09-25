@@ -1,12 +1,9 @@
-"""Private public-site storage, isolated from the desktop tracker's database.
-
-Account keys are derived only after a provider verifier establishes credential
-ownership. Uploaded snapshots never enter the contribution table.
-"""
+"""Verified server history: original recovery snapshots and normalized analytics."""
 from collections import Counter, defaultdict
 from contextlib import contextmanager
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import sqlite3
@@ -19,8 +16,9 @@ from backend.coverage import annotate_history
 from backend.database import merge_source_order
 from backend.tracker import IDENTITY, canonical, validate_document
 
-MAX_ACCOUNT_BYTES = 16 * 1024 * 1024
-MAX_DATABASE_BYTES = 512 * 1024 * 1024
+MAX_REQUEST_BYTES = 16 * 1024 * 1024
+MAX_DATABASE_BYTES = 8 * 1024 * 1024 * 1024
+ACCOUNT_IDENTITY = ("uid", "endpoint_host", "server", "game_channel_id")
 
 
 def digest(value):
@@ -28,7 +26,10 @@ def digest(value):
 
 
 def account_key(identity):
-    return digest(canonical({key: identity[key] for key in IDENTITY}))
+    if any(not isinstance(identity.get(key), str) or not identity[key] or len(identity[key]) > 200
+           for key in (*ACCOUNT_IDENTITY, "account_fingerprint")):
+        raise HTTPException(422, 'Verified account identity including UID is required')
+    return digest(canonical({key: identity[key] for key in ACCOUNT_IDENTITY}))
 
 
 class PublicStore:
@@ -36,9 +37,18 @@ class PublicStore:
         self.path = Path(path)
         self.lock = RLock()
         self._statistics_cache = None
+        configured = os.environ.get('GFL2_PUBLIC_DATABASE_MAX_BYTES', str(MAX_DATABASE_BYTES))
+        if not re.fullmatch(r'[1-9][0-9]*', configured):
+            raise RuntimeError('GFL2_PUBLIC_DATABASE_MAX_BYTES must be a positive integer')
+        self.max_database_bytes = int(configured)
         with self.connect() as db:
+            version = db.execute('PRAGMA user_version').fetchone()[0]
+            populated = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' LIMIT 1").fetchone()
+            if (populated and version != 2) or version not in (0, 2):
+                raise RuntimeError('Server history requires a fresh version 2 database; renaming a legacy database is not a migration')
             db.executescript("""
                 PRAGMA journal_mode=WAL;
+                PRAGMA user_version=2;
                 CREATE TABLE IF NOT EXISTS sessions (
                     hash TEXT PRIMARY KEY, csrf_hash TEXT NOT NULL, expires REAL NOT NULL
                 );
@@ -47,20 +57,37 @@ class PublicStore:
                     PRIMARY KEY(session_hash, account_id),
                     FOREIGN KEY(session_hash) REFERENCES sessions(hash) ON DELETE CASCADE
                 );
-                CREATE TABLE IF NOT EXISTS backups (
-                    account_id TEXT PRIMARY KEY, name TEXT NOT NULL, snapshots TEXT NOT NULL
+                CREATE TABLE IF NOT EXISTS accounts (
+                    account_id TEXT PRIMARY KEY, uid TEXT NOT NULL, endpoint_host TEXT NOT NULL,
+                    server TEXT NOT NULL, game_channel_id TEXT NOT NULL,
+                    account_fingerprint TEXT NOT NULL, name TEXT NOT NULL,
+                    UNIQUE(uid, endpoint_host, server, game_channel_id)
                 );
-                CREATE TABLE IF NOT EXISTS backup_versions (
+                CREATE TABLE IF NOT EXISTS snapshots (
+                    account_id TEXT NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
+                    sequence INTEGER NOT NULL, digest TEXT NOT NULL, payload TEXT NOT NULL,
+                    sources TEXT NOT NULL, PRIMARY KEY(account_id, sequence), UNIQUE(account_id, digest)
+                );
+                CREATE TABLE IF NOT EXISTS pulls (
+                    account_id TEXT NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
+                    type_id INTEGER NOT NULL, record_key TEXT NOT NULL, occurrence INTEGER NOT NULL,
+                    timestamp TEXT NOT NULL, timestamp_order INTEGER NOT NULL,
+                    item_id INTEGER NOT NULL, pool_id INTEGER NOT NULL, quantity INTEGER NOT NULL,
+                    raw_record TEXT NOT NULL, source_page INTEGER NOT NULL,
+                    snapshot_sequence INTEGER NOT NULL, sources TEXT NOT NULL, rarity TEXT NOT NULL,
+                    pity INTEGER NOT NULL, pity_uncertain INTEGER NOT NULL, gap_before INTEGER NOT NULL,
+                    PRIMARY KEY(account_id, type_id, record_key, occurrence)
+                );
+                CREATE INDEX IF NOT EXISTS pulls_history ON pulls(account_id, timestamp DESC, timestamp_order);
+                CREATE INDEX IF NOT EXISTS pulls_statistics ON pulls(type_id, pool_id, account_id);
+                CREATE TABLE IF NOT EXISTS history_versions (
                     account_id TEXT PRIMARY KEY, version INTEGER NOT NULL
                 );
-                CREATE TABLE IF NOT EXISTS contributions (
-                    account_id TEXT PRIMARY KEY, identity TEXT NOT NULL, snapshots TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS preferences (
-                    account_id TEXT PRIMARY KEY, enabled INTEGER NOT NULL
-                );
+                CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             """)
-        self.catalog = {item['id']: item for item in json.loads(Path(__file__).with_name('catalog.json').read_text(encoding='utf-8'))['items']}
+        self.catalog_path = Path(__file__).with_name('catalog.json')
+        self._catalog_mtime = self.catalog_path.stat().st_mtime_ns
+        self.catalog = {item['id']: item for item in json.loads(self.catalog_path.read_text(encoding='utf-8'))['items']}
 
     @contextmanager
     def connect(self):
@@ -70,6 +97,10 @@ class PublicStore:
         try:
             with db:
                 yield db
+        except sqlite3.OperationalError as error:
+            if getattr(error, 'sqlite_errorcode', None) == sqlite3.SQLITE_FULL:
+                raise HTTPException(507, 'Server storage capacity reached; download a local backup') from None
+            raise
         finally:
             db.close()
 
@@ -111,138 +142,230 @@ class PublicStore:
             raise HTTPException(404, 'Verified account not found in this session')
         return json.loads(row['identity'])
 
-    def validate_snapshots(self, identity, snapshots):
-        if not snapshots or len(snapshots) > 100:
+    def validate_snapshots(self, identity, snapshots, *, associate=False):
+        account_key(identity)
+        if not isinstance(snapshots, list) or not snapshots or len(snapshots) > 100:
             raise HTTPException(422, 'Supply between 1 and 100 source snapshots')
         for snapshot in snapshots:
             validate_portable(snapshot)
-            for page in (snapshot.get('raw_pages') or {}).values():
-                if isinstance(page, str):
-                    try:
-                        validate_portable(json.loads(page.lstrip('\ufeff')))
-                    except (ValueError, RecursionError):
-                        raise HTTPException(422, 'Invalid raw response document') from None
-            actual, _ = validate_document(snapshot['records_document'], snapshot.get('manifest'), snapshot.get('raw_pages'))
-            if any(actual.get(key) != identity[key] for key in IDENTITY):
-                raise HTTPException(409, 'Snapshot belongs to a different account, host, server, or channel')
-        if len(canonical(snapshots).encode()) > MAX_ACCOUNT_BYTES:
-            raise HTTPException(413, 'Account backup exceeds the 16 MiB storage limit')
+            validation_snapshot(identity, snapshot, associate=associate)
+        try:
+            size = len(canonical(snapshots).encode())
+        except (ValueError, TypeError, RecursionError):
+            raise HTTPException(422, 'Snapshots must contain valid finite JSON') from None
+        if size > MAX_REQUEST_BYTES:
+            raise HTTPException(413, 'Snapshot upload exceeds the 16 MiB request limit')
 
-    def _capacity(self):
-        used = sum(p.stat().st_size for p in self.path.parent.glob(self.path.name + '*') if p.is_file())
-        if used >= MAX_DATABASE_BYTES:
+    def _capacity(self, db):
+        # SQLite's page allocator enforces the limit during writes, including
+        # uncommitted growth. A failed allocation rolls back the whole save.
+        page_size = db.execute('PRAGMA page_size').fetchone()[0]
+        limit = max(1, self.max_database_bytes // page_size)
+        db.execute(f'PRAGMA max_page_count={limit}')
+        if db.execute('PRAGMA page_count').fetchone()[0] * page_size > self.max_database_bytes:
             raise HTTPException(507, 'Server storage capacity reached; download a local backup')
 
     def backup_version(self, key):
         with self.connect() as db:
-            row = db.execute('SELECT version FROM backup_versions WHERE account_id=?', (key,)).fetchone()
+            row = db.execute('SELECT version FROM history_versions WHERE account_id=?', (key,)).fetchone()
         return row[0] if row else 0
 
-    def put_backup(self, key, identity, name, snapshots, expected_version=None):
-        self.validate_snapshots(identity, snapshots)
+    def put_backup(self, key, identity, name, snapshots, expected_version=None, *, source='upload', associate=False):
+        self.validate_snapshots(identity, snapshots, associate=associate)
+        if key != account_key(identity):
+            raise HTTPException(409, 'Verified account key does not match its identity')
+        if source not in {'upload', 'collected'}:
+            raise ValueError('Unknown server snapshot source')
         with self.lock, self.connect() as db:
-            version = db.execute('SELECT version FROM backup_versions WHERE account_id=?', (key,)).fetchone()
+            db.execute('BEGIN IMMEDIATE')
+            version = db.execute('SELECT version FROM history_versions WHERE account_id=?', (key,)).fetchone()
             if expected_version is not None and expected_version != (version[0] if version else 0):
                 raise HTTPException(409, 'Backup was deleted during collection; it was not recreated')
-            self._capacity()
-            previous = db.execute('SELECT snapshots FROM backups WHERE account_id=?', (key,)).fetchone()
-            merged = merge_snapshots(json.loads(previous[0]) if previous else [], snapshots)
-            self.validate_snapshots(identity, merged)
-            db.execute('INSERT OR REPLACE INTO backups VALUES(?,?,?)', (key, name, canonical(merged)))
-        return {'account_id': key, 'name': name, 'snapshots': merged}
+            previous_account = db.execute('SELECT account_fingerprint FROM accounts WHERE account_id=?', (key,)).fetchone()
+            if previous_account and previous_account[0] != identity['account_fingerprint']:
+                raise HTTPException(409, 'Verified account fingerprint conflicts with saved history')
+            self._capacity(db)
+            self._ensure_catalog(db)
+            db.execute("""INSERT INTO accounts VALUES(?,?,?,?,?,?,?) ON CONFLICT(account_id)
+                DO UPDATE SET name=excluded.name, account_fingerprint=excluded.account_fingerprint""",
+                (key, *(identity[field] for field in ACCOUNT_IDENTITY), identity['account_fingerprint'], name))
+            sequence = db.execute('SELECT coalesce(max(sequence),0) FROM snapshots WHERE account_id=?', (key,)).fetchone()[0]
+            changed = False
+            for snapshot in snapshots:
+                payload = canonical(snapshot)
+                fingerprint = digest(payload)
+                previous = db.execute('SELECT sources FROM snapshots WHERE account_id=? AND digest=?', (key, fingerprint)).fetchone()
+                if previous:
+                    sources = set(json.loads(previous[0]))
+                    if source not in sources:
+                        db.execute('UPDATE snapshots SET sources=? WHERE account_id=? AND digest=?',
+                                   (canonical(sorted(sources | {source})), key, fingerprint))
+                        changed = True
+                else:
+                    sequence += 1
+                    db.execute('INSERT INTO snapshots VALUES(?,?,?,?,?)', (key, sequence, fingerprint, payload, canonical([source])))
+                    changed = True
+            if changed:
+                self._rebuild_account(db, key, identity)
+            self._capacity(db)
+            result = dict(account_id=key, name=name,
+                snapshot_count=db.execute('SELECT count(*) FROM snapshots WHERE account_id=?', (key,)).fetchone()[0],
+                record_count=db.execute('SELECT count(*) FROM pulls WHERE account_id=?', (key,)).fetchone()[0])
+            self._statistics_cache = None
+        return result
 
     def get_backup(self, key):
         with self.connect() as db:
-            row = db.execute('SELECT * FROM backups WHERE account_id=?', (key,)).fetchone()
-        if row is None:
-            raise HTTPException(404, 'No server backup for this account')
-        return {'account_id': key, 'name': row['name'], 'snapshots': json.loads(row['snapshots'])}
+            db.execute('BEGIN')
+            account = db.execute('SELECT name FROM accounts WHERE account_id=?', (key,)).fetchone()
+            if account is None:
+                raise HTTPException(404, 'No server backup for this account')
+            snapshots = [json.loads(row[0]) for row in db.execute(
+                'SELECT payload FROM snapshots WHERE account_id=? ORDER BY sequence', (key,))]
+        return {'account_id': key, 'name': account['name'], 'snapshots': snapshots}
 
     def delete_backup(self, key):
         with self.lock, self.connect() as db:
-            db.execute('DELETE FROM backups WHERE account_id=?', (key,))
-            db.execute('INSERT INTO backup_versions VALUES(?,1) ON CONFLICT(account_id) DO UPDATE SET version=version+1', (key,))
-
-    def preference(self, key, enabled):
-        with self.lock, self.connect() as db:
-            db.execute('INSERT OR REPLACE INTO preferences VALUES(?,?)', (key, int(enabled)))
-            if not enabled:
-                db.execute('DELETE FROM contributions WHERE account_id=?', (key,))
-                self._statistics_cache = None
-
-    def contribute_collected(self, key, identity, snapshot):
-        """Only a trusted collection worker calls this; never a file-upload route.
-
-        Recheck consent inside the transaction so withdrawing while a collection
-        is running cannot re-create the contribution on completion.
-        """
-        self.validate_snapshots(identity, [snapshot])
-        with self.lock, self.connect() as db:
-            self._capacity()
-            preference = db.execute('SELECT enabled FROM preferences WHERE account_id=?', (key,)).fetchone()
-            if not preference or not preference[0]:
-                return
-            previous = db.execute('SELECT snapshots FROM contributions WHERE account_id=?', (key,)).fetchone()
-            merged = merge_snapshots(json.loads(previous[0]) if previous else [], [snapshot])
-            self.validate_snapshots(identity, merged)
-            db.execute('INSERT OR REPLACE INTO contributions VALUES(?,?,?)', (key, canonical(identity), canonical(merged)))
+            db.execute('DELETE FROM accounts WHERE account_id=?', (key,))
+            db.execute('INSERT INTO history_versions VALUES(?,1) ON CONFLICT(account_id) DO UPDATE SET version=version+1', (key,))
             self._statistics_cache = None
 
+    def _ensure_catalog(self, db):
+        mtime = self.catalog_path.stat().st_mtime_ns
+        if mtime != self._catalog_mtime:
+            self.catalog = {item['id']: item for item in json.loads(self.catalog_path.read_text(encoding='utf-8'))['items']}
+            self._catalog_mtime = mtime
+        signature = digest(canonical(self.catalog))
+        saved = db.execute("SELECT value FROM metadata WHERE key='catalog_digest'").fetchone()
+        if saved and saved[0] == signature:
+            return
+        self._capacity(db)
+        for account in db.execute('SELECT * FROM accounts').fetchall():
+            self._rebuild_account(db, account['account_id'], dict(account))
+        db.execute("INSERT OR REPLACE INTO metadata VALUES('catalog_digest',?)", (signature,))
+        self._statistics_cache = None
+
+    def _rebuild_account(self, db, key, identity):
+        snapshots = []
+        provenance = {}
+        for saved in db.execute('SELECT * FROM snapshots WHERE account_id=? ORDER BY sequence', (key,)):
+            snapshot = validation_snapshot(identity, json.loads(saved['payload']), associate=True)
+            snapshots.append(snapshot)
+            _, incoming = validate_document(snapshot['records_document'], snapshot.get('manifest'), snapshot.get('raw_pages'))
+            occurrences = Counter()
+            for row in incoming:
+                record = (row['type_id'], row['record_key'])
+                occurrences[record] += 1
+                token = (*record, occurrences[record])
+                entry = provenance.setdefault(token, [saved['sequence'], set()])
+                entry[1].update(json.loads(saved['sources']))
+        rows = merged_history(snapshots, self.catalog, identity['endpoint_host'])
+        db.execute('DELETE FROM pulls WHERE account_id=?', (key,))
+        positions = Counter()
+        for row in rows:
+            token = (row['type_id'], row['record_key'], row['occurrence'])
+            sequence, sources = provenance[token]
+            group = (row['type_id'], row['timestamp'])
+            position = positions[group]
+            positions[group] += 1
+            db.execute('INSERT INTO pulls VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                (key, *token, row['timestamp'], position, row['item_id'], row['pool_id'], row['quantity'],
+                 row['raw_record'], row['source_page'], sequence, canonical(sorted(sources)), row['rarity'],
+                 row['pity'], int(row['pity_uncertain']), int(row['gap_before'])))
+
     def statistics(self):
-        # Compute once per change. Serializing this potentially large read also
-        # prevents concurrent requests multiplying memory use by thread count.
-        with self.lock:
+        # Normal requests read normalized rows only. Catalog changes refresh the
+        # persisted derived fields once using the retained source windows.
+        with self.lock, self.connect() as db:
+            self._ensure_catalog(db)
             if self._statistics_cache is None:
-                self._statistics_cache = self._statistics()
+                self._statistics_cache = self._statistics(db)
             return self._statistics_cache
 
-    def _statistics(self):
-        with self.connect() as db:
-            accounts = db.execute('SELECT * FROM contributions').fetchall()
-        groups = defaultdict(list)
-        total = 0
-        for account in accounts:
-            identity = json.loads(account['identity'])
-            rows = merged_history(json.loads(account['snapshots']), self.catalog, identity['endpoint_host'])
-            total += len(rows)
-            grouped = defaultdict(list)
-            for row in rows:
-                grouped[(identity['endpoint_host'], identity['server'], row['type_id'], row['pool_id'])].append(row)
-            for key, pulls in grouped.items():
-                groups[key].append(pulls)
-        breakdowns = []
-        for (host, server, type_id, pool_id), contributors in sorted(groups.items()):
-            if len(contributors) < 5:
-                continue
-            rows = [row for pulls in contributors for row in pulls]
-            rarities = Counter(row['rarity'] for row in rows)
-            items = Counter(row['item_id'] for row in rows)
-            pity = Counter(row['pity'] for row in rows if row['rarity'] == 'Elite' and not row['pity_uncertain'])
-            # Suppress item/rarity/pity sub-buckets too. A pool with five
-            # contributors does not make a single person's rare result public.
-            rarity_owners = Counter(value for pulls in contributors for value in {row['rarity'] for row in pulls})
-            item_owners = Counter(value for pulls in contributors for value in {row['item_id'] for row in pulls})
-            pity_owners = Counter(value for pulls in contributors for value in {row['pity'] for row in pulls if row['rarity'] == 'Elite' and not row['pity_uncertain']})
-            rarities = Counter({key: value for key, value in rarities.items() if rarity_owners[key] >= 5})
-            items = Counter({key: value for key, value in items.items() if item_owners[key] >= 5})
-            pity = Counter({key: value for key, value in pity.items() if pity_owners[key] >= 5})
-            observed = sum(pity.values())
-            breakdowns.append(dict(endpoint_host=host, server=server, type_id=type_id, pool_id=pool_id,
-                contributors=len(contributors), total=len(rows),
-                rarities=[{'rarity': key, 'count': value, 'rate': value / len(rows)} for key, value in sorted(rarities.items())],
-                items=[{'item_id': key, 'count': value} for key, value in sorted(items.items())],
-                pity=[{'pulls': key, 'count': value} for key, value in sorted(pity.items())],
-                observed_pity_count=observed, average_observed_pity=sum(k*v for k,v in pity.items()) / observed if observed else None))
-        return dict(minimum_contributors=5, suppressed=len(accounts) < 5,
-                    contributors=len(accounts) if len(accounts) >= 5 else None,
-                    total=total if len(accounts) >= 5 else None, breakdowns=breakdowns,
+    def _statistics(self, db):
+        # Aggregate in SQLite so memory scales with released buckets rather
+        # than every contributor's lifetime history.
+        accounts = db.execute('SELECT count(*) FROM accounts').fetchone()[0]
+        total = db.execute('SELECT count(*) FROM pulls').fetchone()[0]
+        dimensions = 'a.endpoint_host,a.server,p.type_id,p.pool_id'
+        tables = 'pulls p JOIN accounts a USING(account_id)'
+        groups = {}
+        for row in db.execute(f"""SELECT {dimensions},count(*) AS total,count(DISTINCT p.account_id) AS contributors
+                FROM {tables} GROUP BY {dimensions} HAVING count(DISTINCT p.account_id)>=5
+                ORDER BY {dimensions}"""):
+            key = tuple(row[field] for field in ('endpoint_host', 'server', 'type_id', 'pool_id'))
+            groups[key] = dict(row) | dict(rarities=[], items=[], pity=[], observed_pity_count=0, average_observed_pity=None)
+        for field, output, label in [('rarity', 'rarities', 'rarity'), ('item_id', 'items', 'item_id'), ('pity', 'pity', 'pulls')]:
+            condition = "WHERE p.rarity='Elite' AND p.pity_uncertain=0" if field == 'pity' else ''
+            for row in db.execute(f"""SELECT {dimensions},p.{field} AS bucket,count(*) AS count
+                    FROM {tables} {condition} GROUP BY {dimensions},p.{field}
+                    HAVING count(DISTINCT p.account_id)>=5 ORDER BY {dimensions},p.{field}"""):
+                key = tuple(row[name] for name in ('endpoint_host', 'server', 'type_id', 'pool_id'))
+                group = groups[key]
+                bucket = {label: row['bucket'], 'count': row['count']}
+                if field == 'rarity':
+                    bucket['rate'] = row['count'] / group['total']
+                group[output].append(bucket)
+        for group in groups.values():
+            observed = sum(bucket['count'] for bucket in group['pity'])
+            group['observed_pity_count'] = observed
+            if observed:
+                group['average_observed_pity'] = sum(bucket['pulls'] * bucket['count'] for bucket in group['pity']) / observed
+        return dict(minimum_contributors=5, suppressed=accounts < 5,
+                    contributors=accounts if accounts >= 5 else None,
+                    total=total if accounts >= 5 else None, breakdowns=list(groups.values()),
                     coverage='accessible_history_only',
                     note='Voluntary sample of accessible game history. Unknown or discontinuous intervals are excluded from pity averages.')
 
 
-def merge_snapshots(existing, incoming):
-    unique = {digest(canonical(value)): value for value in [*existing, *incoming]}
-    return list(unique.values())
+def validation_snapshot(identity, snapshot, *, associate):
+    """Bind only validation copies; the exact recovery payload remains intact."""
+    if not isinstance(snapshot, dict) or not isinstance(snapshot.get('records_document'), dict):
+        raise HTTPException(422, 'Snapshot needs a records document')
+    document = dict(snapshot['records_document'])
+    manifest = snapshot.get('manifest')
+    raw_pages = snapshot.get('raw_pages')
+    if manifest is not None and not isinstance(manifest, dict):
+        raise HTTPException(422, 'Invalid snapshot manifest')
+    if raw_pages is not None and not isinstance(raw_pages, dict):
+        raise HTTPException(422, 'Invalid raw response documents')
+    for page in (raw_pages or {}).values():
+        if isinstance(page, str):
+            try:
+                validate_portable(json.loads(page.lstrip('\ufeff')))
+            except (ValueError, RecursionError):
+                raise HTTPException(422, 'Invalid raw response document') from None
+    for field in (*IDENTITY, 'uid'):
+        for metadata in (document, manifest or {}):
+            actual = metadata.get(field)
+            if actual is not None and actual != identity.get(field):
+                raise HTTPException(409, 'Snapshot belongs to a different account, host, server, or channel')
+        if field in IDENTITY and document.get(field) is None:
+            if not associate:
+                raise HTTPException(409, 'Snapshot identity is incomplete; explicitly associate it with this verified account')
+            document[field] = identity[field]
+    external = document.get('external_source')
+    if isinstance(external, dict) and external.get('source') == 'https://exilium.xyz':
+        recovered = external.get('recovered_store')
+        try:
+            profiles = recovered['state']['profilesData']
+            if not isinstance(profiles, dict) or len(profiles) != 1:
+                raise ValueError()
+            pulls = next(iter(profiles.values()))['pulls']
+            if not isinstance(pulls, dict):
+                raise ValueError()
+            for records in pulls.values():
+                if not isinstance(records, list):
+                    raise ValueError()
+                for record in records:
+                    if not isinstance(record, dict) or not isinstance(record.get('uid'), str) or not record['uid']:
+                        raise ValueError()
+                    if record['uid'] != identity['uid']:
+                        raise HTTPException(409, 'Recovered Exilium history belongs to a different UID')
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(422, 'Exilium snapshot needs its recovered account identity') from None
+    validate_document(document, manifest, raw_pages)
+    return {**snapshot, 'records_document': document}
 
 
 def validate_portable(value):

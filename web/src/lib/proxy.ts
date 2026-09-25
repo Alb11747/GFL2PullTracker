@@ -62,7 +62,7 @@ export async function forward(
     : /^\/api\/jobs\/[a-zA-Z0-9-]+\/cancel$/.test(path);
   const writable =
     (hosted
-      ? /^\/api\/public\/(verify|fetch|backup|contribution)$/.test(path)
+      ? /^\/api\/public\/(verify|fetch|backup)$/.test(path)
       : /^\/api\/(profiles|imports|fetch)$/.test(path)) ||
     (method === 'POST' && cancellation);
   const writeMethod = hosted ? ['POST', 'PUT', 'DELETE'].includes(method) : method === 'POST';

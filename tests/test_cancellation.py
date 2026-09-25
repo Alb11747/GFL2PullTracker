@@ -307,7 +307,7 @@ def test_public_worker_setup_failure_releases_capacity(tmp_path, monkeypatch):
     monkeypatch.setattr(store, 'backup_version', broken_backup_version)
     try:
         with pytest.raises(HTTPException) as error:
-            manager.start('synthetic-session', prepare(public_capture(), None), account_id='synthetic-account', save_backup=True)
+            manager.start('synthetic-session', prepare(public_capture(), None), account_id='synthetic-account', submit_history=True)
         assert error.value.status_code == 503
         assert not manager.jobs and not manager.threads
         assert manager.slots.acquire(blocking=False)

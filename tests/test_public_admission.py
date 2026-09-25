@@ -80,12 +80,12 @@ def test_active_exclusion_requires_verified_identity_and_retains_worker_limits(t
             assert release.wait(5)
             return super().request(*args, **kwargs)
 
-    identity = prepared_identity(prepare(capture(), None))
+    identity = {**prepared_identity(prepare(capture(), None)), 'uid': '123456'}
     app = create_public_app(tmp_path, origin=ORIGIN, client_factory=WaitingGame,
                             identity_verifier=(lambda _: identity) if verified else None)
     with TestClient(app, base_url=ORIGIN) as client:
         initialize(client)
-        payload = {'capture': capture(), 'save_backup': verified}
+        payload = {'capture': capture(), 'submit_history': verified}
         try:
             assert client.post('/api/public/fetch', json=payload).status_code == 202
             assert entered.wait(2)
@@ -104,7 +104,7 @@ def test_active_exclusion_requires_verified_identity_and_retains_worker_limits(t
 
 
 def test_account_quota_requires_successful_verification_and_spans_sessions(tmp_path):
-    identity = prepared_identity(prepare(capture(), None))
+    identity = {**prepared_identity(prepare(capture(), None)), 'uid': '123456'}
 
     def verifier(prepared):
         if prepared.capture.authorization.endswith('invalid-signature'):
@@ -117,15 +117,15 @@ def test_account_quota_requires_successful_verification_and_spans_sessions(tmp_p
         initialize(client)
         for _ in range(10):
             response = client.post('/api/public/fetch', json={
-                'capture': capture().replace('synthetic-signature', 'invalid-signature'), 'save_backup': True})
+                'capture': capture().replace('synthetic-signature', 'invalid-signature'), 'submit_history': True})
             assert response.status_code == 403
         for index in range(10):
             new_session(client, f'192.0.2.{index + 20}')
-            response = client.post('/api/public/fetch', json={'capture': capture(), 'save_backup': True})
+            response = client.post('/api/public/fetch', json={'capture': capture(), 'submit_history': True})
             assert response.status_code == 202, response.text
             finish(app.state.jobs)
         new_session(client, '192.0.2.99')
-        response = client.post('/api/public/fetch', json={'capture': capture(), 'save_backup': True})
+        response = client.post('/api/public/fetch', json={'capture': capture(), 'submit_history': True})
         assert response.status_code == 429
 
 

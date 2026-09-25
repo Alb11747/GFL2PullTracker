@@ -1,8 +1,8 @@
 export const trackerPages = [
   { slug: 'history', label: 'My history', title: 'Recruitment ledger' },
+  { slug: 'statistics', label: 'Statistics', title: 'Statistics' },
   { slug: 'backup', label: 'Backup & sync', title: 'Backup & sync' },
   { slug: 'profiles', label: 'Profiles', title: 'Profiles' },
-  { slug: 'statistics', label: 'Community statistics', title: 'Community statistics' },
   { slug: 'privacy', label: 'Privacy', title: 'Privacy & recovery' },
   { slug: 'about', label: 'About', title: 'About' }
 ] as const;

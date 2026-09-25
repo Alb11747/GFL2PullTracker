@@ -216,7 +216,7 @@ def test_sdk_configuration_and_shutdown_order(tmp_path, monkeypatch):
 def test_api_passes_only_normalized_permission_to_worker(tmp_path, monkeypatch, header, expected):
     received = []
 
-    def start(self, *args, telemetry_allowed=False):
+    def start(self, *args, account_identity=None, telemetry_allowed=False):
         received.append(telemetry_allowed)
         return {'status': 'queued'}
 

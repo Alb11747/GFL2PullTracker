@@ -47,8 +47,7 @@ class CaptureInput(Strict):
 
 
 class FetchInput(CaptureInput):
-    save_backup: bool = False
-    contribute: bool = False
+    submit_history: bool = False
 
 
 class SnapshotInput(Strict):
@@ -61,11 +60,8 @@ class BackupInput(Strict):
     account_id: str = Field(pattern=r'^[0-9a-f]{64}$')
     name: str = Field(default='Game account', min_length=1, max_length=80)
     snapshots: list[SnapshotInput] = Field(min_length=1, max_length=100)
-
-
-class ContributionInput(Strict):
-    account_id: str = Field(pattern=r'^[0-9a-f]{64}$')
-    enabled: bool
+    expected_version: int = Field(ge=0)
+    associate: bool = False
 
 
 class RateLimit:
@@ -123,7 +119,7 @@ def create_public_app(data_dir=None, *, origin=None, client_factory=None, identi
     @asynccontextmanager
     async def lifespan(application):
         directory.mkdir(parents=True, exist_ok=True)
-        store = PublicStore(directory / 'public.sqlite3')
+        store = PublicStore(directory / 'public-v2.sqlite3')
         store.cleanup()
         application.state.store = store
         application.state.telemetry = telemetry if telemetry is not None else Telemetry.from_environment()
@@ -134,7 +130,7 @@ def create_public_app(data_dir=None, *, origin=None, client_factory=None, identi
             application.state.jobs.close()
             application.state.telemetry.close()
 
-    application = FastAPI(title='GFL2 public tracker', version='0.2.0', lifespan=lifespan,
+    application = FastAPI(title='GFL2 public tracker', version='0.3.0', lifespan=lifespan,
                           docs_url=None, redoc_url=None, openapi_url=None)
     hosts = os.environ.get('GFL2_API_ALLOWED_HOSTS', 'api,localhost,127.0.0.1,' + urlsplit(origin).hostname).split(',')
     if any(not host.strip() or '*' in host or '/' in host for host in hosts):
@@ -206,8 +202,13 @@ def create_public_app(data_dir=None, *, origin=None, client_factory=None, identi
         expected = prepared_identity(prepared)
         if not isinstance(identity, dict) or any(not isinstance(identity.get(k), str) or identity[k] != expected[k] for k in IDENTITY):
             raise HTTPException(403, 'Provider identity does not match the requested account')
-        key = request.app.state.store.grant(session_token(request), expected)
-        return key, expected
+        # UID comes only from the trusted adapter, never decoded capture metadata.
+        uid = identity.get('uid')
+        if not isinstance(uid, str) or not re.fullmatch(r'[0-9]{1,64}', uid):
+            raise HTTPException(403, 'Provider did not establish an in-game UID')
+        verified = {**expected, 'uid': uid}
+        key = request.app.state.store.grant(session_token(request), verified)
+        return key, verified
 
     def owned(request, key):
         require_verifier()
@@ -215,7 +216,7 @@ def create_public_app(data_dir=None, *, origin=None, client_factory=None, identi
 
     @application.get('/api/health')
     def health():
-        return {'status': 'ok', 'version': '0.2.0', 'mode': 'public'}
+        return {'status': 'ok', 'version': '0.3.0', 'mode': 'public'}
 
     @application.get('/api/public/config')
     def config(request: Request, response: Response):
@@ -230,9 +231,10 @@ def create_public_app(data_dir=None, *, origin=None, client_factory=None, identi
         else:
             csrf = digest(token + ':csrf')
         enabled = identity_verifier is not None
-        return dict(mode='public', csrf_token=csrf, features=dict(server_backup=enabled, community_contribution=enabled, relay_import=True),
+        return dict(mode='public', csrf_token=csrf, features=dict(submit_history=enabled, relay_import=True),
                     identity_verification=dict(available=enabled, reason=None if enabled else UNAVAILABLE),
-                    accounts=request.app.state.store.accounts(token),
+                    accounts=[{**account, 'history_version': request.app.state.store.backup_version(account['account_id'])}
+                              for account in request.app.state.store.accounts(token)],
                     limits=dict(request_bytes=16*1024*1024, capture_bytes=262_144, collection_seconds=180,
                                 collection_records=50_000, result_lifetime_seconds=900, session_seconds=SESSION_SECONDS))
 
@@ -240,25 +242,25 @@ def create_public_app(data_dir=None, *, origin=None, client_factory=None, identi
     def verify(body: CaptureInput, request: Request):
         require_verifier()
         key, identity = verify_prepared(request, prepare(body.capture, body.server))
-        return dict(account_id=key, identity=identity)
+        return dict(account_id=key, identity=identity, history_version=request.app.state.store.backup_version(key))
 
     @application.post('/api/public/fetch', status_code=202)
     def fetch(body: FetchInput, request: Request):
         token = session_token(request)
         limiter.take('fetch:' + digest(token), 10, 3600)
         limiter.take('client-fetch:' + request.state.client_address, 60, 3600)
-        if body.save_backup or body.contribute:
+        if body.submit_history:
             require_verifier()
         prepared = prepare(body.capture, body.server)
         account_id = None
-        if body.save_backup or body.contribute:
-            account_id, _ = verify_prepared(request, prepared)
+        identity = None
+        if body.submit_history:
+            account_id, identity = verify_prepared(request, prepared)
             # Supplied account identifiers do not establish ownership. Only a
             # verifier may reserve a quota shared across independent sessions.
             limiter.take('account-fetch:' + account_id, 10, 3600)
-            request.app.state.store.preference(account_id, body.contribute)
-        return request.app.state.jobs.start(token, prepared, account_id, body.save_backup, body.contribute,
-                                            telemetry_allowed=permitted(request))
+        return request.app.state.jobs.start(token, prepared, account_id, body.submit_history,
+                                            account_identity=identity, telemetry_allowed=permitted(request))
 
     @application.get('/api/public/jobs/{identifier}')
     def job(identifier: str, request: Request):
@@ -281,25 +283,14 @@ def create_public_app(data_dir=None, *, origin=None, client_factory=None, identi
     def save_backup(body: BackupInput, request: Request):
         identity = owned(request, body.account_id)
         return request.app.state.store.put_backup(body.account_id, identity, body.name,
-                                                [snapshot.model_dump(exclude_none=True) for snapshot in body.snapshots])
+                                                [snapshot.model_dump(exclude_none=True) for snapshot in body.snapshots],
+                                                expected_version=body.expected_version, associate=body.associate)
 
     @application.delete('/api/public/backup')
     def delete_backup(account_id: str, request: Request):
         owned(request, account_id)
         request.app.state.store.delete_backup(account_id)
         return {'deleted': True}
-
-    @application.put('/api/public/contribution')
-    def contribution(body: ContributionInput, request: Request):
-        owned(request, body.account_id)
-        request.app.state.store.preference(body.account_id, body.enabled)
-        return {'enabled': body.enabled}
-
-    @application.delete('/api/public/contribution')
-    def withdraw(account_id: str, request: Request):
-        owned(request, account_id)
-        request.app.state.store.preference(account_id, False)
-        return {'enabled': False}
 
     @application.get('/api/public/statistics')
     def statistics(request: Request):

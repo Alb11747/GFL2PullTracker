@@ -91,7 +91,7 @@ class PublicJobs:
     def public(self, job):
         return {key: job[key] for key in ('id', 'status', 'message', 'records', 'pages')}
 
-    def start(self, token, prepared, account_id=None, save_backup=False, contribute=False, *, telemetry_allowed=False):
+    def start(self, token, prepared, account_id=None, submit_history=False, *, account_identity=None, telemetry_allowed=False):
         self.cleanup()
         with self.lock:
             owner = digest(token)
@@ -113,8 +113,8 @@ class PublicJobs:
             self.jobs[identifier] = job
             thread = None
             try:
-                backup_version = self.store.backup_version(account_id) if account_id and save_backup else None
-                thread = Thread(target=self.run, args=(identifier, prepared, account_id, save_backup, contribute, backup_version,
+                backup_version = self.store.backup_version(account_id) if account_id and submit_history else None
+                thread = Thread(target=self.run, args=(identifier, prepared, account_id, submit_history, account_identity, backup_version,
                                                        telemetry_allowed is True), daemon=True)
                 self.threads.append(thread)
                 thread.start()
@@ -160,7 +160,7 @@ class PublicJobs:
                 if self.jobs[identifier]['status'] not in ACTIVE_STATUSES:
                     self._prune_jobs()
 
-    def run(self, identifier, prepared, account_id, save_backup, contribute, backup_version, telemetry_allowed=False):
+    def run(self, identifier, prepared, account_id, submit_history, account_identity, backup_version, telemetry_allowed=False):
         manager = self
         deadline = time.monotonic() + JOB_SECONDS
         writer = None
@@ -247,15 +247,15 @@ class PublicJobs:
                     raise collector.FetchError('Collection result exceeded the size limit')
                 status = 'cancelled' if cancelled else 'partial' if failed and document['records'] else 'failed' if failed else 'completed'
                 persistence_error = False
-                if status != 'failed' and account_id:
-                    identity = prepared_identity(prepared)
+                if status != 'failed' and account_id and submit_history:
                     try:
-                        if save_backup:
-                            self.store.put_backup(account_id, identity, 'Game account', [result], expected_version=backup_version)
-                        if contribute:
-                            self.store.contribute_collected(account_id, identity, result)
-                    except HTTPException:
+                        self.store.put_backup(account_id, account_identity, 'Game account', [result],
+                                              expected_version=backup_version, source='collected')
+                    except Exception as exc:
+                        # A failed server write must not discard a successful collection.
                         persistence_error = True
+                        if not isinstance(exc, HTTPException):
+                            self.telemetry.report(exc, allowed=telemetry_allowed, operation='relay_finalize')
                 message = ('Collection complete. Accessible history may not include lifetime pulls.' if status == 'completed'
                            else 'Collection stopped by you. Any collected partial history is available to import.' if cancelled
                            else 'Collection stopped. Import the available partial history and use a fresh capture to retry.')

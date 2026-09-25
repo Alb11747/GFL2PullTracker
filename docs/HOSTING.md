@@ -46,6 +46,14 @@ exactly in `GFL2_API_ALLOWED_ORIGINS`. The internal API uses Docker DNS at
 `http://api:8000`. The backend network needs outbound HTTPS to the allowlisted
 game APIs; no inbound API port is mapped. Do not add wildcard origins.
 
+The public history database starts fresh at `public-v2.sqlite3`. Legacy
+`public.sqlite3` is preserved and is not migrated or read into the unified store.
+`GFL2_PUBLIC_DATABASE_MAX_BYTES` must be a positive integer number of bytes; the
+default is `8589934592` (8 GiB). Compose passes this limit to the API. Submission
+requests are bounded to 16 MiB and 100 snapshots per request; there is no
+cumulative snapshot-count limit. Monitor database size and preserve capacity
+for operational recovery.
+
 New sessions are limited to 120/hour and statistics to 30/minute per client IP.
 Relay attempts are limited to 10/hour per session and 60/hour per trusted client
 IP. A shared 10/hour account quota or active-account exclusion applies only after server
@@ -170,11 +178,11 @@ Keep backups private, restrict access, and establish a retention schedule. Copy
 them off this host; a copy inside the application volume is not disaster recovery.
 
 ```sh
-docker compose exec api python scripts/backup_database.py backup /app/data/public.sqlite3 /app/data/backup-20260920.sqlite3
+docker compose exec api python scripts/backup_database.py backup /app/data/public-v2.sqlite3 /app/data/backup-20260920.sqlite3
 docker compose cp api:/app/data/backup-20260920.sqlite3 ./backup-20260920.sqlite3
 ```
 
-Public mode uses `public.sqlite3`; the separate Windows/local mode uses
+Public mode uses `public-v2.sqlite3`; the separate Windows/local mode uses
 `tracker.sqlite3`. Back up each database you actually operate. Backups contain
 private histories and session data; never commit them.
 
@@ -188,7 +196,7 @@ delete them while a database writer may still be running.
 docker compose stop api
 docker compose cp ./backup-20260920.sqlite3 api:/app/data/restore-source.sqlite3
 docker compose -f compose.yaml -f compose.restore-permissions.yaml run --rm --no-deps api
-docker compose run --rm --no-deps api python scripts/backup_database.py restore /app/data/restore-source.sqlite3 /app/data/public.sqlite3 --service-stopped
+docker compose run --rm --no-deps api python scripts/backup_database.py restore /app/data/restore-source.sqlite3 /app/data/public-v2.sqlite3 --service-stopped
 docker compose up -d --wait api
 ```
 
@@ -198,7 +206,10 @@ The maintenance override adds only the `CHOWN` capability and root UID for that
 fixed permission command. Never use it with `up`; restore and normal service
 startup use the base Compose configuration as the unprivileged service user.
 
-Restoring an old database can restore withdrawn contributions or deleted backups.
+Restore only a compatible `public-v2.sqlite3` backup; renaming a legacy
+`public.sqlite3` backup does not migrate it. Keep legacy backups separately.
+Restoring an old database can restore deleted server histories and their
+contributions to statistics.
 Reconcile deletion requests before making a restored service public. Verify
 health and synthetic recovery after every restore drill.
 

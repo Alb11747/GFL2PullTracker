@@ -12,6 +12,8 @@
   import type { createDriveSync, SyncStatus } from '$lib/sync/controller';
   import type { PublicClient, PublicConfig } from '$lib/public-api';
   import { identityKey } from '$lib/local/types';
+  import { submissionIdentity, snapshotSubmissionIdentity } from '$lib/submission-policy';
+  import { submissionBatches } from '$lib/submission-batches';
 
   let {
     local,
@@ -109,7 +111,8 @@
   });
   let decisions = $state<Record<string, 'local' | 'remote'>>({});
   let serverAccount = $state(''),
-    serverAction = $state<'backup' | 'contribution' | ''>('');
+    serverAction = $state<'delete' | 'associate' | ''>('');
+  let uploadProfileId = $state('');
   let sync = $state<SyncStatus>({
     phase: 'disconnected',
     message: 'Google Drive is not connected.',
@@ -129,6 +132,16 @@
             identityKey(profile) === identityKey(verifiedAccount.identity)
         )
       : undefined
+  );
+  const uploadProfile = $derived(
+    profiles.find(
+      (profile) => profile.id === (uploadProfileId || matchingProfile?.id || activeProfileId)
+    )
+  );
+  const uploadIdentity = $derived(
+    uploadProfile && verifiedAccount
+      ? submissionIdentity(uploadProfile, verifiedAccount.identity)
+      : null
   );
   $effect(() =>
     drive?.subscribe((status) => {
@@ -284,25 +297,62 @@
     onselect?.(profile.id);
     notice = 'Private server backup merged into this device.';
   }
-  async function saveServer() {
+  async function saveServer(associate = false) {
     const started = performance.now();
-    if (!publicApi || !verifiedAccount || !matchingProfile)
-      throw new Error('Import this verified account’s history before saving a server backup.');
+    if (!publicApi || !verifiedAccount || !uploadProfile)
+      throw new Error('Choose an authorized account and a local profile before submitting.');
+    const account = verifiedAccount;
+    const profileId = uploadProfile.id;
+    // Freeze the deletion generation before asynchronous export; a later deletion must win.
+    const expectedVersion = account.history_version;
     const state = await local.exportState();
-    const profile = state.profiles.find((profile) => profile.id === matchingProfile.id);
+    const profile = state.profiles.find((profile) => profile.id === profileId);
     if (!profile) throw new Error('This profile is no longer available. Refresh the archive.');
-    await publicApi.saveBackup({
-      account_id: verifiedAccount.account_id,
-      name: profile.name,
-      snapshots: profile.snapshots.map((snapshot) => ({
-        records_document: snapshot.document,
-        ...(snapshot.manifest ? { manifest: snapshot.manifest } : {}),
-        ...(snapshot.raw_pages ? { raw_pages: snapshot.raw_pages } : {})
-      }))
-    });
+    const identity = submissionIdentity(profile, account.identity);
+    if (identity === 'conflict')
+      throw new Error(
+        'This profile belongs to a different account. Choose the matching account or profile.'
+      );
+    const snapshots = profile.snapshots.map((snapshot) => ({
+      records_document: snapshot.document,
+      ...(snapshot.manifest ? { manifest: snapshot.manifest } : {}),
+      ...(snapshot.raw_pages ? { raw_pages: snapshot.raw_pages } : {})
+    }));
+    const snapshotIdentity = snapshotSubmissionIdentity(snapshots, account.identity);
+    if (snapshotIdentity === 'conflict')
+      throw new Error(
+        'A saved snapshot belongs to a different account. Choose the matching account or profile.'
+      );
+    if ((identity === 'associate' || snapshotIdentity === 'associate') && !associate) {
+      serverAction = 'associate';
+      return;
+    }
+    const batches = submissionBatches(
+      {
+        account_id: account.account_id,
+        expected_version: expectedVersion,
+        associate,
+        name: profile.name,
+        snapshots
+      },
+      publicConfig?.limits.request_bytes
+    );
+    let saved = 0;
+    try {
+      for (const batch of batches) {
+        await publicApi.submitHistory(batch);
+        saved++;
+      }
+    } catch (cause) {
+      if (!saved) throw cause;
+      throw new Error(
+        `${saved} of ${batches.length} history batches were saved. ${cause instanceof Error ? cause.message : 'Submission could not be confirmed.'} No remaining batches were sent.`
+      );
+    }
     completed('backup', started);
+    serverAction = '';
     notice =
-      'Private server backup saved. Uploaded records do not contribute to community statistics.';
+      'Server history saved and included in community statistics. Your browser profile identity is unchanged.';
   }
 </script>
 
@@ -728,17 +778,17 @@
         <div>
           <dt>Server backup</dt>
           <dd>
-            Saving a private server backup and contributing to statistics are separate choices.
-            Recovering or deleting server data requires proof of ownership from a fresh game
-            capture.
+            Saving server history also contributes to community statistics. Turning submission off
+            stops future saves; deleting server history removes both the backup and its statistics
+            contribution. Server access requires proof of account ownership.
           </dd>
         </div>
         <div>
           <dt>Community statistics</dt>
           <dd>
-            Only histories fetched directly by the server can contribute. Public results contain
-            aggregates; small groups are withheld. Removing a contribution excludes it from future
-            calculations.
+            Server fetches and exports explicitly saved to the server use the same history. File
+            imports stay local until you choose to submit them. Public results contain aggregates;
+            small groups are withheld.
           </dd>
         </div>
         <div>
@@ -765,51 +815,86 @@
             >Verified account<select bind:value={serverAccount} onchange={() => (serverAction = '')}
               ><option value="">Choose an account</option
               >{#each publicConfig.accounts as account}<option value={account.account_id}
-                  >{account.identity.server} · {account.identity.endpoint_host} · {account.account_id.slice(
-                    0,
-                    8
-                  )}</option
+                  >{account.identity.uid} · {account.identity.server} · {account.identity
+                    .endpoint_host} · {account.account_id.slice(0, 8)}</option
                 >{/each}</select
             ></label
           >
+          <label
+            >Local profile to submit<select
+              value={uploadProfile?.id ?? ''}
+              onchange={(event) => {
+                uploadProfileId = event.currentTarget.value;
+                serverAction = '';
+              }}
+              ><option value="">Choose a profile</option>{#each profiles as profile}<option
+                  value={profile.id}>{profile.name}</option
+                >{/each}</select
+            ></label
+          >
+          {#if uploadIdentity === 'conflict'}<p class="availability">
+              This profile’s known identity conflicts with the authorized account. Choose a matching
+              profile.
+            </p>{/if}
+          <p class="small">
+            Contribute to community statistics / Save server backup: submitting this profile saves
+            its history for recovery and includes it in aggregate statistics.
+          </p>
           <div class="actions">
             <button
-              disabled={busy || !verifiedAccount || !publicConfig.features.server_backup}
+              disabled={busy ||
+                !verifiedAccount ||
+                !publicConfig.features.submit_history ||
+                !publicConfig.identity_verification.available}
               onclick={() => run(recoverServer, 'restore')}>Recover server backup</button
             ><button
-              disabled={busy || !matchingProfile || !publicConfig.features.server_backup}
-              onclick={() => run(saveServer, 'backup')}>Save profile to server</button
+              disabled={busy ||
+                !uploadProfile ||
+                !verifiedAccount ||
+                uploadIdentity === 'conflict' ||
+                !publicConfig.features.submit_history ||
+                !publicConfig.identity_verification.available}
+              onclick={() => {
+                if (uploadIdentity === 'associate') serverAction = 'associate';
+                else void run(() => saveServer(), 'backup');
+              }}>Save profile to server</button
             ><button
-              disabled={busy || !verifiedAccount || !publicConfig.features.server_backup}
-              onclick={() => (serverAction = 'backup')}>Delete server backup…</button
-            ><button
-              disabled={busy || !verifiedAccount || !publicConfig.features.community_contribution}
-              onclick={() => (serverAction = 'contribution')}
-              >Remove statistics contribution…</button
+              disabled={busy ||
+                !verifiedAccount ||
+                !publicConfig.features.submit_history ||
+                !publicConfig.identity_verification.available}
+              onclick={() => (serverAction = 'delete')}>Delete server history…</button
             >
           </div>
           {#if serverAction}<div class="confirmation">
               <p>
-                {serverAction === 'backup'
-                  ? 'Delete this account’s private server backup? Browser and Drive copies remain available.'
-                  : 'Remove this account’s contribution from future community statistics? Its private backups remain available.'}
+                {serverAction === 'associate'
+                  ? `Submit “${uploadProfile?.name}” as history for authorized account UID ${verifiedAccount?.identity.uid} on server ${verifiedAccount?.identity.server}? This export has incomplete account identity. Confirm that it belongs to this account. The browser profile identity will remain unchanged.`
+                  : 'Delete this account’s server history? This removes its server backup and excludes its history from future community statistics. Browser and Drive copies remain available. A future submission can save this history again.'}
               </p>
               <div class="actions">
                 <button
                   class="primary"
                   disabled={busy}
                   onclick={() =>
-                    run(async () => {
-                      if (!publicApi || !verifiedAccount) return;
-                      if (serverAction === 'backup')
+                    run(
+                      async () => {
+                        if (!publicApi || !verifiedAccount) return;
+                        if (serverAction === 'associate') {
+                          await saveServer(true);
+                          return;
+                        }
                         await publicApi.deleteBackup(verifiedAccount.account_id);
-                      else await publicApi.deleteContribution(verifiedAccount.account_id);
-                      notice =
-                        serverAction === 'backup'
-                          ? 'Private server backup deleted.'
-                          : 'Statistics contribution removed.';
-                      serverAction = '';
-                    })}>Confirm removal</button
+                        notice =
+                          'Server history deleted; its backup and statistics contribution were removed.';
+                        serverAction = '';
+                        publicConfig = await publicApi.config();
+                      },
+                      serverAction === 'associate' ? 'backup' : undefined
+                    )}
+                  >{serverAction === 'associate'
+                    ? 'Confirm association and submit'
+                    : 'Confirm deletion'}</button
                 ><button disabled={busy} onclick={() => (serverAction = '')}>Cancel</button>
               </div>
             </div>{/if}

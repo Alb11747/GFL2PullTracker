@@ -85,7 +85,7 @@
     <div>
       <h2 id="community-heading">Community statistics</h2>
       <p>
-        Recruitment results contributed by players, fetched directly from official game services.
+        Recruitment results from histories players saved to the server, including imported exports.
       </p>
     </div>
     <button disabled={loading} onclick={load}

@@ -14,29 +14,37 @@ the following describes the access and consent rules enforced when a verified
 provider is added. Local import, downloads, Drive, and explicit relay import can
 be used independently of that gate.
 
-Capture imports show two independent choices before submission: **Save server
-backup** and **Contribute to community statistics**. Their initial value is on;
-subsequent choices are remembered. When both are off, the browser attempts a
-direct official game request. An explicit server fallback sends the capture
-through the server's memory. When either server feature is selected, the server
-fetches the history once and returns it to the browser.
+Capture imports show one combined choice: **Contribute to community statistics /
+Save server backup**. It defaults on when available; explicit opt-out is remembered
+on this device and stops future submissions without deleting previously saved
+server history. **Recover a private server backup** defaults off and runs separately from
+submission: recovery never uploads or contributes history. With server features
+off, the browser attempts a direct official game request. An explicit server
+fallback sends the capture through the server's memory. When submission is
+selected, the server fetches the history once and returns it to the browser.
 
 Captures and credential-bearing URLs must not be stored in browser storage,
 server files, logs, backups, or analytics. Avoid pasting captures into support
 messages. Captures can contain reusable game authentication material.
 
-Private server backups and community contributions are separate. Private access
-requires a fresh authenticated capture with provider-supported ownership proof.
-The server issues a short-lived HttpOnly session cookie; Google login alone
-does not authorize a server backup. Providers lacking trustworthy account
-binding remain unavailable for recovery.
+Server-collected histories and uploaded histories explicitly submitted after
+account verification enter one normalized SQLite store associated with the
+verified actual UID, provider, server, and channel. Source and snapshot fingerprint
+provenance are retained. The same data supports private recovery and community
+statistics. Account ownership verification does not independently verify uploaded
+records' authenticity.
 
-Community statistics accept only pulls fetched by this server from the game
-service, deduplicate repeated contributions, and exclude uploaded histories.
+Submission, recovery, and deletion require fresh authenticated capture proof with
+provider-supported ownership verification. The server issues a short-lived
+HttpOnly session cookie; Google login alone does not authorize these actions.
+There is no recovery key. Providers lacking trustworthy account binding remain
+unavailable.
+
 Public output contains aggregates, never personal histories or identifiers.
-Small cohorts are suppressed. Disabling contribution withdraws that account's
-records from future calculations. Deleting a private server backup is a separate
-action and does not imply deleting browser or Drive copies.
+Cohorts with fewer than five contributors are suppressed. **Delete server history**
+removes the account's server backup and contribution to future statistics together;
+it does not delete browser or Drive copies. Opting out only stops future
+submissions. Drive sync cannot enable submission or recovery.
 
 Drive stores immutable compressed archives in this application's hidden data
 folder. Archives contain histories, profile identities, source snapshots, and

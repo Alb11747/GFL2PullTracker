@@ -4,12 +4,13 @@ import { telemetryEnabled, reportLocalServiceError } from './telemetry/browser.t
 
 export interface VerifiedAccount {
   account_id: string;
-  identity: Identity;
+  identity: Identity & { uid: string };
+  history_version: number;
 }
 export interface PublicConfig {
   mode: 'public';
   csrf_token: string;
-  features: { server_backup: boolean; community_contribution: boolean; relay_import: boolean };
+  features: { submit_history: boolean; relay_import: boolean };
   identity_verification: { available: boolean; reason: string | null };
   accounts: VerifiedAccount[];
   limits: Record<string, number>;
@@ -75,7 +76,7 @@ export function createPublicClient(fetcher: typeof fetch = fetch) {
         headers: {
           'X-GFL2-Telemetry': telemetryEnabled() ? '1' : '0',
           ...(mutation ? { 'X-CSRF-Token': csrfToken } : {}),
-          ...(body === undefined ? {} : { 'Content-Type': 'application/json' })
+          ...(mutation || body !== undefined ? { 'Content-Type': 'application/json' } : {})
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) })
       });
@@ -131,12 +132,7 @@ export function createPublicClient(fetcher: typeof fetch = fetch) {
     verify(capture: string, server?: string) {
       return request<VerifiedAccount>('verify', 'POST', { capture, ...(server ? { server } : {}) });
     },
-    fetchCapture(input: {
-      capture: string;
-      server?: string;
-      save_backup: boolean;
-      contribute: boolean;
-    }) {
+    fetchCapture(input: { capture: string; server?: string; submit_history: boolean }) {
       return request<PublicJob>('fetch', 'POST', input);
     },
     job(id: string) {
@@ -156,20 +152,16 @@ export function createPublicClient(fetcher: typeof fetch = fetch) {
     backup(accountId: string) {
       return request<ServerBackup>(accountPath('backup', accountId));
     },
-    saveBackup(backup: ServerBackup) {
-      return request<ServerBackup>('backup', 'PUT', backup);
+    submitHistory(backup: ServerBackup & { expected_version: number; associate?: boolean }) {
+      return request<{
+        account_id: string;
+        name: string;
+        snapshot_count: number;
+        record_count: number;
+      }>('backup', 'PUT', backup);
     },
     deleteBackup(accountId: string) {
       return request<void>(accountPath('backup', accountId), 'DELETE');
-    },
-    setContribution(accountId: string, enabled: boolean) {
-      return request<{ enabled: boolean }>('contribution', 'PUT', {
-        account_id: accountId,
-        enabled
-      });
-    },
-    deleteContribution(accountId: string) {
-      return request<void>(accountPath('contribution', accountId), 'DELETE');
     },
     statistics() {
       return request<CommunityStatistics>('statistics');

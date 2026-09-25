@@ -8,38 +8,28 @@ const config: PublicConfig = {
   accounts: [],
   limits: {},
   identity_verification: { available: true, reason: null },
-  features: { server_backup: true, community_contribution: true, relay_import: true }
+  features: { submit_history: true, relay_import: true }
 };
-test('first use and unavailable configuration always choose browser-only imports', () => {
-  assert.deepEqual(savedServerChoices(config, null, null), {
-    saveBackup: false,
-    contribute: false
-  });
-  assert.deepEqual(savedServerChoices(undefined, 'true', 'true'), {
-    saveBackup: false,
-    contribute: false
-  });
+test('submission defaults on and remembers explicit opt-out', () => {
+  assert.deepEqual(savedServerChoices(config, null), { submitHistory: true });
+  assert.deepEqual(savedServerChoices(config, 'true'), { submitHistory: true });
+  assert.deepEqual(savedServerChoices(config, 'false'), { submitHistory: false });
+});
+test('submission requires both a feature and the provider verification gate', () => {
+  assert.deepEqual(savedServerChoices(undefined, 'true'), { submitHistory: false });
   assert.deepEqual(
     savedServerChoices(
       { ...config, identity_verification: { available: false, reason: 'Disabled' } },
-      'true',
-      'true'
+      null
     ),
-    { saveBackup: false, contribute: false }
+    { submitHistory: false }
   );
-});
-test('saved explicit choices require each individual capability', () => {
-  assert.deepEqual(savedServerChoices(config, 'true', 'false'), {
-    saveBackup: true,
-    contribute: false
-  });
   assert.deepEqual(
     savedServerChoices(
-      { ...config, features: { ...config.features, server_backup: false } },
-      'true',
+      { ...config, features: { ...config.features, submit_history: false } },
       'true'
     ),
-    { saveBackup: false, contribute: true }
+    { submitHistory: false }
   );
   assert.equal(
     serverCapabilities({ ...config, identity_verification: { available: false, reason: null } })

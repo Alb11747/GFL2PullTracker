@@ -6,6 +6,9 @@
   if (location.origin !== origin) throw new Error('Routing fixture refused a non-test origin.');
   // The routing fixture exercises voluntary feedback while automatic telemetry stays off.
   localStorage.setItem('gfl2.telemetry.enabled', '0');
+  const submissionFixture = new URLSearchParams(location.search).has('submission');
+  const submissionReload = sessionStorage.getItem('gfl2.routing.submission-optout') === 'yes';
+  if (submissionFixture && !submissionReload) localStorage.removeItem('gfl2.submit-history');
   // A separate direct-entry run proves feedback remains reachable when the archive fails.
   if (location.pathname === '/about' && new URLSearchParams(location.search).has('archive-failure')) {
     let attempted = false;
@@ -133,15 +136,23 @@
   }) } } };
   Object.assign(window, { google });
   const json = (value: unknown) => Response.json(value);
+  const submissionRequests: string[] = [];
   window.fetch = async (input, init = {}) => {
     const url = new URL(input instanceof Request ? input.url : String(input), origin);
     if (url.origin === origin && url.pathname === '/api/public/config') {
       if (stallConfig) await new Promise<void>((resolve) => { releaseConfig = resolve; });
       return json({
       mode: 'public', csrf_token: 'synthetic-routing-csrf',
-      features: { server_backup: false, community_contribution: false, relay_import: false },
-      identity_verification: { available: false, reason: 'Routing fixture' }, accounts: [], limits: {}
+      features: { submit_history: submissionFixture, relay_import: false },
+      identity_verification: { available: submissionFixture, reason: submissionFixture ? null : 'Routing fixture' }, accounts: [], limits: {}
       });
+    }
+    if (submissionFixture && url.origin === origin && ['/api/public/verify', '/api/public/backup', '/api/public/fetch'].includes(url.pathname)) {
+      submissionRequests.push(url.pathname);
+      if (url.pathname.endsWith('/verify')) return json({ account_id: 'account', history_version: 0,
+        identity: { uid: '12345', account_fingerprint: 'synthetic', endpoint_host: 'gf2-gacha-record-us.sunborngame.com', server: '1', game_channel_id: '1' } });
+      if (url.pathname.endsWith('/backup')) return json({ account_id: 'account', name: 'Recovered', snapshots: [] });
+      throw new Error('Recovery must never submit a server fetch');
     }
     if (url.origin === origin && url.pathname === '/api/public/statistics') return json({
       minimum_contributors: 10, contributors: null, total: null, breakdowns: [],
@@ -255,7 +266,7 @@
     link.click();
     await until(() => location.pathname === `/${slug}` && link.getAttribute('aria-current') === 'page', `navigate ${slug}`);
     assert(document.querySelectorAll('.archive-nav [aria-current="page"]').length === 1, 'One current page');
-    const title = { history: 'Recruitment ledger', backup: 'Backup & sync', profiles: 'Profiles', statistics: 'Community statistics', privacy: 'Privacy & recovery', about: 'About' }[slug];
+    const title = { history: 'Recruitment ledger', backup: 'Backup & sync', profiles: 'Profiles', statistics: 'Statistics', privacy: 'Privacy & recovery', about: 'About' }[slug];
     assert(document.title.includes(title), `Page title matches ${slug}`);
   }
 
@@ -300,6 +311,48 @@
     } };
   }
   let loadingAudit: ReturnType<typeof watchLoadingRegions> | undefined;
+
+  async function runSubmission(log: (message: string) => void) {
+    await until(() => document.querySelector('.archive-nav a') && !main().querySelector('[aria-busy="true"]'), 'application initialized');
+    const links = [...document.querySelectorAll('.archive-nav a')];
+    assert(links[0].textContent?.trim() === 'My history' && links[1].textContent?.trim() === 'Statistics', 'Statistics immediately follows My history');
+    if (!submissionReload || !activeProfile().value) {
+      await navigate('profiles');
+      const profileName = `Submission fixture ${Date.now()}`;
+      input(document.querySelector<HTMLInputElement>('input[placeholder="For example, Europe account"]'), profileName);
+      await until(() => findButton('Create profile', main())?.matches(':enabled'), 'submission profile creation enabled');
+      clickButton('Create profile', main());
+      await until(() => [...activeProfile().options].some((option) => option.text === profileName) && !activeProfile().disabled, 'dedicated empty profile created');
+      const profile = required([...activeProfile().options].find((option) => option.text === profileName), 'dedicated submission profile');
+      input(activeProfile(), profile.value);
+      await navigate('history');
+    }
+    if (!document.querySelector('#import-panel')) clickButton('Import history');
+    await until(() => document.querySelector('#import-panel'), 'import panel opens');
+    clickButton('Captured request');
+    await until(() => document.querySelectorAll('.capture-options input').length === 2, 'combined controls rendered');
+    const [submission, recovery] = [...document.querySelectorAll<HTMLInputElement>('.capture-options input')];
+    assert(submission.closest('label')?.textContent?.trim() === 'Contribute to community statistics / Save server backup', 'Exact combined label');
+    assert(recovery.closest('label')?.textContent?.trim() === 'Recover a private server backup', 'Recovery comes second');
+    assert(!recovery.checked, 'Recovery defaults off');
+    if (submissionReload) {
+      assert(!submission.checked, 'Explicit opt-out survives reload');
+      sessionStorage.removeItem('gfl2.routing.submission-optout');
+      log('PASS default-on submission, exclusive recovery without fetch/save, persistent explicit opt-out, and Statistics navigation');
+      return;
+    }
+    assert(submission.checked && !submission.disabled, 'Available submission defaults on');
+    recovery.click(); await wait(50);
+    assert(submission.disabled, 'Recovery excludes new submission');
+    input(document.querySelector('textarea'), 'POST https://gf2-gacha-record-us.sunborngame.com/list?u=synthetic-routing-account&game_channel_id=1&type_id=1 HTTP/1.1\r\nHost: gf2-gacha-record-us.sunborngame.com\r\nAuthorization: synthetic-routing-credential\r\nContent-Length: 8\r\n\r\nserver=1');
+    clickButton('Recover server backup');
+    await until(() => document.body.textContent?.includes('Server backup recovered:'), 'recovery completed');
+    assert(submissionRequests.join(',') === '/api/public/verify,/api/public/backup', 'Recovery verifies and reads without submitting');
+    recovery.click(); await wait(50); submission.click(); await wait(50);
+    assert(localStorage.getItem('gfl2.submit-history') === 'false', 'Explicit opt-out persisted');
+    sessionStorage.setItem('gfl2.routing.submission-optout', 'yes');
+    location.assign('/history?submission=1');
+  }
 
   async function run(log: (message: string) => void) {
     running = true;
@@ -703,6 +756,13 @@
     performanceButton.onclick = () => { sessionStorage.setItem(RUN, 'performance'); location.assign('/__routing/reset'); };
     panel.append(button, performanceButton, results);
     document.body.append(panel);
+    if (submissionFixture) {
+      button.disabled = true; results.textContent = 'Running unified submission controls…\n';
+      runSubmission((message) => { results.textContent += `${message}\n`; }).then(() => {
+        panel.dataset.result = 'pass';
+      }, (error) => { results.textContent += `FAIL ${error.stack || error}\n`; panel.dataset.result = 'fail'; });
+      return;
+    }
     if (new URLSearchParams(location.search).get('performance') === '1' && sessionStorage.getItem(RUN) !== 'performance') {
       performanceButton.click(); return;
     }

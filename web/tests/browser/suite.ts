@@ -7,6 +7,7 @@ import { createDriveSync, type SyncStatus } from '../../src/lib/sync/controller.
 import { digest, type Revision, type RevisionTransport } from '../../src/lib/sync/drive.ts';
 import { canonical } from '../../src/lib/sync/reconcile.ts';
 import type { GoogleIdentity } from '../../src/lib/sync/identity.ts';
+import { createPublicClient, type PublicConfig } from '../../src/lib/public-api.ts';
 
 const runButton = document.querySelector<HTMLButtonElement>('#run')!;
 const summary = document.querySelector<HTMLElement>('#summary')!;
@@ -267,6 +268,103 @@ async function applyAndWait(view: Awaited<ReturnType<typeof dialog>>) {
 }
 
 const cases: [string, () => Promise<void>][] = [
+  [
+    'server submission confirms incomplete original snapshots in a bound profile and one deletion removes all server history',
+    async () => {
+      const local = client();
+      const initial = state('Imported export');
+      await local.replaceState(initial);
+      await local.importRecords({ profile_id: 'browser-profile', records_document: {
+        schema_version: 1, exported_at: timestamp,
+        records: [{ source_type_id: 3, source_page: 1,
+          record: { item: 11007, pool_id: 224001, item_num: 1, time: 1784800558 } }]
+      } });
+      const before = canonical(await local.exportState());
+      const config: PublicConfig = {
+        mode: 'public', csrf_token: 'synthetic', limits: {},
+        features: { submit_history: true, relay_import: true },
+        identity_verification: { available: true, reason: null },
+        accounts: [{ account_id: 'account', identity: { ...state().profiles[0], uid: '12345' }, history_version: 7 }]
+      };
+      const saves: Record<string, unknown>[] = [];
+      let deletes = 0;
+      const api = createPublicClient(async (path, options) => {
+        if (String(path).endsWith('/config')) return Response.json(config);
+        if (options?.method === 'PUT') {
+          saves.push(JSON.parse(String(options.body)));
+          return Response.json({ account_id: 'account', name: 'Imported export', snapshot_count: 1, record_count: 1 });
+        }
+        if (options?.method === 'DELETE') { deletes++; config.accounts[0].history_version++; return new Response(null, { status: 204 }); }
+        throw new Error('Unexpected server request');
+      });
+      await api.config();
+      mounted = mount(ArchiveSettings, { target: fixture, props: {
+        local, profiles: await local.profiles(), activeProfileId: 'browser-profile',
+        section: 'privacy', publicApi: api, publicConfig: config, onchanged: async () => {}
+      } });
+      await tick();
+      const account = fixture.querySelector<HTMLSelectElement>('.server-data select')!;
+      account.value = 'account'; account.dispatchEvent(new Event('change', { bubbles: true }));
+      await tick();
+      button('Save profile to server').click();
+      await eventually(() => fixture.textContent?.includes('Confirm association and submit') === true, 'original snapshot association confirmation');
+      assert(saves.length === 0, 'Incomplete identity submitted without confirmation');
+      assert(fixture.textContent?.includes('UID 12345'), 'Association did not identify authorized account');
+      button('Confirm association and submit').click();
+      await eventually(() => fixture.textContent?.includes('Server history saved') === true, 'confirmed profile saved');
+      assert(Number(saves.length) === 1 && saves[0].associate === true && saves[0].expected_version === 7, 'Wrong submission authorization/version');
+      assert(canonical(await local.exportState()) === before, 'Submission relabelled the local profile');
+      button('Delete server history…').click(); await tick();
+      assert(deletes === 0, 'Deletion bypassed confirmation');
+      assert(fixture.textContent?.includes('excludes its history from future community statistics'), 'Deletion omits statistics');
+      button('Confirm deletion').click();
+      await eventually(() => fixture.textContent?.includes('Server history deleted') === true, 'unified server deletion');
+      assert(Number(deletes) === 1, 'Expected exactly one server deletion');
+      assert(canonical(await local.exportState()) === before, 'Server deletion changed the browser archive');
+    }
+  ],
+  [
+    'manual submission freezes deletion generation before async profile export and never retries',
+    async () => {
+      const local = client();
+      await local.replaceState(state());
+      await local.importRecords({ profile_id: 'browser-profile', records_document: {
+        schema_version: 1, exported_at: timestamp,
+        account_fingerprint: state().profiles[0].account_fingerprint,
+        endpoint_host: state().profiles[0].endpoint_host,
+        server: '1', game_channel_id: '1',
+        records: [{ source_type_id: 3, source_page: 1,
+          record: { item: 11007, pool_id: 224001, item_num: 1, time: 1784800558 } }]
+      } });
+      const config: PublicConfig = {
+        mode: 'public', csrf_token: 'synthetic', limits: {},
+        features: { submit_history: true, relay_import: true },
+        identity_verification: { available: true, reason: null },
+        accounts: [{ account_id: 'account', identity: { ...state().profiles[0], uid: '12345' }, history_version: 7 }]
+      };
+      let exporting = false, release!: () => void, mutations = 0, sentVersion: unknown;
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      const delayed = { ...local, exportState: async () => { exporting = true; await held; return local.exportState(); } };
+      const api = createPublicClient(async (path, options) => {
+        if (String(path).endsWith('/config')) return Response.json(config);
+        mutations++; sentVersion = JSON.parse(String(options?.body)).expected_version;
+        return Response.json({}, { status: 409 });
+      });
+      await api.config();
+      mounted = mount(ArchiveSettings, { target: fixture, props: {
+        local: delayed, profiles: await local.profiles(), activeProfileId: 'browser-profile',
+        section: 'privacy', publicApi: api, publicConfig: config, onchanged: async () => {}
+      } });
+      await tick();
+      const account = fixture.querySelector<HTMLSelectElement>('.server-data select')!;
+      account.value = 'account'; account.dispatchEvent(new Event('change', { bubbles: true }));
+      await tick(); button('Save profile to server').click();
+      await eventually(() => exporting, 'manual export pending');
+      config.accounts[0].history_version = 8; release();
+      await eventually(() => fixture.textContent?.includes('The saved state changed.') === true, 'stale submission rejected');
+      assert(sentVersion === 7 && mutations === 1, 'Stale upload adopted new deletion generation or retried');
+    }
+  ],
   [
     'restore refreshes a stale preview after another worker edits during recovery export',
     async () => {

@@ -20,6 +20,7 @@
   import type { createDriveSync } from '$lib/sync/controller';
   import { createPublicClient, PublicApiError } from '$lib/public-api';
   import { serverCapabilities, savedServerChoices } from '$lib/import-policy';
+  import { submissionIdentity } from '$lib/submission-policy';
   import type {
     ImportResult,
     ImportInput,
@@ -162,8 +163,7 @@
         });
     }
   });
-  let saveBackup = $state(false),
-    contribute = $state(false),
+  let submitHistory = $state(false),
     recovery = $state(false);
   const capabilities = $derived(serverCapabilities(publicConfig));
   type Operation = Readonly<{
@@ -531,11 +531,7 @@
     try {
       publicConfig = await publicApi.config();
       if (disposed) return;
-      ({ saveBackup, contribute } = savedServerChoices(
-        publicConfig,
-        remembered('gfl2.server-backup'),
-        remembered('gfl2.contribute')
-      ));
+      ({ submitHistory } = savedServerChoices(publicConfig, remembered('gfl2.submit-history')));
     } catch {
       // Optional services never block the browser archive.
     }
@@ -821,8 +817,7 @@
     const source = sourceProfile || undefined;
     const serverId = server.trim() || undefined;
     const recover = recovery;
-    const backup = saveBackup;
-    const contribution = contribute;
+    const submission = submitHistory && !recover;
     let submittedCapture = capture;
     // Acquire ownership before loading optional code, including capture validation.
     const op = beginOperation(profileId, hosted && recover ? 'restore' : 'import');
@@ -847,13 +842,9 @@
         captureModule = await import('$lib/capture');
         if (!owns(op)) return;
         captureModule.validateCapture(submittedCapture, serverId);
-        if (
-          hosted &&
-          (((recover || backup) && !capabilities.backup) ||
-            (contribution && !capabilities.contribution))
-        )
+        if (hosted && (recover || submission) && !capabilities.submission)
           throw new Error('These server features are unavailable. Choose browser-only importing.');
-        if (forceRelay && (!capabilities.relay || backup || contribution || recover))
+        if (forceRelay && (!capabilities.relay || submission || recover))
           throw new Error('Server fallback is unavailable for these import choices.');
       }
       importState = 'running';
@@ -896,6 +887,18 @@
         publicConfig = await publicApi.config();
         const restored = await publicApi.backup(account.account_id);
         if (!owns(op)) return;
+        const destination = (await client.profiles()).find((profile) => profile.id === profileId);
+        if (!owns(op)) return;
+        if (!destination)
+          throw new Error(
+            'This profile is no longer available. Choose a profile before recovering.'
+          );
+        // Associated server snapshots retain their original, potentially incomplete identity.
+        // Check the authorized owner before merging any of those original documents locally.
+        if (submissionIdentity(destination, account.identity) === 'conflict')
+          throw new Error(
+            'This profile belongs to a different account. Choose a matching or empty profile before recovering.'
+          );
         saving = true;
         let read = 0,
           added = 0,
@@ -910,7 +913,7 @@
         importState = 'complete';
         message = `Server backup recovered: ${number(read)} records read · ${number(added)} added · ${number(total)} in this profile.`;
         await archiveChanged();
-      } else if (hosted && !backup && !contribution && !forceRelay) {
+      } else if (hosted && !submission && !forceRelay) {
         const { collectCapture, CaptureError } = captureModule!;
         abortCapture = new AbortController();
         message = 'Starting browser collection…';
@@ -957,8 +960,7 @@
               ...(await publicApi.fetchCapture({
                 capture: submittedCapture,
                 server: serverId,
-                save_backup: backup,
-                contribute: contribution
+                submit_history: submission
               })),
               profile_id: profileId
             } as Job)
@@ -1056,7 +1058,7 @@
             importOpen = true;
             if (capture.trim()) void runImport(true);
           }}
-          disabled={saveBackup || contribute || recovery || !capabilities.relay}
+          disabled={submitHistory || recovery || !capabilities.relay}
         >
           {capture.trim()
             ? 'Fetch through server once'
@@ -1168,7 +1170,7 @@
             void profileChanged();
           }}
           onrecover={async () => {
-            if (importBusy || !capabilities.backup) return;
+            if (importBusy || !capabilities.submission) return;
             recovery = true;
             importMode = 'capture';
             importOpen = true;
@@ -1332,47 +1334,40 @@
                     <label class="check-control"
                       ><input
                         type="checkbox"
+                        bind:checked={submitHistory}
+                        disabled={importBusy || recovery || !capabilities.submission}
+                        onchange={() => remember('gfl2.submit-history', String(submitHistory))}
+                      /> Contribute to community statistics / Save server backup</label
+                    >
+                    <label class="check-control"
+                      ><input
+                        type="checkbox"
                         bind:checked={recovery}
-                        disabled={importBusy || !capabilities.backup}
+                        disabled={importBusy || !capabilities.submission}
                       /> Recover a private server backup</label
                     >
-                    {#if !recovery}
-                      <label class="check-control"
-                        ><input
-                          type="checkbox"
-                          bind:checked={saveBackup}
-                          disabled={importBusy || !capabilities.backup}
-                          onchange={() => remember('gfl2.server-backup', String(saveBackup))}
-                        /> Save server backup</label
-                      >
-                      <label class="check-control"
-                        ><input
-                          type="checkbox"
-                          bind:checked={contribute}
-                          disabled={importBusy || !capabilities.contribution}
-                          onchange={() => remember('gfl2.contribute', String(contribute))}
-                        /> Contribute to community statistics</label
-                      >
-                    {/if}
-                    {#if !capabilities.backup || !capabilities.contribution}
+                    {#if !capabilities.submission}
                       <p class="small">
-                        {!capabilities.backup
-                          ? 'Server backup and recovery are unavailable. '
-                          : ''}{!capabilities.contribution
-                          ? 'Community contributions are unavailable. '
-                          : ''}Browser imports remain available; Drive sync is configured
-                        separately.
+                        Server history submission and recovery are unavailable. Browser imports
+                        remain available; Drive sync is configured separately.
                       </p>
                     {/if}
-                    {#if recovery || saveBackup || contribute}
+                    {#if recovery}
                       <p class="small">
-                        This request sends your capture to the tracker server. Credentials are used
-                        in memory and never saved. Only aggregate statistics are public.
+                        Verify your account with this capture to recover saved history. Recovery
+                        does not submit new history.
+                      </p>
+                    {:else if submitHistory}
+                      <p class="small">
+                        Your capture is used in server memory and never saved. Saved history
+                        contributes to aggregate statistics. Turning this off stops future
+                        submissions; use Delete server history to remove existing server data.
                       </p>
                     {:else}
                       <p class="small">
                         The browser contacts official game servers directly. No capture or history
-                        is sent to this tracker server.
+                        is sent to this tracker server. Turning this off does not delete previously
+                        submitted history.
                       </p>
                     {/if}
                   </div>
@@ -1388,11 +1383,15 @@
                   creating ||
                   (hosted &&
                     importMode === 'capture' &&
-                    (recovery || saveBackup || contribute) &&
+                    (recovery || submitHistory) &&
                     !publicConfig?.identity_verification.available)}
                 ><LoadingLabel
                   busy={importBusy}
-                  label={importMode === 'file' ? 'Validate and import' : 'Fetch accessible history'}
+                  label={importMode === 'file'
+                    ? 'Validate and import'
+                    : recovery
+                      ? 'Recover server backup'
+                      : 'Fetch accessible history'}
                   loadingLabel="Working…"
                 /></button
               >

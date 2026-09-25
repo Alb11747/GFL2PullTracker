@@ -133,9 +133,9 @@ first visible record starts a complete pity interval.
    its URL and query parameters rather than selecting unrelated login or payment
    traffic. Copy the full request URL or raw HTTP request that includes the
    history request's authentication parameters.
-5. Paste it into the tracker's capture field. Review the two server-data choices
-   before importing. The site explains when the capture will pass through its
-   server. Do not save the request to an issue or share it with another person.
+5. Paste it into the tracker's capture field. Review the combined **Contribute to
+   community statistics / Save server backup** choice before importing. The site
+   explains when the capture will pass through its server. Do not save the request to an issue or share it with another person.
 6. Stop Fiddler capture when finished. Disable HTTPS decryption and remove its
    interception certificate if you no longer need it, following Telerik's
    guidance. Close Fiddler to restore normal traffic routing.
@@ -146,8 +146,11 @@ repeat an uncertain server submission automatically. An expired capture needs a
 fresh history request. For unsupported ownership providers, file import and
 browser-local storage remain usable while server recovery stays disabled.
 
-New users start with browser-only collection. Unavailable server choices show
-their reason beside the controls. Profile, capture, Server ID, and capability
+The combined server-history choice defaults on when available; explicit opt-out
+is remembered and stops future submissions. Recovery defaults off and executes
+without submitting history. No audited production provider verifier is enabled,
+so new users currently start with browser-only collection. Unavailable server
+choices show their reason beside the controls. Profile, capture, Server ID, and capability
 validation happens before the capture field is cleared; collection clears the
 credential from the form and never saves or automatically resubmits it.
 

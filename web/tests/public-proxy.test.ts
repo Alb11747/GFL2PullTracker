@@ -37,6 +37,23 @@ test('public proxy requires configured origins and never exposes local APIs', as
   assert.throws(() => backendUrl('http://evil.example', options.allowedBackends));
   assert.equal(backendUrl('http://api:8000', options.allowedBackends).host, 'api:8000');
 });
+
+test('retired contribution routes never reach the backend', async () => {
+  let calls = 0;
+  for (const method of ['GET', 'POST', 'PUT', 'DELETE']) {
+    const response = await forward(
+      request('public/contribution', method),
+      'http://api:8000',
+      async () => {
+        calls++;
+        return Response.json({});
+      },
+      options
+    );
+    assert.equal(response.status, 404);
+  }
+  assert.equal(calls, 0);
+});
 test('public proxy forwards only its own session, preserves CSRF and session renewal', async () => {
   const response = await forward(
     request('public/fetch', 'POST', {

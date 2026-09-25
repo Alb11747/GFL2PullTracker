@@ -7,7 +7,10 @@ export default defineConfig({
   publicDir: fileURLToPath(new URL('../../static', import.meta.url)),
   cacheDir: fileURLToPath(new URL('../../node_modules/.vite-browser-regressions', import.meta.url)),
   plugins: [svelte({ configFile: false })],
-  resolve: { alias: { $lib: fileURLToPath(new URL('../../src/lib', import.meta.url)) } },
+  resolve: { alias: {
+    $lib: fileURLToPath(new URL('../../src/lib', import.meta.url)),
+    '$app/state': fileURLToPath(new URL('./app-state.ts', import.meta.url))
+  } },
   build: {
     outDir: fileURLToPath(new URL('../../node_modules/.browser-regression-build', import.meta.url)),
     emptyOutDir: true,
