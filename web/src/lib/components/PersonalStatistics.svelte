@@ -349,7 +349,7 @@
     Your saved history is analyzed on this device. Community comparisons send aggregate windows and
     counts only, never raw recruitment records.
   </p>
-  {#if loading}<p role="status" class="notice">Reading your saved statistics…</p>{/if}
+  {#if loading}<p role="status" class="loading-status">Reading your saved statistics…</p>{/if}
   {#if loadError}<p role="alert" class="error">{loadError}</p>
     <button onclick={() => retry++}>Retry statistics</button>{/if}
   <section class="history-summary" aria-label="History summary">
@@ -982,7 +982,17 @@
     line-height: 1.6;
     margin: 5px 0 0;
   }
+  .loading-status {
+    position: absolute;
+    top: 0;
+    right: 0;
+    margin: 0;
+    padding: 4px 8px;
+    background: var(--paper, #f0f2f4);
+    font-size: 0.8rem;
+  }
   .personal-statistics {
+    position: relative;
     --orange: #a64000;
     --muted: #555e68;
     --line: #c3c9d0;

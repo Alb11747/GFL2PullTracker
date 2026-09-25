@@ -327,6 +327,7 @@
 <section
   class="elite-overview"
   class:stale
+  class:initial-loading={!overview && (busy || !mounted)}
   class:summary-stale={summaryStale}
   aria-label="Recruitment overview"
   aria-busy={busy}
@@ -336,14 +337,16 @@
   <div class="preview-measure" aria-hidden="true" use:measureRows></div>
   <div class="overview-toolbar">
     <h1 id="overview-title">Recruitment ledger</h1>
-    {#if types.length}<label class="recruitment-select"
+    {#if types.length || busy || !mounted}<label class="recruitment-select"
         >Recruitment
         <select
+          disabled={!types.length}
           value={selectedType !== null && types.includes(selectedType)
             ? selectedType
             : lastSelectedType}
           on:change={(event) => (selectedType = Number(event.currentTarget.value))}
         >
+          {#if !types.length}<option>Loading recruitments…</option>{/if}
           {#each types as type}<option value={type}>{recruitmentName(type)}</option>{/each}
         </select>
       </label>{/if}
@@ -632,6 +635,11 @@
     position: relative;
     margin-block: 0 24px;
     min-width: 0;
+  }
+  /* Reserve the first viewport while IndexedDB resolves the initial preview.
+     Otherwise the pull log paints here and is displaced by two rows of rewards. */
+  .initial-loading {
+    min-height: max(680px, calc(100svh - 180px));
   }
   /* Hidden content keeps its dimensions and is excluded from focus and the
      accessibility tree, so old account data is never relabeled as new data. */

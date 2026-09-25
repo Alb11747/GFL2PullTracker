@@ -8,11 +8,13 @@
   import '../app.css';
   import { browser } from '$app/environment';
   import { onMount, untrack } from 'svelte';
+  import { preserveReloadScroll } from '$lib/reload-scroll';
   import { afterNavigate } from '$app/navigation';
   import { initTelemetry, capturePageview } from '$lib/telemetry/browser';
   import TelemetryNotice from '$lib/components/TelemetryNotice.svelte';
   import ErrorReportNotice from '$lib/components/ErrorReportNotice.svelte';
   let { children, data } = $props();
+  onMount(preserveReloadScroll);
   const BETA_DISMISSED_KEY = 'gfl2.beta-banner-dismissed';
   let betaVisible = $state(true);
   onMount(() => {
@@ -51,6 +53,9 @@
 {#if data.telemetry.enabled}<ErrorReportNotice />{/if}
 
 <style>
+  :global(html[data-beta-dismissed="true"]) .beta-banner {
+    display: none;
+  }
   .beta-banner {
     position: relative;
     display: flex;

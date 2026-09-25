@@ -4,6 +4,29 @@
     <meta charset="utf-8" />
     <link rel="icon" href="%sveltekit.assets%/favicon.svg" type="image/svg+xml" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Apply this tab's dismissal before the server-rendered banner can paint. -->
+    <script nonce="%sveltekit.nonce%">
+      try {
+        if (sessionStorage.getItem('gfl2.beta-banner-dismissed') === '1') {
+          document.documentElement.dataset.betaDismissed = 'true';
+        }
+      } catch {
+        // Keep the banner visible when session storage is unavailable.
+      }
+    </script>
+    <script nonce="%sveltekit.nonce%">
+      try {
+        const navigation = performance.getEntriesByType('navigation')[0];
+        const saved = JSON.parse(sessionStorage.getItem('gfl2.reload-scroll') || 'null');
+        if (navigation?.type === 'reload' && !location.hash && saved?.path === location.pathname + location.search
+          && Date.now() - saved.time < 300000 && Number.isFinite(saved.y) && saved.y > 0
+          && Number.isFinite(saved.height) && saved.height > 0 && saved.height < 10000000) {
+          document.documentElement.dataset.reloadScroll = String(saved.y);
+          document.documentElement.style.setProperty('--reload-height', saved.height + 'px');
+        }
+      } catch { /* Reload restoration is optional when storage is unavailable. */ }
+    </script>
+    <style>html[data-reload-scroll] body { min-height: var(--reload-height); }</style>
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">

@@ -1411,6 +1411,7 @@
 
       <section class="overview" aria-labelledby="overview-title">
         <EliteHistory
+          loading={loading && !stats}
           query={rewardQuery}
           querySummary={hosted && local ? local.statisticsSummary : undefined}
           profileId={filters.profile_id}
