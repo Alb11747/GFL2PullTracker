@@ -34,6 +34,8 @@ The launcher installs the locked dependencies, builds the web app, and opens `ht
 
 Use `-Development` for Vite development mode, `-NoBrowser` to skip opening a tab, or `-Port 3010 -ApiPort 8010` when the default ports are occupied. The launcher does not stop existing processes.
 
+History queries also derive featured rewards and guarantee state for reviewed banner mappings. The initial catalog covers Sunborn US targeted doll and weapon banners through early April 2026; other dates, uncertain boundaries, and providers remain unknown. This is a data-layer capability awaiting personal-statistics UI integration. See [banner outcome rules and limits](docs/BANNER_OUTCOMES.md).
+
 ## Import history
 
 Create or select a profile before importing. Each profile has its own history. An import with a different known account, server, or channel is rejected.

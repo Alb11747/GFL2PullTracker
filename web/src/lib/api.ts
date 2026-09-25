@@ -1,3 +1,4 @@
+import type { BannerResult } from './banner-outcomes.ts';
 import type { ProfileOverview } from './reward-query.ts';
 
 export interface Profile {
@@ -10,6 +11,7 @@ export interface Profile {
   created_at: string;
 }
 export interface Pull {
+  banner_result?: BannerResult;
   id: number;
   item_id: number;
   name: string;

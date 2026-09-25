@@ -12,6 +12,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from backend.coverage import annotate_history
+from backend.banner_outcomes import annotate_banner_outcomes, summarize_banner_outcomes
 from backend.database import Profile, Pull, Snapshot, merge_source_order, source_records_newest_first
 from scripts.fetch_pull_history import OFFICIAL_HOSTS
 
@@ -276,6 +277,7 @@ class Tracker:
                            source_page=pull.source_page, record_key=pull.record_key, occurrence=pull.occurrence, estimated_group_size=groups[(pull.type_id, pull.pool_id, pull.timestamp)])
                 all_rows.append(row)
             annotate_history(all_rows, documents, endpoint_host)
+            annotate_banner_outcomes(all_rows, endpoint_host)
             for row in all_rows:
                 row.pop("record_key")
                 row.pop("occurrence")
@@ -322,6 +324,7 @@ class Tracker:
                     known = [row for row in elites if not row["pity_uncertain"]]
                     latest = scoped[0]
                     summary = dict(
+                        featured=summarize_banner_outcomes(scoped),
                         currentPity=latest["pity"] if latest["rarity"] != "Elite" else 0,
                         currentUncertain=latest["rarity"] != "Elite" and latest["pity_uncertain"],
                         average=sum(row["pity"] for row in known) / len(known) if known else None,
@@ -351,6 +354,7 @@ class Tracker:
             else:
                 selected = []
                 summary = dict(currentPity=0, currentUncertain=False, average=None, lastElite=None,
+                               featured=summarize_banner_outcomes([]),
                                breakdown=[dict(rarity=rarity, count=0, percent=0)
                                           for rarity in ("Elite", "Standard", "Retired")])
             offset = max(0, offset)

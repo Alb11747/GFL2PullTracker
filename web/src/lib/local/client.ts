@@ -13,6 +13,7 @@ import type { ExiliumProfile } from '../exilium-import.ts';
 import type { ProfileOverview } from '../reward-query.ts';
 import type { Resolutions } from '../sync/reconcile.ts';
 import type { BackupPreview } from './restore.ts';
+import type { PersonalStatisticsResponse } from '../statistics/history-types.ts';
 export type { PortableState, PortableProfile, SourceSnapshot } from './types.ts';
 
 function transferableFilters(filters: Filters): Filters {
@@ -115,6 +116,8 @@ export function createLocalClient() {
     ) =>
       send<ProfileOverview>('rewards', [profileId, typeId, [...rarities], offset, limit], consumer),
     statistics: (filters: Filters) => call<Statistics>('statistics', transferableFilters(filters)),
+    statisticsSummary: (profileId: string, typeId: number | null) =>
+      call<PersonalStatisticsResponse>('statisticsSummary', profileId, typeId),
     filterOptions: (id: string) => call<FilterOptions>('filterOptions', id),
     importRecords: (input: ImportInput) => call<ImportResult>('importRecords', input),
     readExport: (files: File[], profileId: string, exiliumProfileId?: string) =>

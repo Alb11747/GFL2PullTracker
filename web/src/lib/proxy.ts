@@ -45,11 +45,14 @@ export async function forward(
     return failure('Use the local tracker address.', 403);
   const method = request.method;
   const path = incoming.pathname;
-  const bodyLimit = hosted
-    ? /\/public\/(fetch|verify)$/.test(path)
-      ? 300 * 1024
-      : 16 * 1024 * 1024
-    : MAX_BODY;
+  const comparison = hosted && method === 'POST' && path === '/api/public/statistics/compare';
+  const bodyLimit = comparison
+    ? 8192
+    : hosted
+      ? /\/public\/(fetch|verify)$/.test(path)
+        ? 300 * 1024
+        : 16 * 1024 * 1024
+      : MAX_BODY;
   const readable = hosted
     ? /^\/api\/(health|public\/(config|statistics|backup|jobs\/[a-zA-Z0-9-]+(?:\/result)?))$/.test(
         path
@@ -66,7 +69,7 @@ export async function forward(
       : /^\/api\/(profiles|imports|fetch)$/.test(path)) ||
     (method === 'POST' && cancellation);
   const writeMethod = hosted ? ['POST', 'PUT', 'DELETE'].includes(method) : method === 'POST';
-  if ((method !== 'GET' || !readable) && (!writeMethod || !writable))
+  if (!comparison && (method !== 'GET' || !readable) && (!writeMethod || !writable))
     return failure('API route not found.', 404);
   if (request.headers.get('sec-fetch-site') === 'cross-site')
     return failure('Cross-site requests are not allowed.', 403);
@@ -103,7 +106,10 @@ export async function forward(
     )
       return failure('Use application/json.', 415);
     if (Number(request.headers.get('content-length') || 0) > bodyLimit)
-      return failure('Import exceeds the 64 MiB limit.', 413);
+      return failure(
+        comparison ? 'Comparison request is too large.' : 'Import exceeds the request size limit.',
+        413
+      );
     const reader = request.body?.getReader();
     const chunks: Uint8Array[] = [];
     let length = 0;
@@ -114,7 +120,12 @@ export async function forward(
         length += chunk.value.byteLength;
         if (length > bodyLimit) {
           await reader.cancel();
-          return failure('Import exceeds the 64 MiB limit.', 413);
+          return failure(
+            comparison
+              ? 'Comparison request is too large.'
+              : 'Import exceeds the request size limit.',
+            413
+          );
         }
         chunks.push(chunk.value);
       }

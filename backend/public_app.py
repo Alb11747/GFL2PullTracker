@@ -64,6 +64,30 @@ class BackupInput(Strict):
     associate: bool = False
 
 
+class ComparisonWindow(Strict):
+    budget: int = Field(ge=0, le=20_000, strict=True)
+    count: int = Field(ge=0, le=20_000, strict=True)
+    startingPity: int = Field(ge=0, le=79, strict=True)
+    guaranteed: bool = Field(strict=True)
+
+
+class ComparisonWins(Strict):
+    wins: int = Field(ge=0, le=20_000, strict=True)
+    trials: int = Field(ge=0, le=20_000, strict=True)
+
+
+class ComparisonInput(Strict):
+    endpoint_host: str = Field(min_length=1, max_length=200)
+    server: str = Field(min_length=1, max_length=200)
+    game_channel_id: str = Field(min_length=1, max_length=200)
+    type_id: int = Field(ge=1, le=100, strict=True)
+    rules_version: str = Field(min_length=1, max_length=200)
+    elite: ComparisonWindow | None = None
+    featured: ComparisonWindow | None = None
+    wins: ComparisonWins | None = None
+    exclude_account_id: str | None = Field(default=None, pattern=r'^[0-9a-f]{64}$')
+
+
 class RateLimit:
     """Bounded process-local limiter with distinct client and global buckets."""
     def __init__(self):
@@ -152,15 +176,21 @@ def create_public_app(data_dir=None, *, origin=None, client_factory=None, identi
                     raise HTTPException(415, 'Use application/json')
                 if request.headers.get('content-encoding', 'identity') != 'identity':
                     raise HTTPException(415, 'Compressed request bodies are not accepted')
-                token = request.cookies.get(COOKIE)
-                session = request.app.state.store.session(token)
-                if session is None:
-                    raise HTTPException(401, 'Session expired. Reload settings and use a fresh capture.')
-                csrf = request.headers.get('x-csrf-token', '')
-                if not hmac.compare_digest(digest(csrf), session['csrf_hash']):
-                    raise HTTPException(403, 'Invalid CSRF token')
-                limiter.take('writes:' + digest(token), 60, 60)
-                limit = 16*1024*1024 if request.url.path == '/api/public/backup' else 300_000
+                # This aggregate-only query is read-only. It retains origin,
+                # content-type, bounded-body and client rate protections, but
+                # does not need a write grant or initialize a browser session.
+                read_comparison = request.method == 'POST' and request.url.path == '/api/public/statistics/compare'
+                if not read_comparison:
+                    token = request.cookies.get(COOKIE)
+                    session = request.app.state.store.session(token)
+                    if session is None:
+                        raise HTTPException(401, 'Session expired. Reload settings and use a fresh capture.')
+                    csrf = request.headers.get('x-csrf-token', '')
+                    if not hmac.compare_digest(digest(csrf), session['csrf_hash']):
+                        raise HTTPException(403, 'Invalid CSRF token')
+                    limiter.take('writes:' + digest(token), 60, 60)
+                limit = (16*1024*1024 if request.url.path == '/api/public/backup' else
+                         8192 if read_comparison else 300_000)
                 body = bytearray()
                 async for chunk in request.stream():
                     if len(body) + len(chunk) > limit:
@@ -296,5 +326,23 @@ def create_public_app(data_dir=None, *, origin=None, client_factory=None, identi
     def statistics(request: Request):
         limiter.take('statistics:' + request.state.client_address, 30, 60)
         return request.app.state.store.statistics()
+
+    @application.post('/api/public/statistics/compare')
+    def compare_statistics(body: ComparisonInput, request: Request):
+        limiter.take('statistics-compare:' + request.state.client_address, 30, 60)
+        excluded = None
+        if body.exclude_account_id is not None:
+            # A caller-provided account key alone never authorizes exclusion.
+            # Invalid/expired/nonowned requests share the same public result.
+            token = request.cookies.get(COOKIE)
+            if identity_verifier is not None and request.app.state.store.session(token):
+                try:
+                    identity = request.app.state.store.require_account(token, body.exclude_account_id)
+                    if all(identity.get(field) == getattr(body, field)
+                           for field in ('endpoint_host', 'server', 'game_channel_id')):
+                        excluded = body.exclude_account_id
+                except HTTPException:
+                    pass
+        return request.app.state.store.compare_statistics(body.model_dump(), excluded)
 
     return application

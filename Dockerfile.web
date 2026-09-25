@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install --no-install-recommends -y ca-certificates
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
-COPY backend/catalog.json /app/backend/catalog.json
+COPY backend/catalog.json backend/banner_rules.json /app/backend/
 COPY docs/IMPORTING.md /app/docs/IMPORTING.md
 RUN --mount=type=secret,id=posthog_cli \
     if [ -n "$POSTHOG_PROJECT_ID" ]; then \

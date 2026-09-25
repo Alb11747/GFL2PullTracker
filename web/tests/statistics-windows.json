@@ -1,0 +1,1409 @@
+{
+  "description": "Synthetic annotated rows, newest first. No personal history or account identity. Default unknown starting guarantee; later classified rewards establish excluded anchors.",
+  "cases": [
+    {
+      "name": "known pity includes trailing exposure but unknown guarantee excludes first classified anchor",
+      "rows": [
+        {
+          "rarity": "Standard",
+          "pity": 5,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 4,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 3,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 2,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 1,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Elite",
+          "pity": 2,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": true,
+            "outcome": "win",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": 2,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 1,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Elite",
+          "pity": 3,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": true,
+            "outcome": "guaranteed",
+            "guarantee_before": true,
+            "guarantee_after": false,
+            "featured_pity": 7,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 2,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": true,
+            "guarantee_after": true,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 1,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": true,
+            "guarantee_after": true,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Elite",
+          "pity": 4,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": false,
+            "outcome": "loss",
+            "guarantee_before": false,
+            "guarantee_after": true,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 3,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 2,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 1,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        }
+      ],
+      "expected": {
+        "windows": {
+          "elite": {
+            "budget": 14,
+            "count": 3,
+            "startingPity": 0,
+            "guaranteed": false
+          },
+          "featured": {
+            "budget": 10,
+            "count": 2,
+            "startingPity": 0,
+            "guaranteed": true
+          }
+        },
+        "currentPity": 5,
+        "currentGuarantee": false,
+        "intervals": [2, 3, 4],
+        "featuredIntervals": [2, 7],
+        "wins": {
+          "wins": 1,
+          "trials": 2,
+          "guaranteed": 1,
+          "unknown": 0
+        },
+        "excludedCount": 0,
+        "featuredCount": 2,
+        "unknownFeaturedCount": 0
+      }
+    },
+    {
+      "name": "unknown start excludes anchor reward",
+      "rows": [
+        {
+          "rarity": "Standard",
+          "pity": 5,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 4,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 3,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 2,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 1,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Elite",
+          "pity": 2,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": true,
+            "outcome": "guaranteed",
+            "guarantee_before": true,
+            "guarantee_after": false,
+            "featured_pity": 5,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 1,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": true,
+            "guarantee_after": true,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Elite",
+          "pity": 3,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": false,
+            "outcome": "loss",
+            "guarantee_before": false,
+            "guarantee_after": true,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 2,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 1,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Elite",
+          "pity": 4,
+          "pity_uncertain": true,
+          "gap_before": false,
+          "banner_result": {
+            "featured": true,
+            "outcome": "win",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": 4,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 3,
+          "pity_uncertain": true,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 2,
+          "pity_uncertain": true,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 1,
+          "pity_uncertain": true,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        }
+      ],
+      "expected": {
+        "windows": {
+          "elite": {
+            "budget": 10,
+            "count": 2,
+            "startingPity": 0,
+            "guaranteed": false
+          },
+          "featured": {
+            "budget": 10,
+            "count": 1,
+            "startingPity": 0,
+            "guaranteed": false
+          }
+        },
+        "currentPity": 5,
+        "currentGuarantee": false,
+        "intervals": [2, 3],
+        "featuredIntervals": [5, 4],
+        "wins": {
+          "wins": 1,
+          "trials": 2,
+          "guaranteed": 1,
+          "unknown": 0
+        },
+        "excludedCount": 1,
+        "featuredCount": 2,
+        "unknownFeaturedCount": 0
+      }
+    },
+    {
+      "name": "gap discards older windows",
+      "rows": [
+        {
+          "rarity": "Standard",
+          "pity": 5,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 4,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 3,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 2,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 1,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Elite",
+          "pity": 2,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": true,
+            "outcome": "win",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": 2,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 1,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Elite",
+          "pity": 3,
+          "pity_uncertain": true,
+          "gap_before": false,
+          "banner_result": {
+            "featured": true,
+            "outcome": "unknown",
+            "guarantee_before": null,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": "history_gap"
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 2,
+          "pity_uncertain": true,
+          "gap_before": true,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": null,
+            "guarantee_after": null,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 1,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Elite",
+          "pity": 4,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": true,
+            "outcome": "win",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": 4,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 3,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 2,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 1,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        }
+      ],
+      "expected": {
+        "windows": {
+          "elite": {
+            "budget": 7,
+            "count": 1,
+            "startingPity": 0,
+            "guaranteed": false
+          },
+          "featured": {
+            "budget": 7,
+            "count": 1,
+            "startingPity": 0,
+            "guaranteed": false
+          }
+        },
+        "currentPity": 5,
+        "currentGuarantee": false,
+        "intervals": [2, 4],
+        "featuredIntervals": [2, 4],
+        "wins": {
+          "wins": 2,
+          "trials": 2,
+          "guaranteed": 0,
+          "unknown": 1
+        },
+        "excludedCount": 1,
+        "featuredCount": 3,
+        "unknownFeaturedCount": 0
+      }
+    },
+    {
+      "name": "trailing gap leaves no usable window",
+      "rows": [
+        {
+          "rarity": "Standard",
+          "pity": 5,
+          "pity_uncertain": true,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": null,
+            "guarantee_after": null,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 4,
+          "pity_uncertain": true,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": null,
+            "guarantee_after": null,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 3,
+          "pity_uncertain": true,
+          "gap_before": true,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": null,
+            "guarantee_after": null,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 2,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 1,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Elite",
+          "pity": 4,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": true,
+            "outcome": "win",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": 4,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 3,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 2,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 1,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        }
+      ],
+      "expected": {
+        "windows": {
+          "elite": null,
+          "featured": null
+        },
+        "currentPity": null,
+        "currentGuarantee": null,
+        "intervals": [4],
+        "featuredIntervals": [4],
+        "wins": {
+          "wins": 1,
+          "trials": 1,
+          "guaranteed": 0,
+          "unknown": 0
+        },
+        "excludedCount": 0,
+        "featuredCount": 1,
+        "unknownFeaturedCount": 0
+      }
+    },
+    {
+      "name": "zero elite with known pity retains exposure",
+      "rows": [
+        {
+          "rarity": "Standard",
+          "pity": 8,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 7,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 6,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 5,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 4,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 3,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 2,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 1,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        }
+      ],
+      "expected": {
+        "windows": {
+          "elite": {
+            "budget": 8,
+            "count": 0,
+            "startingPity": 0,
+            "guaranteed": false
+          },
+          "featured": null
+        },
+        "currentPity": 8,
+        "currentGuarantee": false,
+        "intervals": [],
+        "featuredIntervals": [],
+        "wins": {
+          "wins": 0,
+          "trials": 0,
+          "guaranteed": 0,
+          "unknown": 0
+        },
+        "excludedCount": 0,
+        "featuredCount": 0,
+        "unknownFeaturedCount": 0
+      }
+    },
+    {
+      "name": "zero elite with unknown start unavailable",
+      "rows": [
+        {
+          "rarity": "Standard",
+          "pity": 8,
+          "pity_uncertain": true,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": null,
+            "guarantee_after": null,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 7,
+          "pity_uncertain": true,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": null,
+            "guarantee_after": null,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 6,
+          "pity_uncertain": true,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": null,
+            "guarantee_after": null,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 5,
+          "pity_uncertain": true,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": null,
+            "guarantee_after": null,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 4,
+          "pity_uncertain": true,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": null,
+            "guarantee_after": null,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 3,
+          "pity_uncertain": true,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": null,
+            "guarantee_after": null,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 2,
+          "pity_uncertain": true,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": null,
+            "guarantee_after": null,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 1,
+          "pity_uncertain": true,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": null,
+            "guarantee_after": null,
+            "featured_pity": null,
+            "reason": null
+          }
+        }
+      ],
+      "expected": {
+        "windows": {
+          "elite": null,
+          "featured": null
+        },
+        "currentPity": null,
+        "currentGuarantee": null,
+        "intervals": [],
+        "featuredIntervals": [],
+        "wins": {
+          "wins": 0,
+          "trials": 0,
+          "guaranteed": 0,
+          "unknown": 0
+        },
+        "excludedCount": 0,
+        "featuredCount": 0,
+        "unknownFeaturedCount": 0
+      }
+    },
+    {
+      "name": "newest anchor yields known zero pity and zero exposure",
+      "rows": [
+        {
+          "rarity": "Elite",
+          "pity": 3,
+          "pity_uncertain": true,
+          "gap_before": false,
+          "banner_result": {
+            "featured": true,
+            "outcome": "win",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": 3,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 2,
+          "pity_uncertain": true,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 1,
+          "pity_uncertain": true,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        }
+      ],
+      "expected": {
+        "windows": {
+          "elite": {
+            "budget": 0,
+            "count": 0,
+            "startingPity": 0,
+            "guaranteed": false
+          },
+          "featured": {
+            "budget": 0,
+            "count": 0,
+            "startingPity": 0,
+            "guaranteed": false
+          }
+        },
+        "currentPity": 0,
+        "currentGuarantee": false,
+        "intervals": [],
+        "featuredIntervals": [3],
+        "wins": {
+          "wins": 1,
+          "trials": 1,
+          "guaranteed": 0,
+          "unknown": 0
+        },
+        "excludedCount": 1,
+        "featuredCount": 1,
+        "unknownFeaturedCount": 0
+      }
+    },
+    {
+      "name": "unknown pool resets featured only then off-banner anchor recovers guarantee",
+      "rows": [
+        {
+          "rarity": "Standard",
+          "pity": 4,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": true,
+            "guarantee_after": true,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 3,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": true,
+            "guarantee_after": true,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 2,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": true,
+            "guarantee_after": true,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 1,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": true,
+            "guarantee_after": true,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Elite",
+          "pity": 3,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": false,
+            "outcome": "loss",
+            "guarantee_before": false,
+            "guarantee_after": true,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 2,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": null,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 1,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": null,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Elite",
+          "pity": 2,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "unknown",
+            "guarantee_before": null,
+            "guarantee_after": null,
+            "featured_pity": null,
+            "reason": "unknown_pool"
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 1,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Elite",
+          "pity": 2,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": true,
+            "outcome": "win",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": 2,
+            "reason": null
+          }
+        },
+        {
+          "rarity": "Standard",
+          "pity": 1,
+          "pity_uncertain": false,
+          "gap_before": false,
+          "banner_result": {
+            "featured": null,
+            "outcome": "not_applicable",
+            "guarantee_before": false,
+            "guarantee_after": false,
+            "featured_pity": null,
+            "reason": null
+          }
+        }
+      ],
+      "expected": {
+        "windows": {
+          "elite": {
+            "budget": 11,
+            "count": 3,
+            "startingPity": 0,
+            "guaranteed": false
+          },
+          "featured": {
+            "budget": 4,
+            "count": 0,
+            "startingPity": 0,
+            "guaranteed": true
+          }
+        },
+        "currentPity": 4,
+        "currentGuarantee": true,
+        "intervals": [3, 2, 2],
+        "featuredIntervals": [2],
+        "wins": {
+          "wins": 1,
+          "trials": 2,
+          "guaranteed": 0,
+          "unknown": 1
+        },
+        "excludedCount": 0,
+        "featuredCount": 1,
+        "unknownFeaturedCount": 1
+      }
+    },
+    {
+      "name": "empty history",
+      "rows": [],
+      "expected": {
+        "windows": {
+          "elite": null,
+          "featured": null
+        },
+        "currentPity": null,
+        "currentGuarantee": null,
+        "intervals": [],
+        "featuredIntervals": [],
+        "wins": {
+          "wins": 0,
+          "trials": 0,
+          "guaranteed": 0,
+          "unknown": 0
+        },
+        "excludedCount": 0,
+        "featuredCount": 0,
+        "unknownFeaturedCount": 0
+      }
+    }
+  ]
+}

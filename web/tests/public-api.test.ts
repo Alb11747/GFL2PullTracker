@@ -72,3 +72,55 @@ test('manual submission never retries a lost response or stale deletion version'
     assert.equal(mutations, 1);
   }
 });
+
+test('comparison is a cancellable read without CSRF initialization or raw records', async () => {
+  const abort = new AbortController();
+  const input = {
+    endpoint_host: 'gf2-gacha-record-us.sunborngame.com',
+    server: 'global',
+    game_channel_id: '1',
+    type_id: 3,
+    rules_version: 'test',
+    elite: { budget: 85, count: 2, startingPity: 0, guaranteed: false },
+    featured: null,
+    wins: null
+  };
+  let calls = 0;
+  const client = createPublicClient(async (path, init) => {
+    calls++;
+    assert.equal(path, '/api/public/statistics/compare');
+    assert.equal(init?.method, 'POST');
+    assert.equal(init?.signal, abort.signal);
+    assert.equal(new Headers(init?.headers).has('X-CSRF-Token'), false);
+    assert.equal(new Headers(init?.headers).get('Content-Type'), 'application/json');
+    assert.deepEqual(JSON.parse(String(init?.body)), input);
+    return Response.json({ rules_version: 'test', self_excluded: false, metrics: {} });
+  });
+  await client.compareStatistics(input, abort.signal);
+  assert.equal(calls, 1);
+});
+
+test('cancelled comparisons propagate cancellation and do not become uncertain mutations', async () => {
+  const abort = new AbortController();
+  const cancelled = new DOMException('Obsolete', 'AbortError');
+  const client = createPublicClient(async () => {
+    abort.abort();
+    throw cancelled;
+  });
+  await assert.rejects(
+    client.compareStatistics(
+      {
+        endpoint_host: 'test',
+        server: 'global',
+        game_channel_id: '1',
+        type_id: 3,
+        rules_version: 'test',
+        elite: null,
+        featured: null,
+        wins: null
+      },
+      abort.signal
+    ),
+    (error) => error === cancelled
+  );
+});

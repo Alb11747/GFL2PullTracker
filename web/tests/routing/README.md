@@ -79,3 +79,14 @@ execution, response transfer, and post-response DOM/paint opportunity separately
 A real full-archive backup export runs ahead of rapid selection changes, separately
 from stalled network responses. Cache-busted bundled portrait load/decode timings
 are local HTTP evidence, not a measurement of production CDN latency.
+
+## Statistics regression checks
+
+The same Run tests action imports reviewed synthetic doll and weapon histories and
+exercises the production Statistics page and calculation workers. It checks the
+75-pull featured default, history-state reset, profile/category changes, zero and
+maximum budgets, canceled calculations and comparisons, privacy thresholds,
+accessible chart values, both Statistics views, and archive/Drive preservation.
+The comparison endpoint is intercepted with synthetic aggregates; no personal
+records or requests reach the live service. Hide results collapses the fixture
+output for responsive inspection without changing the application.

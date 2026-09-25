@@ -1,0 +1,86 @@
+{
+  "rules": {
+    "hosts": ["gf2-gacha-record-us.sunborngame.com"],
+    "pools": [
+      {
+        "type_id": 3,
+        "pool_id": 101,
+        "featured": [1039],
+        "kind": "doll"
+      }
+    ]
+  },
+  "chronological": [
+    {
+      "item_id": 1001
+    },
+    {},
+    {},
+    {
+      "pool_id": 999
+    },
+    {},
+    {}
+  ],
+  "expected": [
+    {
+      "featured": false,
+      "outcome": "loss",
+      "guarantee_before": false,
+      "guarantee_after": true,
+      "featured_pity": null,
+      "reason": null
+    },
+    {
+      "featured": true,
+      "outcome": "guaranteed",
+      "guarantee_before": true,
+      "guarantee_after": false,
+      "featured_pity": null,
+      "reason": null
+    },
+    {
+      "featured": true,
+      "outcome": "win",
+      "guarantee_before": false,
+      "guarantee_after": false,
+      "featured_pity": 1,
+      "reason": null
+    },
+    {
+      "featured": null,
+      "outcome": "unknown",
+      "guarantee_before": null,
+      "guarantee_after": null,
+      "featured_pity": null,
+      "reason": "unknown_pool"
+    },
+    {
+      "featured": true,
+      "outcome": "unknown",
+      "guarantee_before": null,
+      "guarantee_after": false,
+      "featured_pity": null,
+      "reason": "unknown_pool"
+    },
+    {
+      "featured": true,
+      "outcome": "win",
+      "guarantee_before": false,
+      "guarantee_after": false,
+      "featured_pity": 1,
+      "reason": null
+    }
+  ],
+  "summary": {
+    "featured_count": 4,
+    "off_banner_count": 1,
+    "wins": 2,
+    "losses": 1,
+    "guaranteed": 1,
+    "unknown_elites": 1,
+    "unknown_outcomes": 2,
+    "featured_intervals": [1, 1],
+    "current_guarantee": false
+  }
+}

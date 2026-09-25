@@ -54,6 +54,7 @@
 
   const originalFetch = window.fetch.bind(window);
   const historyMethods = new Set(['history', 'overview', 'statistics', 'filterOptions', 'profileSummary', 'summary', 'rewardHistory', 'rewards']);
+  const archiveReadMethods = new Set([...historyMethods, 'statisticsSummary']);
   const workerQueries: string[] = [];
   type QueryTiming = { method: string; issued: number; completed?: number;
     queueMs?: number; executionMs?: number; receivedAt?: number;
@@ -64,10 +65,12 @@
   let archiveWorker: Worker | undefined;
   let diagnosticId = 0;
   Worker.prototype.postMessage = function (message: unknown, transfer?: Transferable[] | StructuredSerializeOptions) {
-    const request = message as { method?: string; id?: number } | null;
+    const request = message as { method?: string; id?: number; args?: unknown[] } | null;
     const method = request?.method;
-    if (method && (historyMethods.has(method) || method === 'exportBackup' || method === 'diagnostics')) {
-      if (historyMethods.has(method)) workerQueries.push(method);
+    // The probability worker also has a `summary` method; only archive messages
+    // carry positional args. Do not mistake model work for a ledger query.
+    if (method && Array.isArray(request?.args) && (archiveReadMethods.has(method) || method === 'exportBackup' || method === 'diagnostics')) {
+      if (archiveReadMethods.has(method)) workerQueries.push(method);
       archiveWorker = this;
       if (!observedWorkers.has(this)) {
         const pending = new Map<number, QueryTiming>();
@@ -137,6 +140,12 @@
   Object.assign(window, { google });
   const json = (value: unknown) => Response.json(value);
   const submissionRequests: string[] = [];
+  type ComparisonInput = import('../../src/lib/public-api').CommunityComparisonInput;
+  const comparisons: { body: ComparisonInput; signal: AbortSignal | null | undefined }[] = [];
+  let holdComparison = false;
+  let releaseComparison: (() => void) | undefined;
+  let comparisonStatus: 'ok' | 'insufficient_cohort' | 'privacy_suppressed' = 'ok';
+  let comparisonContributors = 64;
   window.fetch = async (input, init = {}) => {
     const url = new URL(input instanceof Request ? input.url : String(input), origin);
     if (url.origin === origin && url.pathname === '/api/public/config') {
@@ -153,6 +162,61 @@
         identity: { uid: '12345', account_fingerprint: 'synthetic', endpoint_host: 'gf2-gacha-record-us.sunborngame.com', server: '1', game_channel_id: '1' } });
       if (url.pathname.endsWith('/backup')) return json({ account_id: 'account', name: 'Recovered', snapshots: [] });
       throw new Error('Recovery must never submit a server fetch');
+    }
+    if (url.origin === origin && url.pathname === '/api/public/statistics/compare') {
+      assert(init.method === 'POST', 'Community comparison uses the production POST boundary');
+      const body: ComparisonInput = JSON.parse(String(init.body));
+      const allowed = new Set([
+        'endpoint_host',
+        'server',
+        'game_channel_id',
+        'type_id',
+        'rules_version',
+        'elite',
+        'featured',
+        'wins',
+        'exclude_account_id'
+      ]);
+      assert(
+        Object.keys(body).every((key) => allowed.has(key)),
+        'Comparison sends only aggregate windows and cohort selectors'
+      );
+      for (const key of ['elite', 'featured'] as const) {
+        const window = body[key];
+        assert(
+          window === null ||
+            Object.keys(window).every((field) =>
+              ['budget', 'count', 'startingPity', 'guaranteed'].includes(field)
+            ),
+          'Comparison window contains no raw pull data'
+        );
+      }
+      assert(
+        !JSON.stringify(body).includes('sha256:'),
+        'Comparison does not send a local account fingerprint'
+      );
+      comparisons.push({ body, signal: init.signal });
+      const status = comparisonStatus,
+        contributors = comparisonContributors;
+      if (holdComparison) {
+        holdComparison = false;
+        // Deliberately allow a late reply after abort, proving the UI also guards
+        // its selected context when a transport cannot stop an in-flight reply.
+        await new Promise<void>((resolve) => {
+          releaseComparison = resolve;
+        });
+      }
+      const metric = {
+        status,
+        contributors: status === 'privacy_suppressed' ? null : contributors,
+        better_or_equal: status === 'ok' ? 16 : null,
+        percentage: status === 'ok' && contributors >= 50 ? 0.25 : null
+      };
+      return json({
+        rules_version: body.rules_version,
+        self_excluded: false,
+        metrics: { elite: metric, featured: metric, wins: metric }
+      });
     }
     if (url.origin === origin && url.pathname === '/api/public/statistics') return json({
       minimum_contributors: 10, contributors: null, total: null, breakdowns: [],
@@ -381,9 +445,14 @@
     const previousQueries = workerQueries.length;
     for (const slug of ['profiles', 'statistics', 'privacy', 'about', 'backup'] as const) await navigate(slug);
     await wait(250);
-    assert(workerQueries.length === previousQueries,
-      `Non-history routes issued archive queries: ${workerQueries.slice(previousQueries).join(', ')}`);
-    log('PASS unrelated routes issue no archive history, reward, summary, or filter queries');
+    const unrelatedQueries = workerQueries.slice(previousQueries);
+    assert(
+      unrelatedQueries.every((method) => method === 'statisticsSummary'),
+      `Non-history routes issued ledger queries: ${unrelatedQueries.join(', ')}`
+    );
+    log(
+      'PASS unrelated routes issue no ledger/reward/filter queries; Statistics uses its aggregate query'
+    );
 
     await navigate('about');
     const feedbackDraft = required(document.querySelector<HTMLTextAreaElement>('#feedback-message'), 'feedback draft');
@@ -490,6 +559,7 @@
     await (window as unknown as {
       runImportRegressions(context: typeof importContext): Promise<void>;
     }).runImportRegressions(importContext);
+    await runStatistics(log);
     log(`PASS production loading geometry ${JSON.stringify(loadingAudit?.finish())}`);
     running = false;
   }
@@ -612,6 +682,345 @@
           record: { item: index % 10 === 0 ? 1013 : index % 2 ? 11007 : 11008,
             pool_id: index % 2 ? 224001 : 224002, item_num: 1, time: 1784800558 + index } };
       }) })], 'records.json', { type: 'application/json' });
+  }
+
+  async function runStatistics(log: (message: string) => void) {
+    const archiveSnapshot = async () => {
+      const state = await archiveCall<import('../../src/lib/local/types').PortableState>('exportState');
+      // Drive may reorder profiles or object keys during reconciliation. Preserve
+      // every field and ordered snapshot/record array when comparing archive data.
+      state.profiles.sort((left, right) => left.id.localeCompare(right.id));
+      const normalize = (value: unknown): unknown => Array.isArray(value)
+        ? value.map(normalize)
+        : value !== null && typeof value === 'object'
+          ? Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, normalize(item)]))
+          : value;
+      return JSON.stringify(normalize(state));
+    };
+    const originalProfile = activeProfile().value;
+    const emptyProfile = required(
+      [...activeProfile().options].find((option) => option.text === 'Routing secondary'),
+      'empty statistics profile'
+    ).value;
+    await navigate('profiles');
+    input(
+      document.querySelector<HTMLInputElement>('input[placeholder="For example, Europe account"]'),
+      'Statistics fixture'
+    );
+    await until(
+      () => findButton('Create profile', main())?.matches(':enabled'),
+      'statistics profile creation enabled'
+    );
+    clickButton('Create profile', main());
+    await until(
+      () =>
+        [...activeProfile().options].some((option) => option.text === 'Statistics fixture') &&
+        !activeProfile().disabled,
+      'statistics profile created'
+    );
+    const profile = required(
+      [...activeProfile().options].find((option) => option.text === 'Statistics fixture'),
+      'statistics profile'
+    ).value;
+    input(activeProfile(), profile);
+    await navigate('history');
+    input(search(), '');
+    await importSynthetic(statisticsExport());
+    const archiveBefore = await archiveSnapshot();
+    const queryStart = workerQueries.length;
+    const compareStart = comparisons.length;
+    await navigate('statistics');
+    const personal = () =>
+      required(document.querySelector<HTMLElement>('.personal-statistics'), 'personal statistics');
+    const control = (label: string) =>
+      required(
+        [...personal().querySelectorAll('label')]
+          .find((node) => node.firstChild?.textContent?.trim() === label)
+          ?.querySelector<HTMLInputElement | HTMLSelectElement>('input,select'),
+        `${label} control`
+      );
+    const peerBars = () =>
+      personal().querySelectorAll('[role="img"][aria-label^="Other saved accounts:"]');
+    const planReady = () => personal().querySelector('.planner-chart svg');
+    await until(
+      () => comparisons.length > compareStart && peerBars().length === 3 && planReady(),
+      'personal summary, comparison and planner'
+    );
+    assert(
+      findButton('Your statistics')?.getAttribute('aria-pressed') === 'true',
+      'Personal statistics is the default view'
+    );
+    assert(
+      control('Rewards').value === 'featured' && control('Additional pulls').value === '75',
+      'Planner defaults to 75 additional pulls and featured rewards'
+    );
+    assert(
+      control('Starting pity').value === '3',
+      'Planner starts with the selected history known trailing pity'
+    );
+    assert(
+      control('Additional pulls').getAttribute('min') === '0' &&
+        control('Additional pulls').getAttribute('max') === '20000',
+      'Planner exposes its supported budget range'
+    );
+    const table = () => required(
+      personal().querySelector('[role="table"][aria-label="Luck statistics comparisons"]'),
+      'luck comparison table'
+    );
+    assert(
+      table().querySelectorAll('[role="columnheader"]').length === 3 &&
+        table().querySelectorAll('.metric[role="row"]').length === 3,
+      'Comparison table separates observed result, model, and other accounts'
+    );
+    assert(table().textContent?.includes('16 of 64'), 'Comparison displays server aggregate counts');
+    assert(
+      peerBars()[0].getAttribute('aria-label')?.includes('75.0%'),
+      'Comparison scale excludes ties using one minus the better-or-equal fraction'
+    );
+    assert(
+      workerQueries.slice(queryStart).includes('statisticsSummary') &&
+        workerQueries.slice(queryStart).every((method) => method === 'statisticsSummary'),
+      'Statistics reads only its production worker aggregate'
+    );
+    const request = comparisons.at(-1)!.body;
+    assert(
+      request.elite?.budget === 73 &&
+        request.featured?.budget === 73 &&
+        request.featured.count === 7,
+      'Comparison includes trailing exposure and excludes the classified anchor'
+    );
+    await until(
+      () =>
+        personal().querySelectorAll('.mc-chart svg').length >= 5 &&
+        personal().querySelectorAll('.comparison:not(.community) .luck-scale').length === 3 &&
+        personal().querySelectorAll('.distribution-grid .mc-chart').length === 3,
+      'history summary, acquisition and planning probability workers'
+    );
+    for (const chart of personal().querySelectorAll('svg[role="img"]')) {
+      const ids = chart.getAttribute('aria-labelledby')?.split(' ') ?? [];
+      assert(
+        ids.length === 2 && ids.every((id) => document.getElementById(id)?.textContent),
+        'Every chart has a resolvable title and description'
+      );
+    }
+    const values = required(
+      personal().querySelector<HTMLDetailsElement>('.mc-values'),
+      'numerical chart values'
+    );
+    values.open = true;
+    assert(
+      values.querySelector('caption')?.textContent &&
+        values.querySelectorAll('tbody tr').length > 0,
+      'Charts expose numerical table values'
+    );
+    log(
+      'PASS Statistics production aggregate query, real synthetic classifications, comparison table and accessible charts'
+    );
+
+    input(control('Starting pity'), '17');
+    await until(
+      () => personal().textContent?.includes('your override') && planReady(),
+      'explicit planner override'
+    );
+    clickButton('Use history state', personal());
+    await until(
+      () =>
+        control('Starting pity').value === '3' &&
+        !personal().querySelector('.planning .notice')?.textContent?.includes('your override'),
+      'history state reset'
+    );
+    input(control('Additional pulls'), '0');
+    await until(
+      () =>
+        personal().querySelector('.planner-chart h3')?.textContent?.includes('0 more pulls') &&
+        planReady(),
+      'zero-budget plan'
+    );
+    assert(
+      personal().querySelector('.planner-stats')?.textContent?.includes('0.0 rewards'),
+      'Zero additional pulls predicts zero rewards'
+    );
+    input(control('Additional pulls'), '20000');
+    await until(
+      () =>
+        personal().querySelector('.planner-chart h3')?.textContent?.includes('20,000 more pulls') &&
+        planReady(),
+      'maximum supported budget plan'
+    );
+    input(control('Additional pulls'), '20001');
+    await until(
+      () =>
+        personal().querySelector('.planning [role="status"]')?.textContent?.includes('0–20,000') &&
+        !planReady(),
+      'out-of-range budget hides stale plan'
+    );
+    input(control('Additional pulls'), '20000');
+    await wait(0);
+    input(control('Additional pulls'), '0');
+    await until(
+      () =>
+        personal().querySelector('.planner-chart h3')?.textContent?.includes('0 more pulls') &&
+        planReady(),
+      'new zero budget supersedes an in-flight large plan'
+    );
+    assert(
+      personal().querySelector('.planner-stats')?.textContent?.includes('0.0 rewards'),
+      'Superseded planner cannot restore the former budget result'
+    );
+    input(control('Additional pulls'), '75');
+    input(control('Starting pity'), '17');
+    input(control('Recruitment history'), '4');
+    await until(
+      () =>
+        control('Starting pity').value === '2' &&
+        control('Starting pity').getAttribute('max') === '69' &&
+        planReady(),
+      'weapon category replaces planner model and override'
+    );
+    assert(
+      !personal().querySelector('.planning .notice')?.textContent?.includes('your override'),
+      'Category change clears the former model override'
+    );
+    log(
+      'PASS planner default, known pity, explicit/reset state, zero and 20,000 budgets, invalid input and recruitment model change'
+    );
+
+    comparisonContributors = 49;
+    input(control('Recruitment history'), '3');
+    await until(() => table().textContent?.includes('16 of 49'), 'counts-only comparison cohort');
+    assert(
+      peerBars().length === 0,
+      'Fewer than 50 comparable histories show counts without a luck bar'
+    );
+    comparisonStatus = 'privacy_suppressed';
+    const privateComparisonStart = comparisons.length;
+    input(control('Recruitment history'), '4');
+    await until(
+      () =>
+        comparisons.length > privateComparisonStart &&
+        personal().querySelector('.community strong')?.textContent === 'Not available',
+      'privacy-suppressed comparison'
+    );
+    assert(
+      peerBars().length === 0 &&
+        !personal().querySelector('.community')?.textContent?.includes('16 of'),
+      'Privacy suppression removes comparison counts and bars'
+    );
+    comparisonStatus = 'ok';
+    comparisonContributors = 64;
+    holdComparison = true;
+    input(control('Recruitment history'), '3');
+    await until(() => releaseComparison, 'held aggregate comparison');
+    const pending = comparisons.at(-1)!;
+    input(control('History profile'), emptyProfile);
+    await until(
+      () =>
+        control('History profile').value === emptyProfile &&
+        personal().textContent?.includes('No recorded history') &&
+        pending.signal?.aborted,
+      'profile change aborts comparison'
+    );
+    assert(activeProfile().value === profile, 'Statistics profile selection preserves the My history profile');
+    releaseComparison!();
+    releaseComparison = undefined;
+    await wait(100);
+    assert(
+      !personal().textContent?.includes('16 of 64') && peerBars().length === 0,
+      'Late comparison cannot populate another profile'
+    );
+    input(control('Starting pity'), '17');
+    input(control('Planning model'), 'weapons');
+    await until(
+      () =>
+        control('Starting pity').value === '0' &&
+        control('Starting pity').getAttribute('max') === '69' &&
+        planReady(),
+      'assumed model resets override'
+    );
+    input(control('Starting pity'), '12');
+    clickButton('Reset assumed state', personal());
+    await until(
+      () => control('Starting pity').value === '0' && planReady(),
+      'assumed planner state resets'
+    );
+    log(
+      'PASS comparison cohort/privacy thresholds, aborted stale profile reply, and empty-profile model reset'
+    );
+
+    input(control('History profile'), profile);
+    await until(
+      () => control('Starting pity').value === '3' && peerBars().length === 3,
+      'return to imported profile'
+    );
+    clickButton('Community statistics');
+    await until(
+      () =>
+        !document.querySelector('.personal-statistics') &&
+        findButton('Community statistics')?.getAttribute('aria-pressed') === 'true',
+      'community view'
+    );
+    clickButton('Your statistics');
+    await until(
+      () => document.querySelector('.personal-statistics') && peerBars().length === 3,
+      'personal view restored'
+    );
+    const archiveAfter = await archiveSnapshot();
+    if (archiveAfter !== archiveBefore) {
+      let first = 0;
+      while (archiveBefore[first] === archiveAfter[first] && first < archiveBefore.length) first++;
+      log(`Archive difference at serialized character ${first}: before=${archiveBefore.slice(Math.max(0, first - 60), first + 100)}; after=${archiveAfter.slice(Math.max(0, first - 60), first + 100)}`);
+    }
+    assert(
+      archiveAfter === archiveBefore,
+      'Statistics and planning leave the archive unchanged'
+    );
+    await navigate('backup');
+    assert(findButton('Disconnect'), 'Statistics navigation preserves the Drive connection');
+    input(activeProfile(), originalProfile);
+    await navigate('history');
+    assert(document.querySelector('#history-title'), 'Existing My history remains available');
+    log('PASS Statistics view navigation, unchanged archive and retained Drive session');
+  }
+  function statisticsExport() {
+    // Reviewed synthetic pools within their date bounds provide a real classified
+    // featured anchor, complete later intervals, and a known trailing pity.
+    const records = [
+      ...Array.from({ length: 83 }, (_, index) => ({
+        source_type_id: 3,
+        source_page: 1,
+        record: {
+          item: (index + 1) % 10 === 0 ? 1013 : 11007,
+          pool_id: 13001,
+          item_num: 1,
+          time: Date.parse('2025-12-01T12:00:00Z') / 1000 + index
+        }
+      })),
+      ...Array.from({ length: 42 }, (_, index) => ({
+        source_type_id: 4,
+        source_page: 1,
+        record: {
+          item: (index + 1) % 10 === 0 ? 10133 : 11007,
+          pool_id: 14001,
+          item_num: 1,
+          time: Date.parse('2025-12-01T12:00:00Z') / 1000 + index
+        }
+      }))
+    ];
+    return new File(
+      [
+        JSON.stringify({
+          schema_version: 1,
+          exported_at: '2026-09-20T12:00:00Z',
+          account_fingerprint: `sha256:${'a'.repeat(64)}`,
+          endpoint_host: 'gf2-gacha-record-us.sunborngame.com',
+          server: '1',
+          game_channel_id: '1',
+          records: records.reverse()
+        })
+      ],
+      'statistics-synthetic.json',
+      { type: 'application/json' }
+    );
   }
   async function importSynthetic(file: File) {
     if (!document.querySelector('#import-panel')) clickButton('Import history');
@@ -750,11 +1159,20 @@
     const results = document.createElement('pre');
     results.style.whiteSpace = 'pre-wrap';
     results.textContent = 'Isolated routing fixture. Run tests resets only this origin’s synthetic archive.';
+    const toggleResults = document.createElement('button');
+    toggleResults.textContent = 'Hide results';
+    toggleResults.setAttribute('aria-expanded', 'true');
+    toggleResults.onclick = () => {
+      results.hidden = !results.hidden;
+      panel.style.position = results.hidden ? 'static' : 'fixed';
+      toggleResults.textContent = results.hidden ? 'Show results' : 'Hide results';
+      toggleResults.setAttribute('aria-expanded', String(!results.hidden));
+    };
     button.onclick = () => location.assign('/__routing/reset');
     const performanceButton = document.createElement('button');
     performanceButton.textContent = 'Run DOM performance';
     performanceButton.onclick = () => { sessionStorage.setItem(RUN, 'performance'); location.assign('/__routing/reset'); };
-    panel.append(button, performanceButton, results);
+    panel.append(button, performanceButton, toggleResults, results);
     document.body.append(panel);
     if (submissionFixture) {
       button.disabled = true; results.textContent = 'Running unified submission controls…\n';

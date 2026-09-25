@@ -126,8 +126,7 @@
   // Every panel shares this route component so navigation retains imports and Drive authorization.
   const section = $derived(page.params.section as TrackerSection);
   const currentPage = $derived(trackerPages.find((item) => item.slug === section)!);
-  let StatisticsPanel =
-    $state<typeof import('$lib/components/CommunityStatistics.svelte').default>();
+  let StatisticsPanel = $state<typeof import('$lib/components/StatisticsPanel.svelte').default>();
   let SettingsPanel = $state<typeof import('$lib/components/ArchiveSettings.svelte').default>();
   let panelError = $state('');
   let aboutVisited = $state(false);
@@ -146,7 +145,7 @@
     const target = section;
     panelError = '';
     if (target === 'statistics') {
-      void import('$lib/components/CommunityStatistics.svelte')
+      void import('$lib/components/StatisticsPanel.svelte')
         .then((module) => {
           StatisticsPanel = module.default;
         })
@@ -1135,7 +1134,14 @@
         <p role="alert">{error || 'Could not open your browser archive. Reload to try again.'}</p>
       </section>
     {:else if hosted && section === 'statistics'}
-      {#if StatisticsPanel}<StatisticsPanel />{:else if panelError}<p role="alert">
+      {#if StatisticsPanel && local}<StatisticsPanel
+          {profiles}
+          activeProfileId={filters.profile_id}
+          revision={archiveRevision}
+          query={local.statisticsSummary}
+          {publicApi}
+          verifiedAccounts={publicConfig?.accounts ?? []}
+        />{:else if panelError}<p role="alert">
           {panelError}
         </p>{/if}
     {:else if hosted && section !== 'history' && local}

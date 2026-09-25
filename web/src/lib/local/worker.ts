@@ -79,6 +79,7 @@ const allowed = new Set([
   'revision',
   'diagnostics',
   'statistics',
+  'statisticsSummary',
   'filterOptions',
   'exportState',
   'exportBackup',

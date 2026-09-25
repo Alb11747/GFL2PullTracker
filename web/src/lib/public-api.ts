@@ -44,6 +44,36 @@ export interface CommunityStatistics {
   suppressed: boolean;
   coverage: 'accessible_history_only';
 }
+/** Read-only matching inputs: no pull documents, names, UID, or credentials. */
+export interface CommunityComparisonWindow {
+  budget: number;
+  count: number;
+  startingPity: number;
+  guaranteed: boolean;
+}
+export interface CommunityComparisonInput {
+  endpoint_host: string;
+  server: string;
+  game_channel_id: string;
+  type_id: number;
+  rules_version: string;
+  elite: CommunityComparisonWindow | null;
+  featured: CommunityComparisonWindow | null;
+  wins: { wins: number; trials: number } | null;
+  exclude_account_id?: string;
+}
+export interface CommunityComparisonMetric {
+  status: 'ok' | 'insufficient_cohort' | 'privacy_suppressed' | 'unsupported' | 'invalid_window';
+  contributors: number | null;
+  better_or_equal: number | null;
+  percentage: number | null;
+  reason?: string;
+}
+export interface CommunityComparison {
+  rules_version: string;
+  self_excluded: boolean;
+  metrics: Record<'elite' | 'featured' | 'wins', CommunityComparisonMetric>;
+}
 export class PublicApiError extends Error {
   readonly status: number;
   readonly uncertain: boolean;
@@ -61,9 +91,10 @@ export function createPublicClient(fetcher: typeof fetch = fetch) {
     path: string,
     method = 'GET',
     body?: unknown,
-    uncertainMessage?: string
+    uncertainMessage?: string,
+    options: { readOnly?: boolean; signal?: AbortSignal } = {}
   ): Promise<T> {
-    const mutation = method !== 'GET';
+    const mutation = method !== 'GET' && !options.readOnly;
     if (mutation && !csrfToken)
       throw new PublicApiError('Initialize the public session before submitting.');
     let response: Response;
@@ -73,6 +104,7 @@ export function createPublicClient(fetcher: typeof fetch = fetch) {
         credentials: 'same-origin',
         cache: 'no-store',
         redirect: 'error',
+        signal: options.signal,
         headers: {
           'X-GFL2-Telemetry': telemetryEnabled() ? '1' : '0',
           ...(mutation ? { 'X-CSRF-Token': csrfToken } : {}),
@@ -80,7 +112,8 @@ export function createPublicClient(fetcher: typeof fetch = fetch) {
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) })
       });
-    } catch {
+    } catch (error) {
+      if (options.signal?.aborted) throw error;
       reportLocalServiceError();
       throw new PublicApiError(
         mutation
@@ -107,7 +140,9 @@ export function createPublicClient(fetcher: typeof fetch = fetch) {
         503: 'Verified server backups and contributions are unavailable for this provider.'
       };
       throw new PublicApiError(
-        messages[response.status] ?? 'The public service could not complete the request.',
+        options.readOnly && response.status >= 500
+          ? 'Community comparison is temporarily unavailable. Try again later.'
+          : (messages[response.status] ?? 'The public service could not complete the request.'),
         response.status
       );
     }
@@ -162,6 +197,12 @@ export function createPublicClient(fetcher: typeof fetch = fetch) {
     },
     deleteBackup(accountId: string) {
       return request<void>(accountPath('backup', accountId), 'DELETE');
+    },
+    compareStatistics(input: CommunityComparisonInput, signal?: AbortSignal) {
+      return request<CommunityComparison>('statistics/compare', 'POST', input, undefined, {
+        readOnly: true,
+        signal
+      });
     },
     statistics() {
       return request<CommunityStatistics>('statistics');

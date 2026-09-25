@@ -118,6 +118,25 @@
     </p>
   </section>
 
+  <section aria-labelledby="statistics-data">
+    <h2 id="statistics-data">Personal statistics and community comparisons</h2>
+    <p>
+      Personal calculations and planning run in your browser. For real community comparisons,
+      Statistics sends the provider, server, channel, recruitment category, rules version,
+      comparison pull budget, starting pity and guarantee, and reward or win counts to this tracker.
+      These requests do not upload individual pull records or save your local history to the server.
+      Comparison inputs are not sent to analytics.
+    </p>
+    <p>
+      If the selected profile matches an account verified in your current session, its server
+      account identifier is used to exclude it. Otherwise the saved-account sample may include your
+      own account. Responses contain aggregate comparisons only. Groups below five accounts are
+      hidden, as are comparisons that would reveal a nonempty group of fewer than five matching or
+      nonmatching accounts. Groups below 50 show counts without percentages. Deleting server history
+      removes its contribution to future comparisons.
+    </p>
+  </section>
+
   <section aria-labelledby="analytics-data">
     <h2 id="analytics-data">Analytics, diagnostics, and session replay</h2>
     <p>

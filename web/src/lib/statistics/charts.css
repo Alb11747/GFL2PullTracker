@@ -1,0 +1,146 @@
+/* Visible chart labels use CSS pixels, independent of SVG scaling. */
+.mc-chart {
+  font-size: 12px;
+  color: #555e68;
+  margin-top: 18px;
+}
+.mc-y-title {
+  margin-bottom: 12px;
+}
+.mc-frame {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  grid-template-rows: 180px 28px;
+  column-gap: 8px;
+}
+.mc-y-labels {
+  position: relative;
+}
+.mc-y-labels span {
+  position: absolute;
+  right: 0;
+  transform: translateY(50%);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.mc-plot {
+  min-width: 0;
+}
+.mc-plot svg {
+  width: 100%;
+  height: 180px;
+  overflow: visible;
+}
+.mc-x-labels {
+  grid-column: 2;
+  position: relative;
+}
+.mc-x-labels span {
+  position: absolute;
+  top: 8px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+.mc-x-labels .mc-first {
+  transform: none;
+}
+.mc-x-labels .mc-last {
+  transform: translateX(-100%);
+}
+.mc-axis-title {
+  text-align: center;
+  margin-left: 52px;
+}
+.mc-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.mc-summary strong {
+  flex-basis: 100%;
+  color: #a64000;
+  font-weight: 600;
+}
+.mc-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-top: 18px;
+  font-size: 12px;
+}
+.mc-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.mc-swatch {
+  display: inline-block;
+  width: 16px;
+  height: 10px;
+  background: #6f7d8a;
+}
+.mc-event {
+  background: #a64000;
+}
+.mc-observed {
+  background: #526273;
+}
+.mc-expected {
+  background: none;
+  border: 1px dashed #78848e;
+}
+.mc-mean {
+  height: 0;
+  border-top: 2px dashed #20252b;
+  background: none;
+}
+.mc-observed-line {
+  height: 0;
+  border-top: 2px solid #a64000;
+  background: none;
+}
+.mc-soft {
+  background: rgba(166, 64, 0, 0.12);
+  border: 1px solid #a64000;
+}
+.mc-note {
+  font-size: 12px;
+  color: #555e68;
+}
+.mc-values {
+  margin-top: 12px;
+  font-size: 12px;
+}
+.mc-values summary {
+  cursor: pointer;
+  padding: 8px 0;
+}
+.mc-table-scroll {
+  overflow: auto;
+  max-height: 250px;
+}
+.mc-values table {
+  border-collapse: collapse;
+  width: 100%;
+  font-variant-numeric: tabular-nums;
+}
+.mc-values th,
+.mc-values td {
+  padding: 7px;
+  text-align: right;
+  border-bottom: 1px solid #c3c9d0;
+}
+.mc-values th:first-child {
+  text-align: left;
+}
+.mc-values caption {
+  text-align: left;
+  padding: 8px 0;
+}
+.mc-unavailable {
+  font-size: 14px;
+  color: #555e68;
+  padding: 24px 0;
+}

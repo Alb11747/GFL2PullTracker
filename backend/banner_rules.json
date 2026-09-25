@@ -1,0 +1,1379 @@
+{
+  "version": 2,
+  "source": {
+    "name": "EXILIUM Tracker published banner metadata",
+    "url": "https://exilium.xyz/_next/static/chunks/6324-910555260e1a45e7.js",
+    "sha256": "66dbaabc637bd03daf5d1cf5c78e40935bfeadfc2abc5f54ec5ae59c5a6821d8",
+    "reviewed_on": "2026-09-24",
+    "scope": "Factual pool IDs and featured item IDs only; no application code or artwork reused.",
+    "time_bounds": "Source wall-clock interval narrowed by 24 hours at each boundary; exclusive end. Matching guards, not exact event schedules.",
+    "official_rules_urls": [
+      "https://gf2exilium.sunborngame.com/NewsInfo?id=38&typeId=4",
+      "https://gf2exilium.sunborngame.com/NewsInfo?id=83&typeId=4"
+    ]
+  },
+  "hosts": [
+    "gf2-gacha-record-us.sunborngame.com"
+  ],
+  "pools": [
+    {
+      "type_id": 3,
+      "pool_id": 9001,
+      "kind": "doll",
+      "featured": [
+        1028
+      ],
+      "start": "2025-02-28T17:00:00Z",
+      "end": "2025-03-19T07:00:00Z",
+      "source_start": "2025-02-27 17:00:00",
+      "source_end": "2025-03-20 06:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 13001,
+      "kind": "doll",
+      "featured": [
+        1013
+      ],
+      "start": "2025-11-28T08:00:00Z",
+      "end": "2025-12-16T18:00:00Z",
+      "source_start": "2025-11-27 08:00:00",
+      "source_end": "2025-12-17 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 15001,
+      "kind": "doll",
+      "featured": [
+        1032
+      ],
+      "start": "2025-04-11T08:00:00Z",
+      "end": "2025-04-30T07:00:00Z",
+      "source_start": "2025-04-10 08:00:00",
+      "source_end": "2025-05-01 06:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 17001,
+      "kind": "doll",
+      "featured": [
+        1035
+      ],
+      "start": "2025-09-26T08:00:00Z",
+      "end": "2025-10-14T18:00:00Z",
+      "source_start": "2025-09-25 08:00:00",
+      "source_end": "2025-10-15 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 25001,
+      "kind": "doll",
+      "featured": [
+        1028
+      ],
+      "start": "2025-05-23T08:00:00Z",
+      "end": "2025-06-10T07:00:00Z",
+      "source_start": "2025-05-22 08:00:00",
+      "source_end": "2025-06-11 06:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 29001,
+      "kind": "doll",
+      "featured": [
+        1013
+      ],
+      "start": "2026-02-20T08:00:00Z",
+      "end": "2026-03-10T18:00:00Z",
+      "source_start": "2026-02-19 08:00:00",
+      "source_end": "2026-03-11 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 33001,
+      "kind": "doll",
+      "featured": [
+        1035
+      ],
+      "start": "2025-12-19T08:00:00Z",
+      "end": "2026-01-06T18:00:00Z",
+      "source_start": "2025-12-18 08:00:00",
+      "source_end": "2026-01-07 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 35001,
+      "kind": "doll",
+      "featured": [
+        1023
+      ],
+      "start": "2025-02-07T11:00:00Z",
+      "end": "2025-02-26T07:00:00Z",
+      "source_start": "2025-02-06 11:00:00",
+      "source_end": "2025-02-27 06:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 37001,
+      "kind": "doll",
+      "featured": [
+        1034
+      ],
+      "start": "2025-03-21T08:00:00Z",
+      "end": "2025-04-09T07:00:00Z",
+      "source_start": "2025-03-20 08:00:00",
+      "source_end": "2025-04-10 06:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 39001,
+      "kind": "doll",
+      "featured": [
+        1050
+      ],
+      "start": "2025-06-13T08:00:00Z",
+      "end": "2025-07-01T07:00:00Z",
+      "source_start": "2025-06-12 08:00:00",
+      "source_end": "2025-07-02 06:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 41001,
+      "kind": "doll",
+      "featured": [
+        1037
+      ],
+      "start": "2025-02-28T17:00:00Z",
+      "end": "2025-03-19T07:00:00Z",
+      "source_start": "2025-02-27 17:00:00",
+      "source_end": "2025-03-20 06:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 43001,
+      "kind": "doll",
+      "featured": [
+        1052
+      ],
+      "start": "2025-03-21T08:00:00Z",
+      "end": "2025-04-09T07:00:00Z",
+      "source_start": "2025-03-20 08:00:00",
+      "source_end": "2025-04-10 06:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 45001,
+      "kind": "doll",
+      "featured": [
+        1039
+      ],
+      "start": "2025-02-07T11:00:00Z",
+      "end": "2025-02-26T07:00:00Z",
+      "source_start": "2025-02-06 11:00:00",
+      "source_end": "2025-02-27 06:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 47001,
+      "kind": "doll",
+      "featured": [
+        1051
+      ],
+      "start": "2025-04-11T08:00:00Z",
+      "end": "2025-04-30T07:00:00Z",
+      "source_start": "2025-04-10 08:00:00",
+      "source_end": "2025-05-01 06:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 49001,
+      "kind": "doll",
+      "featured": [
+        1023
+      ],
+      "start": "2025-05-02T08:00:00Z",
+      "end": "2025-05-20T07:00:00Z",
+      "source_start": "2025-05-01 08:00:00",
+      "source_end": "2025-05-21 06:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 51001,
+      "kind": "doll",
+      "featured": [
+        1044
+      ],
+      "start": "2025-05-02T08:00:00Z",
+      "end": "2025-05-20T07:00:00Z",
+      "source_start": "2025-05-01 08:00:00",
+      "source_end": "2025-05-21 06:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 53001,
+      "kind": "doll",
+      "featured": [
+        1050
+      ],
+      "start": "2025-09-05T08:00:00Z",
+      "end": "2025-09-23T18:00:00Z",
+      "source_start": "2025-09-04 08:00:00",
+      "source_end": "2025-09-24 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 55001,
+      "kind": "doll",
+      "featured": [
+        1045
+      ],
+      "start": "2025-09-05T08:00:00Z",
+      "end": "2025-09-23T18:00:00Z",
+      "source_start": "2025-09-04 08:00:00",
+      "source_end": "2025-09-24 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 57001,
+      "kind": "doll",
+      "featured": [
+        1052
+      ],
+      "start": "2025-06-13T08:00:00Z",
+      "end": "2025-07-01T07:00:00Z",
+      "source_start": "2025-06-12 08:00:00",
+      "source_end": "2025-07-02 06:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 59001,
+      "kind": "doll",
+      "featured": [
+        1042
+      ],
+      "start": "2025-09-05T08:00:00Z",
+      "end": "2025-09-23T18:00:00Z",
+      "source_start": "2025-09-04 08:00:00",
+      "source_end": "2025-09-24 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 61001,
+      "kind": "doll",
+      "featured": [
+        1051
+      ],
+      "start": "2025-07-04T08:00:00Z",
+      "end": "2025-07-22T18:00:00Z",
+      "source_start": "2025-07-03 08:00:00",
+      "source_end": "2025-07-23 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 65001,
+      "kind": "doll",
+      "featured": [
+        1047
+      ],
+      "start": "2025-07-04T08:00:00Z",
+      "end": "2025-07-22T18:00:00Z",
+      "source_start": "2025-07-03 08:00:00",
+      "source_end": "2025-07-23 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 67001,
+      "kind": "doll",
+      "featured": [
+        1044
+      ],
+      "start": "2025-07-25T08:00:00Z",
+      "end": "2025-08-12T18:00:00Z",
+      "source_start": "2025-07-24 08:00:00",
+      "source_end": "2025-08-13 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 69001,
+      "kind": "doll",
+      "featured": [
+        1034
+      ],
+      "start": "2026-03-12T08:00:00Z",
+      "end": "2026-03-31T18:00:00Z",
+      "source_start": "2026-03-11 08:00:00",
+      "source_end": "2026-04-01 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 71001,
+      "kind": "doll",
+      "featured": [
+        1053
+      ],
+      "start": "2025-07-04T08:00:00Z",
+      "end": "2025-07-22T18:00:00Z",
+      "source_start": "2025-07-03 08:00:00",
+      "source_end": "2025-07-23 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 73001,
+      "kind": "doll",
+      "featured": [
+        1045
+      ],
+      "start": "2025-12-19T08:00:00Z",
+      "end": "2026-01-06T18:00:00Z",
+      "source_start": "2025-12-18 08:00:00",
+      "source_end": "2026-01-07 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 77001,
+      "kind": "doll",
+      "featured": [
+        1048
+      ],
+      "start": "2025-07-25T08:00:00Z",
+      "end": "2025-08-12T18:00:00Z",
+      "source_start": "2025-07-24 08:00:00",
+      "source_end": "2025-08-13 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 79001,
+      "kind": "doll",
+      "featured": [
+        1042
+      ],
+      "start": "2025-11-28T08:00:00Z",
+      "end": "2025-12-16T18:00:00Z",
+      "source_start": "2025-11-27 08:00:00",
+      "source_end": "2025-12-17 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 81001,
+      "kind": "doll",
+      "featured": [
+        1051
+      ],
+      "start": "2025-11-28T08:00:00Z",
+      "end": "2025-12-16T18:00:00Z",
+      "source_start": "2025-11-27 08:00:00",
+      "source_end": "2025-12-17 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 83001,
+      "kind": "doll",
+      "featured": [
+        1054
+      ],
+      "start": "2025-05-23T08:00:00Z",
+      "end": "2025-06-10T07:00:00Z",
+      "source_start": "2025-05-22 08:00:00",
+      "source_end": "2025-06-11 06:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 85001,
+      "kind": "doll",
+      "featured": [
+        1047
+      ],
+      "start": "2025-09-26T08:00:00Z",
+      "end": "2025-10-14T18:00:00Z",
+      "source_start": "2025-09-25 08:00:00",
+      "source_end": "2025-10-15 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 100001,
+      "kind": "doll",
+      "featured": [
+        1055
+      ],
+      "start": "2025-08-15T08:00:00Z",
+      "end": "2025-09-02T18:00:00Z",
+      "source_start": "2025-08-14 08:00:00",
+      "source_end": "2025-09-03 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 103001,
+      "kind": "doll",
+      "featured": [
+        1025
+      ],
+      "start": "2024-12-27T11:00:00Z",
+      "end": "2025-01-15T11:00:00Z",
+      "source_start": "2024-12-26 11:00:00",
+      "source_end": "2025-01-16 10:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 106001,
+      "kind": "doll",
+      "featured": [
+        1032
+      ],
+      "start": "2025-01-17T13:00:00Z",
+      "end": "2025-02-05T07:00:00Z",
+      "source_start": "2025-01-16 13:00:00",
+      "source_end": "2025-02-06 06:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 106001,
+      "kind": "doll",
+      "featured": [
+        1056
+      ],
+      "start": "2026-02-20T08:00:00Z",
+      "end": "2026-03-10T18:00:00Z",
+      "source_start": "2026-02-19 08:00:00",
+      "source_end": "2026-03-11 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 108001,
+      "kind": "doll",
+      "featured": [
+        1048
+      ],
+      "start": "2025-10-17T08:00:00Z",
+      "end": "2025-11-04T18:00:00Z",
+      "source_start": "2025-10-16 08:00:00",
+      "source_end": "2025-11-05 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 112001,
+      "kind": "doll",
+      "featured": [
+        1057
+      ],
+      "start": "2026-03-12T08:00:00Z",
+      "end": "2026-03-31T18:00:00Z",
+      "source_start": "2026-03-11 08:00:00",
+      "source_end": "2026-04-01 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 114001,
+      "kind": "doll",
+      "featured": [
+        1054
+      ],
+      "start": "2025-08-15T08:00:00Z",
+      "end": "2025-09-02T18:00:00Z",
+      "source_start": "2025-08-14 08:00:00",
+      "source_end": "2025-09-03 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 120001,
+      "kind": "doll",
+      "featured": [
+        1055
+      ],
+      "start": "2025-11-07T08:00:00Z",
+      "end": "2025-11-25T18:00:00Z",
+      "source_start": "2025-11-06 08:00:00",
+      "source_end": "2025-11-26 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 124001,
+      "kind": "doll",
+      "featured": [
+        1064
+      ],
+      "start": "2025-10-17T08:00:00Z",
+      "end": "2025-11-04T18:00:00Z",
+      "source_start": "2025-10-16 08:00:00",
+      "source_end": "2025-11-05 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 126001,
+      "kind": "doll",
+      "featured": [
+        1056
+      ],
+      "start": "2025-11-28T08:00:00Z",
+      "end": "2025-12-16T18:00:00Z",
+      "source_start": "2025-11-27 08:00:00",
+      "source_end": "2025-12-17 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 130001,
+      "kind": "doll",
+      "featured": [
+        1059
+      ],
+      "start": "2025-11-07T08:00:00Z",
+      "end": "2025-11-25T18:00:00Z",
+      "source_start": "2025-11-06 08:00:00",
+      "source_end": "2025-11-26 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 132001,
+      "kind": "doll",
+      "featured": [
+        1057
+      ],
+      "start": "2025-12-19T08:00:00Z",
+      "end": "2026-01-06T18:00:00Z",
+      "source_start": "2025-12-18 08:00:00",
+      "source_end": "2026-01-07 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 136001,
+      "kind": "doll",
+      "featured": [
+        1065
+      ],
+      "start": "2026-02-20T08:00:00Z",
+      "end": "2026-03-10T18:00:00Z",
+      "source_start": "2026-02-19 08:00:00",
+      "source_end": "2026-03-11 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 142001,
+      "kind": "doll",
+      "featured": [
+        1066
+      ],
+      "start": "2026-03-12T08:00:00Z",
+      "end": "2026-03-31T18:00:00Z",
+      "source_start": "2026-03-11 08:00:00",
+      "source_end": "2026-04-01 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 144001,
+      "kind": "doll",
+      "featured": [
+        1064
+      ],
+      "start": "2026-01-09T08:00:00Z",
+      "end": "2026-01-27T18:00:00Z",
+      "source_start": "2026-01-08 08:00:00",
+      "source_end": "2026-01-28 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 152001,
+      "kind": "doll",
+      "featured": [
+        1044
+      ],
+      "start": "2026-01-30T08:00:00Z",
+      "end": "2026-02-17T18:00:00Z",
+      "source_start": "2026-01-29 08:00:00",
+      "source_end": "2026-02-18 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 154001,
+      "kind": "doll",
+      "featured": [
+        1062
+      ],
+      "start": "2026-01-09T08:00:00Z",
+      "end": "2026-01-27T18:00:00Z",
+      "source_start": "2026-01-08 08:00:00",
+      "source_end": "2026-01-28 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 156001,
+      "kind": "doll",
+      "featured": [
+        1059
+      ],
+      "start": "2026-01-30T08:00:00Z",
+      "end": "2026-02-17T18:00:00Z",
+      "source_start": "2026-01-29 08:00:00",
+      "source_end": "2026-02-18 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 158001,
+      "kind": "doll",
+      "featured": [
+        1053
+      ],
+      "start": "2026-01-09T08:00:00Z",
+      "end": "2026-01-27T18:00:00Z",
+      "source_start": "2026-01-08 08:00:00",
+      "source_end": "2026-01-28 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 174001,
+      "kind": "doll",
+      "featured": [
+        1068
+      ],
+      "start": "2026-01-30T08:00:00Z",
+      "end": "2026-02-17T18:00:00Z",
+      "source_start": "2026-01-29 08:00:00",
+      "source_end": "2026-02-18 17:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 1019001,
+      "kind": "doll",
+      "featured": [
+        1033
+      ],
+      "start": "2025-01-17T13:00:00Z",
+      "end": "2025-02-05T07:00:00Z",
+      "source_start": "2025-01-16 13:00:00",
+      "source_end": "2025-02-06 06:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 1023001,
+      "kind": "doll",
+      "featured": [
+        1034
+      ],
+      "start": "2024-12-27T11:00:00Z",
+      "end": "2025-01-15T11:00:00Z",
+      "source_start": "2024-12-26 11:00:00",
+      "source_end": "2025-01-16 10:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 1031001,
+      "kind": "doll",
+      "featured": [
+        1039
+      ],
+      "start": "2024-12-04T00:00:00Z",
+      "end": "2024-12-25T11:00:00Z",
+      "source_start": "2024-12-03 00:00:00",
+      "source_end": "2024-12-26 10:59:59"
+    },
+    {
+      "type_id": 3,
+      "pool_id": 1033001,
+      "kind": "doll",
+      "featured": [
+        1037
+      ],
+      "start": "2024-12-04T00:00:00Z",
+      "end": "2024-12-25T11:00:00Z",
+      "source_start": "2024-12-03 00:00:00",
+      "source_end": "2024-12-26 10:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 10001,
+      "kind": "weapon",
+      "featured": [
+        11056
+      ],
+      "start": "2025-02-28T17:00:00Z",
+      "end": "2025-03-19T07:00:00Z",
+      "source_start": "2025-02-27 17:00:00",
+      "source_end": "2025-03-20 06:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 14001,
+      "kind": "weapon",
+      "featured": [
+        10133
+      ],
+      "start": "2025-11-28T08:00:00Z",
+      "end": "2025-12-16T18:00:00Z",
+      "source_start": "2025-11-27 08:00:00",
+      "source_end": "2025-12-17 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 16001,
+      "kind": "weapon",
+      "featured": [
+        11053
+      ],
+      "start": "2025-04-11T08:00:00Z",
+      "end": "2025-04-30T07:00:00Z",
+      "source_start": "2025-04-10 08:00:00",
+      "source_end": "2025-05-01 06:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 18001,
+      "kind": "weapon",
+      "featured": [
+        10353
+      ],
+      "start": "2025-09-26T08:00:00Z",
+      "end": "2025-10-14T18:00:00Z",
+      "source_start": "2025-09-25 08:00:00",
+      "source_end": "2025-10-15 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 26001,
+      "kind": "weapon",
+      "featured": [
+        11056
+      ],
+      "start": "2025-05-23T08:00:00Z",
+      "end": "2025-06-10T07:00:00Z",
+      "source_start": "2025-05-22 08:00:00",
+      "source_end": "2025-06-11 06:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 30001,
+      "kind": "weapon",
+      "featured": [
+        10133
+      ],
+      "start": "2026-02-20T08:00:00Z",
+      "end": "2026-03-10T18:00:00Z",
+      "source_start": "2026-02-19 08:00:00",
+      "source_end": "2026-03-11 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 34001,
+      "kind": "weapon",
+      "featured": [
+        10353
+      ],
+      "start": "2025-12-19T08:00:00Z",
+      "end": "2026-01-06T18:00:00Z",
+      "source_start": "2025-12-18 08:00:00",
+      "source_end": "2026-01-07 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 36001,
+      "kind": "weapon",
+      "featured": [
+        10233
+      ],
+      "start": "2025-02-07T11:00:00Z",
+      "end": "2025-02-26T07:00:00Z",
+      "source_start": "2025-02-06 11:00:00",
+      "source_end": "2025-02-27 06:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 38001,
+      "kind": "weapon",
+      "featured": [
+        10343
+      ],
+      "start": "2025-03-21T08:00:00Z",
+      "end": "2025-04-09T07:00:00Z",
+      "source_start": "2025-03-20 08:00:00",
+      "source_end": "2025-04-10 06:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 40001,
+      "kind": "weapon",
+      "featured": [
+        10503
+      ],
+      "start": "2025-06-13T08:00:00Z",
+      "end": "2025-07-01T07:00:00Z",
+      "source_start": "2025-06-12 08:00:00",
+      "source_end": "2025-07-02 06:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 42001,
+      "kind": "weapon",
+      "featured": [
+        10373
+      ],
+      "start": "2025-02-28T17:00:00Z",
+      "end": "2025-03-19T07:00:00Z",
+      "source_start": "2025-02-27 17:00:00",
+      "source_end": "2025-03-20 06:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 44001,
+      "kind": "weapon",
+      "featured": [
+        10523
+      ],
+      "start": "2025-03-21T08:00:00Z",
+      "end": "2025-04-09T07:00:00Z",
+      "source_start": "2025-03-20 08:00:00",
+      "source_end": "2025-04-10 06:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 46001,
+      "kind": "weapon",
+      "featured": [
+        10393
+      ],
+      "start": "2025-02-07T11:00:00Z",
+      "end": "2025-02-26T07:00:00Z",
+      "source_start": "2025-02-06 11:00:00",
+      "source_end": "2025-02-27 06:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 48001,
+      "kind": "weapon",
+      "featured": [
+        10513
+      ],
+      "start": "2025-04-11T08:00:00Z",
+      "end": "2025-04-30T07:00:00Z",
+      "source_start": "2025-04-10 08:00:00",
+      "source_end": "2025-05-01 06:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 50001,
+      "kind": "weapon",
+      "featured": [
+        10233
+      ],
+      "start": "2025-05-02T08:00:00Z",
+      "end": "2025-05-20T07:00:00Z",
+      "source_start": "2025-05-01 08:00:00",
+      "source_end": "2025-05-21 06:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 52001,
+      "kind": "weapon",
+      "featured": [
+        10443
+      ],
+      "start": "2025-05-02T08:00:00Z",
+      "end": "2025-05-20T07:00:00Z",
+      "source_start": "2025-05-01 08:00:00",
+      "source_end": "2025-05-21 06:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 54001,
+      "kind": "weapon",
+      "featured": [
+        10503
+      ],
+      "start": "2025-09-05T08:00:00Z",
+      "end": "2025-09-23T18:00:00Z",
+      "source_start": "2025-09-04 08:00:00",
+      "source_end": "2025-09-24 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 56001,
+      "kind": "weapon",
+      "featured": [
+        10453
+      ],
+      "start": "2025-09-05T08:00:00Z",
+      "end": "2025-09-23T18:00:00Z",
+      "source_start": "2025-09-04 08:00:00",
+      "source_end": "2025-09-24 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 58001,
+      "kind": "weapon",
+      "featured": [
+        10523
+      ],
+      "start": "2025-06-13T08:00:00Z",
+      "end": "2025-07-01T07:00:00Z",
+      "source_start": "2025-06-12 08:00:00",
+      "source_end": "2025-07-02 06:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 60001,
+      "kind": "weapon",
+      "featured": [
+        10423
+      ],
+      "start": "2025-09-05T08:00:00Z",
+      "end": "2025-09-23T18:00:00Z",
+      "source_start": "2025-09-04 08:00:00",
+      "source_end": "2025-09-24 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 62001,
+      "kind": "weapon",
+      "featured": [
+        10513
+      ],
+      "start": "2025-07-04T08:00:00Z",
+      "end": "2025-07-22T18:00:00Z",
+      "source_start": "2025-07-03 08:00:00",
+      "source_end": "2025-07-23 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 66001,
+      "kind": "weapon",
+      "featured": [
+        10473
+      ],
+      "start": "2025-07-04T08:00:00Z",
+      "end": "2025-07-22T18:00:00Z",
+      "source_start": "2025-07-03 08:00:00",
+      "source_end": "2025-07-23 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 68001,
+      "kind": "weapon",
+      "featured": [
+        10443
+      ],
+      "start": "2025-07-25T08:00:00Z",
+      "end": "2025-08-12T18:00:00Z",
+      "source_start": "2025-07-24 08:00:00",
+      "source_end": "2025-08-13 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 70001,
+      "kind": "weapon",
+      "featured": [
+        10343
+      ],
+      "start": "2026-03-12T08:00:00Z",
+      "end": "2026-03-31T18:00:00Z",
+      "source_start": "2026-03-11 08:00:00",
+      "source_end": "2026-04-01 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 72001,
+      "kind": "weapon",
+      "featured": [
+        10533
+      ],
+      "start": "2025-07-04T08:00:00Z",
+      "end": "2025-07-22T18:00:00Z",
+      "source_start": "2025-07-03 08:00:00",
+      "source_end": "2025-07-23 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 74001,
+      "kind": "weapon",
+      "featured": [
+        10453
+      ],
+      "start": "2025-12-19T08:00:00Z",
+      "end": "2026-01-06T18:00:00Z",
+      "source_start": "2025-12-18 08:00:00",
+      "source_end": "2026-01-07 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 78001,
+      "kind": "weapon",
+      "featured": [
+        10483
+      ],
+      "start": "2025-07-25T08:00:00Z",
+      "end": "2025-08-12T18:00:00Z",
+      "source_start": "2025-07-24 08:00:00",
+      "source_end": "2025-08-13 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 80001,
+      "kind": "weapon",
+      "featured": [
+        10423
+      ],
+      "start": "2025-11-28T08:00:00Z",
+      "end": "2025-12-16T18:00:00Z",
+      "source_start": "2025-11-27 08:00:00",
+      "source_end": "2025-12-17 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 82001,
+      "kind": "weapon",
+      "featured": [
+        10513
+      ],
+      "start": "2025-11-28T08:00:00Z",
+      "end": "2025-12-16T18:00:00Z",
+      "source_start": "2025-11-27 08:00:00",
+      "source_end": "2025-12-17 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 84001,
+      "kind": "weapon",
+      "featured": [
+        10543
+      ],
+      "start": "2025-05-23T08:00:00Z",
+      "end": "2025-06-10T07:00:00Z",
+      "source_start": "2025-05-22 08:00:00",
+      "source_end": "2025-06-11 06:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 86001,
+      "kind": "weapon",
+      "featured": [
+        10473
+      ],
+      "start": "2025-09-26T08:00:00Z",
+      "end": "2025-10-14T18:00:00Z",
+      "source_start": "2025-09-25 08:00:00",
+      "source_end": "2025-10-15 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 101001,
+      "kind": "weapon",
+      "featured": [
+        10553
+      ],
+      "start": "2025-08-15T08:00:00Z",
+      "end": "2025-09-02T18:00:00Z",
+      "source_start": "2025-08-14 08:00:00",
+      "source_end": "2025-09-03 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 102001,
+      "kind": "weapon",
+      "featured": [
+        11038
+      ],
+      "start": "2024-12-27T11:00:00Z",
+      "end": "2025-01-15T11:00:00Z",
+      "source_start": "2024-12-26 11:00:00",
+      "source_end": "2025-01-16 10:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 105001,
+      "kind": "weapon",
+      "featured": [
+        11053
+      ],
+      "start": "2025-01-17T13:00:00Z",
+      "end": "2025-02-05T07:00:00Z",
+      "source_start": "2025-01-16 13:00:00",
+      "source_end": "2025-02-06 06:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 107001,
+      "kind": "weapon",
+      "featured": [
+        10563
+      ],
+      "start": "2026-02-20T08:00:00Z",
+      "end": "2026-03-10T18:00:00Z",
+      "source_start": "2026-02-19 08:00:00",
+      "source_end": "2026-03-11 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 109001,
+      "kind": "weapon",
+      "featured": [
+        10483
+      ],
+      "start": "2025-10-17T08:00:00Z",
+      "end": "2025-11-04T18:00:00Z",
+      "source_start": "2025-10-16 08:00:00",
+      "source_end": "2025-11-05 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 113001,
+      "kind": "weapon",
+      "featured": [
+        10573
+      ],
+      "start": "2026-03-12T08:00:00Z",
+      "end": "2026-03-31T18:00:00Z",
+      "source_start": "2026-03-11 08:00:00",
+      "source_end": "2026-04-01 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 115001,
+      "kind": "weapon",
+      "featured": [
+        10543
+      ],
+      "start": "2025-08-15T08:00:00Z",
+      "end": "2025-09-02T18:00:00Z",
+      "source_start": "2025-08-14 08:00:00",
+      "source_end": "2025-09-03 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 121001,
+      "kind": "weapon",
+      "featured": [
+        10553
+      ],
+      "start": "2025-11-07T08:00:00Z",
+      "end": "2025-11-25T18:00:00Z",
+      "source_start": "2025-11-06 08:00:00",
+      "source_end": "2025-11-26 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 125001,
+      "kind": "weapon",
+      "featured": [
+        10643
+      ],
+      "start": "2025-10-17T08:00:00Z",
+      "end": "2025-11-04T18:00:00Z",
+      "source_start": "2025-10-16 08:00:00",
+      "source_end": "2025-11-05 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 127001,
+      "kind": "weapon",
+      "featured": [
+        10563
+      ],
+      "start": "2025-11-28T08:00:00Z",
+      "end": "2025-12-16T18:00:00Z",
+      "source_start": "2025-11-27 08:00:00",
+      "source_end": "2025-12-17 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 131001,
+      "kind": "weapon",
+      "featured": [
+        10593
+      ],
+      "start": "2025-11-07T08:00:00Z",
+      "end": "2025-11-25T18:00:00Z",
+      "source_start": "2025-11-06 08:00:00",
+      "source_end": "2025-11-26 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 133001,
+      "kind": "weapon",
+      "featured": [
+        10573
+      ],
+      "start": "2025-12-19T08:00:00Z",
+      "end": "2026-01-06T18:00:00Z",
+      "source_start": "2025-12-18 08:00:00",
+      "source_end": "2026-01-07 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 137001,
+      "kind": "weapon",
+      "featured": [
+        10653
+      ],
+      "start": "2026-02-20T08:00:00Z",
+      "end": "2026-03-10T18:00:00Z",
+      "source_start": "2026-02-19 08:00:00",
+      "source_end": "2026-03-11 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 143001,
+      "kind": "weapon",
+      "featured": [
+        10663
+      ],
+      "start": "2026-03-12T08:00:00Z",
+      "end": "2026-03-31T18:00:00Z",
+      "source_start": "2026-03-11 08:00:00",
+      "source_end": "2026-04-01 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 145001,
+      "kind": "weapon",
+      "featured": [
+        10643
+      ],
+      "start": "2026-01-09T08:00:00Z",
+      "end": "2026-01-27T18:00:00Z",
+      "source_start": "2026-01-08 08:00:00",
+      "source_end": "2026-01-28 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 153001,
+      "kind": "weapon",
+      "featured": [
+        10443
+      ],
+      "start": "2026-01-30T08:00:00Z",
+      "end": "2026-02-17T18:00:00Z",
+      "source_start": "2026-01-29 08:00:00",
+      "source_end": "2026-02-18 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 155001,
+      "kind": "weapon",
+      "featured": [
+        10623
+      ],
+      "start": "2026-01-09T08:00:00Z",
+      "end": "2026-01-27T18:00:00Z",
+      "source_start": "2026-01-08 08:00:00",
+      "source_end": "2026-01-28 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 157001,
+      "kind": "weapon",
+      "featured": [
+        10593
+      ],
+      "start": "2026-01-30T08:00:00Z",
+      "end": "2026-02-17T18:00:00Z",
+      "source_start": "2026-01-29 08:00:00",
+      "source_end": "2026-02-18 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 159001,
+      "kind": "weapon",
+      "featured": [
+        10533
+      ],
+      "start": "2026-01-09T08:00:00Z",
+      "end": "2026-01-27T18:00:00Z",
+      "source_start": "2026-01-08 08:00:00",
+      "source_end": "2026-01-28 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 175001,
+      "kind": "weapon",
+      "featured": [
+        10683
+      ],
+      "start": "2026-01-30T08:00:00Z",
+      "end": "2026-02-17T18:00:00Z",
+      "source_start": "2026-01-29 08:00:00",
+      "source_end": "2026-02-18 17:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 1020001,
+      "kind": "weapon",
+      "featured": [
+        10333
+      ],
+      "start": "2025-01-17T13:00:00Z",
+      "end": "2025-02-05T07:00:00Z",
+      "source_start": "2025-01-16 13:00:00",
+      "source_end": "2025-02-06 06:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 1024001,
+      "kind": "weapon",
+      "featured": [
+        10343
+      ],
+      "start": "2024-12-27T11:00:00Z",
+      "end": "2025-01-15T11:00:00Z",
+      "source_start": "2024-12-26 11:00:00",
+      "source_end": "2025-01-16 10:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 1032001,
+      "kind": "weapon",
+      "featured": [
+        10393
+      ],
+      "start": "2024-12-04T00:00:00Z",
+      "end": "2024-12-25T11:00:00Z",
+      "source_start": "2024-12-03 00:00:00",
+      "source_end": "2024-12-26 10:59:59"
+    },
+    {
+      "type_id": 4,
+      "pool_id": 1034001,
+      "kind": "weapon",
+      "featured": [
+        10373
+      ],
+      "start": "2024-12-04T00:00:00Z",
+      "end": "2024-12-25T11:00:00Z",
+      "source_start": "2024-12-03 00:00:00",
+      "source_end": "2024-12-26 10:59:59"
+    }
+  ],
+  "fixed_loss_pools": [
+    {
+      "type_id": 3,
+      "kind": "doll",
+      "item_ids": [
+        1015,
+        1021,
+        1025,
+        1027,
+        1029,
+        1033,
+        1043,
+        1049
+      ]
+    },
+    {
+      "type_id": 4,
+      "kind": "weapon",
+      "item_ids": [
+        10333,
+        10433,
+        10493,
+        11016,
+        11020,
+        11038,
+        11044,
+        11047
+      ]
+    }
+  ],
+  "fixed_loss_source": {
+    "reviewed_on": "2026-09-25",
+    "scope": "Standard Elite loss roster for Sunborn targeted dolls and weapons. Known dated rate-ups override this fallback, including standard-item rate-ups. Roster includes Faye/Hestia and Harpsy/Antinomy; it does not assert availability before their introduction. Only catalog-known Elite records of the matching kind qualify.",
+    "urls": [
+      "https://gf2exilium.sunborngame.com/NewsInfo?typeId=3&id=361",
+      "https://iopwiki.com/wiki/GFL2_Changelogs",
+      "https://d2ankz0m1a0dsp.cloudfront.net/gfl-exilium/guides/beginner-guide/"
+    ]
+  }
+}

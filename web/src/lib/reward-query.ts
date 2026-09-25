@@ -1,8 +1,10 @@
+import { summarizeBannerOutcomes, type FeaturedSummary } from './banner-outcomes.ts';
 import type { Pull } from './api.ts';
 import { rewardRarities, rewardRarity } from './reward-history.ts';
 
 /** Summary facts describe the entire recruitment; total/items apply the rarity selection. */
 export interface ProfileOverview {
+  featured?: FeaturedSummary;
   types: number[];
   selectedType: number | null;
   currentPity: number;
@@ -51,6 +53,7 @@ export function createRewardQuery(rows: Pull[]) {
     }
     const latest = scoped[0];
     summaries.set(type, {
+      featured: summarizeBannerOutcomes(scoped),
       currentPity: latest.rarity === 'Elite' ? 0 : latest.pity,
       currentUncertain: latest.rarity !== 'Elite' && latest.pity_uncertain,
       average: knownCount ? knownPity / knownCount : null,
@@ -75,6 +78,7 @@ export function createRewardQuery(rows: Pull[]) {
     const summary =
       selectedType === null
         ? {
+            featured: summarizeBannerOutcomes([]),
             currentPity: 0,
             currentUncertain: false,
             average: null,

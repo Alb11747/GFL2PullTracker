@@ -1,0 +1,58 @@
+{
+  "chronological": [
+    {
+      "item_id": 1039,
+      "kind": "doll",
+      "rarity": "Elite"
+    },
+    {
+      "item_id": 1043,
+      "kind": "doll",
+      "rarity": "Elite"
+    },
+    {
+      "item_id": 11007,
+      "kind": "weapon",
+      "rarity": "Standard"
+    },
+    {
+      "item_id": 1039,
+      "kind": "doll",
+      "rarity": "Elite"
+    },
+    {
+      "item_id": 1037,
+      "kind": "doll",
+      "rarity": "Elite"
+    },
+    {
+      "item_id": 11007,
+      "kind": "weapon",
+      "rarity": "Standard"
+    }
+  ],
+  "outcomes": [
+    "unknown",
+    "loss",
+    "not_applicable",
+    "guaranteed",
+    "win",
+    "not_applicable"
+  ],
+  "guarantee_after": [
+    false,
+    true,
+    true,
+    false,
+    false,
+    false
+  ],
+  "featured_pity": [
+    null,
+    null,
+    null,
+    3,
+    1,
+    null
+  ]
+}

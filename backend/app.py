@@ -86,6 +86,28 @@ class JobOutput(BaseModel):
     import_result: ImportResult | None = None
 
 
+class BannerResult(BaseModel):
+    featured: bool | None
+    outcome: Literal["win", "loss", "guaranteed", "unknown", "not_applicable"]
+    guarantee_before: bool | None
+    guarantee_after: bool | None
+    featured_pity: int | None
+    reason: Literal["unknown_pool", "unknown_item", "unknown_start", "history_gap",
+                    "guarantee_conflict", "unsupported_type", "unknown_provider"] | None
+
+
+class FeaturedSummary(BaseModel):
+    featured_count: int
+    off_banner_count: int
+    wins: int
+    losses: int
+    guaranteed: int
+    unknown_elites: int
+    unknown_outcomes: int
+    featured_intervals: list[int]
+    current_guarantee: bool | None
+
+
 class HistoryItem(BaseModel):
     id: int
     item_id: int
@@ -103,6 +125,7 @@ class HistoryItem(BaseModel):
     quantity: int
     source_page: int
     estimated_group_size: int
+    banner_result: BannerResult | None = None
 
 
 class RarityBreakdown(BaseModel):
@@ -112,6 +135,7 @@ class RarityBreakdown(BaseModel):
 
 
 class RewardsOutput(BaseModel):
+    featured: FeaturedSummary | None = None
     types: list[int]
     selectedType: int | None
     currentPity: int

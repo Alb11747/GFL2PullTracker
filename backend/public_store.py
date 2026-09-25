@@ -13,6 +13,8 @@ import time
 from fastapi import HTTPException
 
 from backend.coverage import annotate_history
+from backend.banner_outcomes import load_banner_rules
+from backend import statistics_comparison
 from backend.database import merge_source_order
 from backend.tracker import IDENTITY, canonical, validate_document
 
@@ -80,6 +82,21 @@ class PublicStore:
                 );
                 CREATE INDEX IF NOT EXISTS pulls_history ON pulls(account_id, timestamp DESC, timestamp_order);
                 CREATE INDEX IF NOT EXISTS pulls_statistics ON pulls(type_id, pool_id, account_id);
+                CREATE TABLE IF NOT EXISTS comparison_windows (
+                    account_id TEXT NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
+                    type_id INTEGER NOT NULL, metric TEXT NOT NULL, rules_version TEXT NOT NULL,
+                    starting_pity INTEGER NOT NULL, guaranteed INTEGER NOT NULL, budget INTEGER NOT NULL,
+                    PRIMARY KEY(account_id,type_id,metric)
+                );
+                CREATE INDEX IF NOT EXISTS comparison_matching ON comparison_windows(
+                    type_id,metric,rules_version,starting_pity,guaranteed,budget);
+                CREATE INDEX IF NOT EXISTS account_comparison_identity ON accounts(endpoint_host,server,game_channel_id);
+                CREATE TABLE IF NOT EXISTS comparison_points (
+                    account_id TEXT NOT NULL, type_id INTEGER NOT NULL, metric TEXT NOT NULL,
+                    position INTEGER NOT NULL, count INTEGER NOT NULL,
+                    PRIMARY KEY(account_id,type_id,metric,position),
+                    FOREIGN KEY(account_id,type_id,metric) REFERENCES comparison_windows(account_id,type_id,metric) ON DELETE CASCADE
+                );
                 CREATE TABLE IF NOT EXISTS history_versions (
                     account_id TEXT PRIMARY KEY, version INTEGER NOT NULL
                 );
@@ -88,6 +105,7 @@ class PublicStore:
         self.catalog_path = Path(__file__).with_name('catalog.json')
         self._catalog_mtime = self.catalog_path.stat().st_mtime_ns
         self.catalog = {item['id']: item for item in json.loads(self.catalog_path.read_text(encoding='utf-8'))['items']}
+        self.banner_rules = load_banner_rules()
 
     @contextmanager
     def connect(self):
@@ -235,7 +253,9 @@ class PublicStore:
         if mtime != self._catalog_mtime:
             self.catalog = {item['id']: item for item in json.loads(self.catalog_path.read_text(encoding='utf-8'))['items']}
             self._catalog_mtime = mtime
-        signature = digest(canonical(self.catalog))
+        self.banner_rules = load_banner_rules()
+        signature = digest(canonical(dict(catalog=self.catalog, banner_rules=self.banner_rules,
+                                           comparison_rules=statistics_comparison.RULES_VERSION)))
         saved = db.execute("SELECT value FROM metadata WHERE key='catalog_digest'").fetchone()
         if saved and saved[0] == signature:
             return
@@ -272,6 +292,12 @@ class PublicStore:
                 (key, *token, row['timestamp'], position, row['item_id'], row['pool_id'], row['quantity'],
                  row['raw_record'], row['source_page'], sequence, canonical(sorted(sources)), row['rarity'],
                  row['pity'], int(row['pity_uncertain']), int(row['gap_before'])))
+        statistics_comparison.rebuild_account(db, key, self.catalog, self.banner_rules)
+
+    def compare_statistics(self, request, excluded=None):
+        with self.lock, self.connect() as db:
+            self._ensure_catalog(db)
+            return statistics_comparison.compare(db, request, excluded, statistics_comparison.rules_version(self.banner_rules))
 
     def statistics(self):
         # Normal requests read normalized rows only. Catalog changes refresh the

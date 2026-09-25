@@ -184,3 +184,74 @@ test('public cancellation permits only POST and preserves session, CSRF and orig
     );
   assert.equal(calls, 1);
 });
+
+test('comparison proxy permits only bounded same-origin JSON POST reads', async () => {
+  let calls = 0;
+  const fetcher: typeof fetch = async (_path, init) => {
+    calls++;
+    assert.equal(init?.method, 'POST');
+    assert.equal(init?.body, '{}');
+    assert.equal(new Headers(init?.headers).has('x-csrf-token'), false);
+    return Response.json({ metrics: {} });
+  };
+  assert.equal(
+    (
+      await forward(
+        request('public/statistics/compare', 'POST'),
+        'http://api:8000',
+        fetcher,
+        options
+      )
+    ).status,
+    200
+  );
+  for (const method of ['GET', 'PUT', 'DELETE'])
+    assert.equal(
+      (
+        await forward(
+          request('public/statistics/compare', method),
+          'http://api:8000',
+          fetcher,
+          options
+        )
+      ).status,
+      404
+    );
+  for (const headers of [
+    { origin: 'https://other.example' },
+    { 'sec-fetch-site': 'cross-site' }
+  ] as Record<string, string>[])
+    assert.equal(
+      (
+        await forward(
+          request('public/statistics/compare', 'POST', headers),
+          'http://api:8000',
+          fetcher,
+          options
+        )
+      ).status,
+      403
+    );
+  assert.equal(
+    (
+      await forward(
+        request('public/statistics/compare', 'POST', { 'content-type': 'text/plain' }),
+        'http://api:8000',
+        fetcher,
+        options
+      )
+    ).status,
+    415
+  );
+  const oversized = new Request('https://tracker.example/api/public/statistics/compare', {
+    method: 'POST',
+    headers: {
+      host: 'tracker.example',
+      origin: 'https://tracker.example',
+      'content-type': 'application/json'
+    },
+    body: ' '.repeat(8193)
+  });
+  assert.equal((await forward(oversized, 'http://api:8000', fetcher, options)).status, 413);
+  assert.equal(calls, 1);
+});

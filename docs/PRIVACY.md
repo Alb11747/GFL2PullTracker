@@ -64,6 +64,32 @@ different actions. Drive changes do not automatically change server backup or
 contribution consent. Device conflicts require explicit resolution where an
 automatic merge would discard an edit.
 
+## Personal statistics and community comparisons
+
+The Statistics page computes personal summaries, probability distributions and
+planning in browser workers. It does not upload pull records to calculate them.
+Opening Your statistics with an eligible profile requests a real comparison using
+only provider, server, channel, recruitment type, rules version, comparison pull
+budgets, starting pity/guarantee, reward counts and classifiable win/trial counts.
+These read-only requests do not save or contribute local history. They are not
+retained as account history or sent to telemetry. Ordinary connection metadata
+is handled as described in the hosting policy.
+
+If the selected profile matches an account verified in the current server session,
+the request includes that opaque account ID solely to exclude it from the cohort;
+the server checks access before honoring it. Otherwise the sample may include the
+player's own previously saved account. No other account identity or raw record is
+returned. Each account contributes at most once to each comparison, with matching
+recruitment, provider/server/channel, rules and starting state. Histories must
+contain a continuous portion long enough for the requested budget.
+
+Cohorts below five accounts are hidden. Numeric comparisons are also hidden when
+either nonempty result partition contains fewer than five accounts. Cohorts of
+5–49 show counts only; percentages and comparison bars require at least 50.
+Deleting server history removes it from future comparisons. Existing provider
+verification restrictions still apply; implementing comparisons does not enable
+new submissions or guarantee that enough eligible histories exist.
+
 ## Analytics and diagnostics
 
 Configured public deployments use PostHog's US service for pageviews, fixed

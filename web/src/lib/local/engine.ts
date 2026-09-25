@@ -1,5 +1,8 @@
+import { annotateBannerOutcomes } from '../banner-outcomes.ts';
 import catalog from '../../../../backend/catalog.json' with { type: 'json' };
 import { createRewardQuery, type ProfileOverview } from '../reward-query.ts';
+import { createStatisticsQuery, STATISTICS_RULES_VERSION } from '../statistics/history.ts';
+import type { PersonalStatisticsResponse } from '../statistics/history-types.ts';
 import type {
   Filters,
   FilterOptions,
@@ -419,6 +422,7 @@ function buildRows(profile: PortableProfile): Row[] {
       previous = row;
     }
   }
+  annotateBannerOutcomes(rows, profile.endpoint_host);
   return rows;
 }
 function publicProfile(profile: PortableProfile): Profile {
@@ -439,6 +443,7 @@ export class LocalEngine {
   state: PortableState;
   private cache = new Map<string, Row[]>();
   private rewardQueries = new Map<string, ReturnType<typeof createRewardQuery>>();
+  private statisticsQueries = new Map<string, ReturnType<typeof createStatisticsQuery>>();
   constructor(state: PortableState = emptyState()) {
     engineDiagnostics.engineBuilds++;
     requireArchiveVersion(state.version);
@@ -449,6 +454,7 @@ export class LocalEngine {
     const candidate = new LocalEngine(state);
     candidate.cache = new Map(this.cache);
     candidate.rewardQueries = new Map(this.rewardQueries);
+    candidate.statisticsQueries = new Map(this.statisticsQueries);
     candidate.retainDerivedCaches(this.state, state);
     return candidate;
   }
@@ -459,6 +465,7 @@ export class LocalEngine {
       if (!replacement || !sameDerivedProfile(profile, replacement)) {
         this.cache.delete(profile.id);
         this.rewardQueries.delete(profile.id);
+        this.statisticsQueries.delete(profile.id);
       }
     }
   }
@@ -512,6 +519,7 @@ export class LocalEngine {
     this.state.profiles = this.state.profiles.filter((profile) => profile !== p);
     this.cache.delete(p.id);
     this.rewardQueries.delete(p.id);
+    this.statisticsQueries.delete(p.id);
   }
   async importRecords(input: ImportInput): Promise<ImportResult> {
     const { records_document: document, manifest = null, raw_pages = null } = input;
@@ -575,6 +583,7 @@ export class LocalEngine {
     this.state = totalState;
     this.cache.delete(p.id);
     this.rewardQueries.delete(p.id);
+    this.statisticsQueries.delete(p.id);
     const after = this.rows(p.id).length;
     return {
       id: snapshot.id,
@@ -666,6 +675,17 @@ export class LocalEngine {
       kinds: [...new Set(rows.map((r) => r.kind))].sort(),
       types: [...new Set(rows.map((r) => r.type_id))].sort((a, b) => a - b),
       pools: [...new Set(rows.map((r) => r.pool_id))].sort((a, b) => a - b)
+    };
+  }
+  statisticsSummary(id: string, typeId: number | null): PersonalStatisticsResponse {
+    const profile = this.profile(id);
+    if (!this.statisticsQueries.has(profile.id))
+      this.statisticsQueries.set(profile.id, createStatisticsQuery(this.rows(profile.id)));
+    const { account_fingerprint, endpoint_host, server, game_channel_id } = profile;
+    return {
+      ...this.statisticsQueries.get(profile.id)!(typeId),
+      identity: { account_fingerprint, endpoint_host, server, game_channel_id },
+      rulesVersion: STATISTICS_RULES_VERSION
     };
   }
   statistics(filters: Filters): Statistics {
