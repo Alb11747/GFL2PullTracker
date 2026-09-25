@@ -12,3 +12,10 @@ condition = "AND"
 paths = ['''(^|/)web/src/lib/reward-history\.ts$''']
 regexTarget = "secret"
 regexes = ['''^gfl2\.reward-rarities$''']
+
+[[rules.allowlists]]
+description = "Public localStorage diagnostics preference name, not an API credential"
+condition = "AND"
+paths = ['''(^|/)web/src/lib/telemetry/local-diagnostics\.ts$''']
+regexTarget = "secret"
+regexes = ['''^gfl2\.diagnostics\.muted$''']
