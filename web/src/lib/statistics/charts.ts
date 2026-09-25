@@ -270,7 +270,10 @@ export function distribution({
     typeof expected === 'number' && Number.isFinite(expected)
       ? expected
       : Array.from(dist).reduce((s, p, i) => s + i * p, 0) / data.mass;
-  const ticks = niceTicks(Math.max(...bins.map((b) => b.mass))),
+  // Split bins have unequal widths. Density keeps their area proportional to
+  // probability and avoids artificial dips at the observation boundary.
+  const density = (b: (typeof bins)[number]) => b.mass / (b.hi - b.lo + 1);
+  const ticks = niceTicks(Math.max(...bins.map(density))),
     top = ticks[ticks.length - 1],
     span = hi - lo + 1;
   const x = (value: number) => Math.max(0, Math.min(1000, ((value - lo + 0.5) / span) * 1000));
@@ -278,8 +281,8 @@ export function distribution({
     .map((b) => {
       const left = ((b.lo - lo) / span) * 1000,
         width = ((b.hi - b.lo + 1) / span) * 1000,
-        height = (b.mass / top) * 200;
-      return `<rect x="${left + 0.5}" y="${200 - height}" width="${Math.max(0.1, width - 1)}" height="${height}" fill="${b.event ? C.event : C.bar}"${b.observed ? ` stroke="${C.ink}" stroke-width="2" vector-effect="non-scaling-stroke"` : ''}/>`;
+        height = (density(b) / top) * 200;
+      return `<rect x="${left + 0.5}" y="${200 - height}" width="${Math.max(0.1, width - 1)}" height="${height}" fill="${b.event ? C.event : C.bar}"/>`;
     })
     .join('');
   const outside = hasObservation && (observation < lo || observation > hi);
@@ -299,7 +302,7 @@ export function distribution({
     ? `Central 90% model range: ${number(data.central90[0])}–${number(data.central90[1])}.`
     : '';
   const summary = [meanText, observationText, eventText, rangeText].filter(Boolean).join('. ');
-  const description = `${title}. ${summary}. X axis: ${axisLabel}, ${number(lo)} to ${number(hi)}. Y axis: probability mass per displayed bin, 0 to ${probability(top)}. Bar widths show outcome ranges; heights show their summed probability, not probability density. ${cropText} Numerical values follow in an expandable table.`;
+  const description = `${title}. ${summary}. X axis: ${axisLabel}, ${number(lo)} to ${number(hi)}. Y axis: probability per outcome, 0 to ${probability(top)}. Bar widths show outcome ranges; heights show average probability per outcome, so bar area represents probability mass. ${cropText} Numerical values follow in an expandable table.`;
   // An off-chart mean remains in the summary; clamping its line to an edge
   // would falsely mark that edge as the expected outcome.
   let overlays = mean >= lo && mean <= hi ? line(x(mean), 0, 200, C.ink, true) : '';
@@ -309,7 +312,7 @@ export function distribution({
     probability(b.mass),
     hasObservation ? (b.event ? 'Included' : 'Not included') : '—'
   ]);
-  return `<div class="mc-summary"><span>${esc(meanText)}</span>${hasObservation ? `<span>${esc(observationText)}</span><strong>${esc(eventText)}</strong>` : ''}</div>${plot({ key, title, description, lo, hi, ticks, yLabel: 'Probability per bin', axisLabel, bars, overlays, percent: true })}<div class="mc-legend">${swatch('bar', 'Model probability')}${hasObservation ? swatch('event', direction === 'upper' ? 'At least the observation' : 'At most the observation') + swatch('observed-line', 'Observed value') : ''}${swatch('mean', 'Model mean')}</div>${rangeText ? `<p class="mc-note">${esc(rangeText)}</p>` : ''}${cropText ? `<p class="mc-note">${esc(cropText)}</p>` : ''}${table(['Outcome range', 'Probability', 'Shaded event'], rows, `${title}: probability mass in each displayed bin`)}`;
+  return `<div class="mc-summary"><span>${esc(meanText)}</span>${hasObservation ? `<span>${esc(observationText)}</span><strong>${esc(eventText)}</strong>` : ''}</div>${plot({ key, title, description, lo, hi, ticks, yLabel: 'Probability per outcome', axisLabel, bars, overlays, percent: true })}<div class="mc-legend">${swatch('bar', 'Model probability')}${hasObservation ? swatch('event', direction === 'upper' ? 'At least the observation' : 'At most the observation') + swatch('observed-line', 'Observed value') : ''}${swatch('mean', 'Model mean')}</div>${rangeText ? `<p class="mc-note">${esc(rangeText)}</p>` : ''}${cropText ? `<p class="mc-note">${esc(cropText)}</p>` : ''}${table(['Outcome range', 'Probability', 'Shaded event'], rows, `${title}: probability mass in each displayed bin`)}`;
 }
 export function observed({
   key = 'observed',

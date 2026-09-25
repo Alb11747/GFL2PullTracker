@@ -332,10 +332,14 @@ textarea {
   outline-offset: -3px;
 }
 @media (min-width: 1450px) {
-  .masthead.with-tabs { --header-gutter: 64px; }
+  .masthead.with-tabs {
+    --header-gutter: 64px;
+  }
 }
 @media (max-width: 1150px) {
-  .masthead.with-tabs { --header-gutter: 32px; }
+  .masthead.with-tabs {
+    --header-gutter: 32px;
+  }
 }
 @media (max-width: 760px) {
   .masthead.with-tabs {
@@ -343,11 +347,17 @@ textarea {
     padding-top: 20px;
     column-gap: 12px;
   }
-  .with-tabs .header-controls { gap: 9px; }
-  .with-tabs .archive-nav { gap: 24px; }
+  .with-tabs .header-controls {
+    gap: 9px;
+  }
+  .with-tabs .archive-nav {
+    gap: 24px;
+  }
 }
 @media (max-width: 480px) {
-  .with-tabs .wordmark svg { display: none; }
+  .with-tabs .wordmark svg {
+    display: none;
+  }
 }
 .wordmark {
   container: wordmark / inline-size;
@@ -427,84 +437,12 @@ main {
   padding: 42px 48px 0;
   margin: auto;
 }
-.title-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  margin-bottom: 28px;
-}
-.title-row h1 {
-  display: flex;
-  align-items: center;
-  gap: 24px;
-  flex: 1;
-}
-.local-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.archive-line {
+  color: var(--muted);
   font-size: 0.82rem;
-  color: var(--muted);
-  white-space: nowrap;
-}
-.local-label > span {
-  height: 7px;
-  width: 7px;
-  border-radius: 50%;
-  background: var(--success);
-}
-.summary-strip {
-  display: grid;
-  grid-template-columns: 0.85fr 1.5fr 1fr;
-  border-top: 2px solid var(--ink);
-  border-bottom: 1px solid var(--line);
-  padding: 21px 0 25px;
-}
-.summary-strip > div {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 8px;
-  padding: 0 30px;
-  border-left: 1px solid var(--line);
-}
-.summary-strip > div:first-child {
-  padding-left: 0;
-  border-left: 0;
-}
-.summary-strip > div > span {
-  font-size: 0.87rem;
-  color: var(--muted);
-}
-.summary-strip strong {
-  font-weight: 500;
-  font-size: 1.3rem;
-  font-variant-numeric: tabular-nums;
-}
-.summary-strip .summary-total {
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-  padding-right: 32px;
-  gap: 20px;
-}
-.summary-total strong {
-  font-family: 'Barlow Condensed', sans-serif;
-  font-weight: 600;
-  font-size: 3.25rem;
-  line-height: 1;
-}
-.summary-strip strong small {
-  display: inline-block;
-  margin-left: 10px;
-  font-size: 0.95rem;
-}
-.summary-strip .date-range {
-  font-size: 1.1rem;
-}
-.date-range span {
-  color: var(--muted);
+  line-height: 1.5;
+  padding: 12px 0 16px;
+  margin: 0;
 }
 .distribution-grid {
   display: grid;
@@ -1095,15 +1033,6 @@ footer > span {
   .search-field {
     grid-column: span 2;
   }
-  .summary-strip .date-range {
-    font-size: 1rem;
-  }
-  .summary-strip > div {
-    padding-inline: 22px;
-  }
-  .summary-strip .summary-total {
-    padding-right: 22px;
-  }
   .item-name {
     min-width: 0;
     display: block;
@@ -1118,9 +1047,6 @@ footer > span {
   }
   .distribution-grid {
     gap: 35px;
-  }
-  .summary-total strong {
-    font-size: 3rem;
   }
 }
 @media (max-width: 760px) {
@@ -1142,7 +1068,7 @@ footer > span {
     gap: 9px;
   }
   .header-controls button {
-    min-height: 38px;
+    min-height: 44px;
     padding: 8px 12px;
     font-size: 0.85rem;
   }
@@ -1165,57 +1091,6 @@ footer > span {
   }
   main {
     padding: 28px 20px 0;
-  }
-  .title-row {
-    gap: 10px;
-    margin-bottom: 22px;
-  }
-  .title-row h1 {
-    font-size: 2.4rem;
-    gap: 15px;
-  }
-  .local-label {
-    font-size: 0.7rem;
-  }
-  .summary-strip {
-    grid-template-columns: 1fr 1fr;
-    padding: 17px 0;
-    row-gap: 20px;
-  }
-  .summary-strip .summary-total {
-    grid-column: 1 / -1;
-    padding: 0;
-    border-bottom: 1px solid var(--line);
-    padding-bottom: 16px;
-    justify-content: start;
-    gap: 25px;
-  }
-  .summary-strip > div:nth-child(2) {
-    padding-left: 0;
-    border-left: 0;
-  }
-  .summary-strip > div:nth-child(3) {
-    padding-right: 0;
-    padding-left: 18px;
-  }
-  .summary-strip strong {
-    font-size: 1rem;
-  }
-  .summary-strip .date-range {
-    font-size: 0.92rem;
-    line-height: 1.7;
-  }
-  .date-range span {
-    display: block;
-    line-height: 0.6;
-  }
-  .summary-strip strong small {
-    display: block;
-    margin: 5px 0 0;
-    font-size: 0.85rem;
-  }
-  .summary-strip > div > span {
-    font-size: 0.76rem;
   }
   .distribution-grid {
     grid-template-columns: 1fr;

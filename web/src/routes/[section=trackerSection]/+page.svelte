@@ -1410,36 +1410,26 @@
       {/if}
 
       <section class="overview" aria-labelledby="overview-title">
-        <div class="title-row">
-          <h1 id="overview-title">Recruitment ledger</h1>
-          <span class="local-label"><span></span>Local archive</span>
-        </div>
-        <LoadingRegion busy={loading && !stats} message="Loading recruitment summary…">
-          <div class="summary-strip">
-            <div class="summary-total">
-              <span title="One record = one pull. Item quantity is preserved separately."
-                >Recorded pulls</span
-              ><strong>{stats ? number(stats.total) : loading || error ? '—' : '0'}</strong>
-            </div>
-            <div>
-              <span>Recorded range</span><strong class="date-range"
-                >{date(stats?.date_from)}<span> — </span>{date(stats?.date_to)}</strong
-              >
-            </div>
-            <div>
-              <span>Last import</span><strong
-                >{date(stats?.last_import_at)}<small
-                  >{stats?.last_import_at ? time(stats.last_import_at) : ''}</small
-                ></strong
-              >
-            </div>
-          </div>
-        </LoadingRegion>
         <EliteHistory
           query={rewardQuery}
+          querySummary={hosted && local ? local.statisticsSummary : undefined}
           profileId={filters.profile_id}
           revision={archiveRevision}
-        />
+        >
+          <svelte:fragment slot="archive">
+            <LoadingRegion busy={loading && !stats} message="Loading recruitment summary…">
+              <p class="archive-line">
+                All recruitments · {stats ? number(stats.total) : loading || error ? '—' : '0'} recorded
+                pulls
+                {#if stats?.date_from}
+                  · {date(stats.date_from)}–{date(stats.date_to)}{/if}
+                {#if stats?.last_import_at}
+                  · Last imported {date(stats.last_import_at)}{:else if !loading && !error}
+                  · No imports yet{/if}
+              </p>
+            </LoadingRegion>
+          </svelte:fragment>
+        </EliteHistory>
         <div class="coverage">
           <svg viewBox="0 0 20 20" aria-hidden="true"
             ><circle cx="10" cy="10" r="7" /><path d="M10 9v5M10 6v1" /></svg
@@ -1604,11 +1594,14 @@
                 onclick={() => tableScroll?.scrollBy({ left: 250 })}>Right</button
               >
             </div>
-            <section
+            <!-- Focusable so keyboard users can scroll the full table horizontally. -->
+            <div
               class="table-scroll"
+              tabindex="0"
+              role="region"
+              aria-label="Pull history, scroll horizontally for all columns"
               bind:this={tableScroll}
               id="pull-history-table"
-              aria-label="Pull history table"
               aria-busy={loading}
             >
               <table aria-describedby="history-pity-help">
@@ -1685,7 +1678,7 @@
                       >{/if}{/each}</tbody
                 >
               </table>
-            </section>
+            </div>
             <div class="pagination">
               <p>
                 Showing {number((history.page - 1) * history.page_size + 1)}–{number(

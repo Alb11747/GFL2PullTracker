@@ -1,5 +1,5 @@
 export const trackerPages = [
-  { slug: 'history', label: 'My history', title: 'Recruitment ledger' },
+  { slug: 'history', label: 'History', title: 'Recruitment ledger' },
   { slug: 'statistics', label: 'Statistics', title: 'Statistics' },
   { slug: 'backup', label: 'Backup & sync', title: 'Backup & sync' },
   { slug: 'profiles', label: 'Profiles', title: 'Profiles' },

@@ -9,6 +9,9 @@ import '../../src/app.css';
 import RewardFixture from './RewardFixture.svelte';
 import LoadingFixture from './LoadingFixture.svelte';
 import type { Pull } from '../../src/lib/api';
+import { annotateBannerOutcomes } from '../../src/lib/banner-outcomes';
+import { createStatisticsQuery, STATISTICS_RULES_VERSION } from '../../src/lib/statistics/history';
+import type { PersonalStatisticsResponse } from '../../src/lib/statistics/history-types';
 import { REWARD_RARITIES_KEY } from '../../src/lib/reward-history';
 
 const fixture = document.querySelector<HTMLElement>('#fixture')!;
@@ -80,9 +83,50 @@ async function settle() {
   await tick();
   assert(!runtimeErrors.length, runtimeErrors.join('\n'));
 }
-async function reload(seed = rows) {
+async function waitForLuck() {
+  const deadline = performance.now() + 10_000;
+  while (!fixture.querySelector('.history-summary[data-luck-ready="true"]')) {
+    assert(performance.now() < deadline, 'History model comparison did not finish');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  await settle();
+}
+// Independent enumeration for the short fixtures below: no soft pity is reached.
+function strictlyFewerSuccesses(trials: number, observed: number, chance: number) {
+  assert(trials <= 8, 'Enumeration fixture must remain small');
+  let probability = 0;
+  for (let mask = 0; mask < 2 ** trials; mask++) {
+    let successes = 0;
+    for (let bit = 0; bit < trials; bit++) successes += (mask >> bit) & 1;
+    if (successes < observed)
+      probability += chance ** successes * (1 - chance) ** (trials - successes);
+  }
+  return probability * 100;
+}
+function assertLuck(selector: string, expected: number) {
+  const card = fixture.querySelector(selector)!;
+  assert(
+    card.querySelector('.value')?.textContent?.includes('Luckier than'),
+    `${selector} must lead with model luck rather than the raw observed rate`
+  );
+  assert(!card.textContent?.includes('of model outcomes'), 'Redundant model label must be absent');
+  const headline = card.querySelector('.value strong')?.textContent?.trim() ?? '';
+  const matches = headline === '>99.9%' ? expected > 99.9
+    : headline === '<0.1%' ? expected < 0.1
+    : Math.abs(parseFloat(headline) - expected) <= 0.051;
+  assert(matches, `Headline must retain the strict model percentile: ${headline} vs ${expected}`);
+  const fill = card.querySelector<HTMLElement>('.bar > span');
+  const rate = card.querySelector('.bar-labels span:last-child')?.textContent;
+  assert(fill && rate && Math.abs(parseFloat(fill.style.width) - parseFloat(rate)) < 0.01,
+    'Bottom bar must match its recorded-rate label');
+
+}
+async function reload(
+  seed = rows,
+  summaryQuery?: (profile: string, type: number | null) => Promise<PersonalStatisticsResponse>
+) {
   if (mounted) await unmount(mounted);
-  mounted = mount(RewardFixture, { target: fixture, props: { rows: seed } });
+  mounted = mount(RewardFixture, { target: fixture, props: { rows: seed, summaryQuery } });
   await settle();
 }
 const cards = () => [
@@ -123,7 +167,7 @@ async function expand() {
   }
 }
 function statistics() {
-  return ['.current-pity', '.metrics', '.rarity-breakdown']
+  return ['.history-summary', '.current-pity', '.metrics', '.rarity-breakdown']
     .map((selector) => fixture.querySelector(selector)?.textContent)
     .join('|');
 }
@@ -749,9 +793,169 @@ run.onclick = async () => {
         'Retry did not recover'
       );
     });
+    await test('History summaries use complete classified windows regardless of rarity or reward paging', async () => {
+      const classified: Pull[] = [1039, 1015, 1039, 1039, 10132]
+        .map(
+          (item_id, index) =>
+            ({
+              ...rows[0],
+              id: index + 1,
+              item_id,
+              name: `Classified reward ${index + 1}`,
+              kind: item_id === 10132 ? 'weapon' : 'doll',
+              rarity: item_id === 10132 ? 'Standard' : 'Elite',
+              timestamp_order: 4 - index,
+              pity: 1,
+              pity_uncertain: false,
+              gap_before: false
+            }) satisfies Pull
+        )
+        .reverse();
+      annotateBannerOutcomes(classified, 'gf2-gacha-record-us.sunborngame.com');
+      const summarize = createStatisticsQuery(classified);
+      let queries = 0;
+      localStorage.setItem(REWARD_RARITIES_KEY, JSON.stringify(['Elite']));
+      await reload(classified, async (_profile, type) => {
+        queries++;
+        return {
+          ...summarize(type),
+          rulesVersion: STATISTICS_RULES_VERSION,
+          identity: {
+            endpoint_host: null,
+            account_fingerprint: null,
+            server: null,
+            game_channel_id: null
+          }
+        };
+      });
+      await waitForLuck();
+      const complete = summarize(3).summary;
+      assert(complete.windows.elite, 'Fixture needs a known elite comparison window');
+      assertLuck(
+        '.pull-rate',
+        strictlyFewerSuccesses(complete.windows.elite.budget, complete.windows.elite.count, 0.006)
+      );
+      assertLuck(
+        '.rate-up-wins',
+        strictlyFewerSuccesses(complete.wins.trials, complete.wins.wins, 0.5)
+      );
+      const summaryText = fixture.querySelector('.history-summary')?.textContent || '';
+      assert(
+        summaryText.includes('80.00%'),
+        'Pull rate must include all four five-stars in five recorded pulls'
+      );
+      assert(summaryText.includes('1 of 2'), 'Rate-up wins must exclude the guaranteed reward');
+      assert(
+        summaryText.includes('4 five-stars in 5 recorded pulls'),
+        'Pull rate must identify its full-history denominator'
+      );
+      assert(
+        fixture.querySelector('ul.portrait-grid > li'),
+        'Reward collection must have list semantics'
+      );
+      const outcomes = cards()
+        .map((card) => card.textContent || '')
+        .join('|');
+      for (const outcome of ['Win', 'Loss', 'Guaranteed', 'Unknown'])
+        assert(outcomes.includes(outcome), `Missing classified ${outcome} label`);
+      const before = statistics();
+      await choose(2);
+      assert(statistics() === before, 'Rarity changed the complete-history summary');
+      await choose(1);
+      await expand();
+      assert(statistics() === before, 'Expansion changed the complete-history summary');
+      assert(queries === 1, 'Reward filters or paging unnecessarily recalculated the window');
+      const gapped = structuredClone(classified);
+      gapped.find((row) => row.id === 3)!.gap_before = true;
+      annotateBannerOutcomes(gapped, 'gf2-gacha-record-us.sunborngame.com');
+      const gapSummary = createStatisticsQuery(gapped);
+      await reload(gapped, async (_profile, type) => ({
+        ...gapSummary(type),
+        rulesVersion: STATISTICS_RULES_VERSION,
+        identity: {
+          endpoint_host: null,
+          account_fingerprint: null,
+          server: null,
+          game_channel_id: null
+        }
+      }));
+      await waitForLuck();
+      const gapWindow = gapSummary(3).summary.windows.elite!;
+      assertLuck('.pull-rate', strictlyFewerSuccesses(gapWindow.budget, gapWindow.count, 0.006));
+      assert(
+        fixture.querySelector('.pull-rate')?.textContent?.includes('80.00%'),
+        'Observed pull rate must retain all recorded pulls across gaps'
+      );
+      assert(
+        cards().filter((card) => card.querySelector('.result')?.textContent === 'Unknown')
+          .length === 2,
+        'Gap and original unknown anchors must retain their real classifications'
+      );
+      assert(
+        fixture.querySelector('.summary-coverage')?.textContent?.includes('2 unknown outcomes'),
+        'Summary unknown outcomes must match the classified reward tiles'
+      );
+      const response = (budget: number, count: number): PersonalStatisticsResponse => ({
+        ...summarize(3),
+        summary: {
+          ...complete,
+          windows: {
+            ...complete.windows,
+            elite: {
+              ...complete.windows.elite!,
+              budget,
+              count,
+              eliteCount: count
+            }
+          }
+        },
+        rulesVersion: STATISTICS_RULES_VERSION,
+        identity: {
+          endpoint_host: null,
+          account_fingerprint: null,
+          server: null,
+          game_channel_id: null
+        }
+      });
+      // Trailing pulls change the whole-budget percentile, without changing the raw totals.
+      await reload(classified, async () => response(5, 1));
+      await waitForLuck();
+      assertLuck('.pull-rate', strictlyFewerSuccesses(5, 1, 0.006));
+      await reload(classified, async () => response(8, 1));
+      await waitForLuck();
+      assertLuck('.pull-rate', strictlyFewerSuccesses(8, 1, 0.006));
+      await reload(classified, async () => response(5, 0));
+      await waitForLuck();
+      assertLuck('.pull-rate', 0);
+      await reload(classified, async () => {
+        const unavailable = response(5, 1);
+        unavailable.summary.windows.elite = null;
+        unavailable.summary.windowReasons.elite = 'No known starting pity after the gap.';
+        return unavailable;
+      });
+      await waitForLuck();
+      assert(
+        !fixture.querySelector('.pull-rate .value')?.textContent?.includes('Luckier than'),
+        'Missing comparison window must not invent a model percentile'
+      );
+      assert(
+        fixture.querySelector('.pull-rate')?.textContent?.includes('No known starting pity'),
+        'Missing comparison window needs its specific reason'
+      );
+      assertLuck(
+        '.rate-up-wins',
+        strictlyFewerSuccesses(complete.wins.trials, complete.wins.wins, 0.5)
+      );
+      await reload([]);
+      assert(cards().length === 0, 'Empty history retained reward cards');
+      assert(
+        !fixture.querySelector('.history-summary')?.textContent?.includes('0%'),
+        'Unknown empty results must not imply a zero success rate'
+      );
+    });
     localStorage.setItem(REWARD_RARITIES_KEY, JSON.stringify(keys));
     await reload();
-    summary.textContent = 'PASS: 15 reward-history and loading browser regression groups';
+    summary.textContent = 'PASS: 16 reward-history and loading browser regression groups';
     results.textContent +=
       'Manual check: activate a reward using Enter/Space, cycle Tab/Shift+Tab inside the modal, press Escape, and verify focus returns. Synthetic key events do not invoke native browser default actions.\n';
   } catch (error) {

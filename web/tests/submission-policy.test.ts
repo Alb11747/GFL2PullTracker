@@ -58,11 +58,11 @@ test('known identity conflicts cannot use incomplete identity association', () =
     'conflict'
   );
 });
-test('Statistics follows My history and retains its route', () => {
+test('Statistics follows History and retains its route', () => {
   assert.deepEqual(
     trackerPages.slice(0, 2).map(({ slug, label }) => ({ slug, label })),
     [
-      { slug: 'history', label: 'My history' },
+      { slug: 'history', label: 'History' },
       { slug: 'statistics', label: 'Statistics' }
     ]
   );

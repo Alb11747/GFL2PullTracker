@@ -79,7 +79,7 @@ test('chart labels are escaped and planner contains no observed or luck annotati
   for (const text of [
     'role="img"',
     'aria-labelledby="mc-a11y-title mc-a11y-desc"',
-    'Probability per bin',
+    'Probability per outcome',
     '30% probability',
     '<details',
     '<table',
@@ -129,4 +129,20 @@ test('observed histogram preserves intervals outside model and muted dashed expe
     assert.ok(html.includes(text), text);
   assert.doesNotMatch(observed({ intervals: [1], max: 80 }), /Model expected count/);
   assert.match(observed({ intervals: [] }), /No complete intervals/);
+});
+
+
+test('unequal split-bin widths do not create artificial probability dips', () => {
+  const uniform = Array<number>(101).fill(1 / 101);
+  for (const direction of ['lower', 'upper'] as const) {
+    const html = distribution({ dist: uniform, observation: 43, direction });
+    const heights = [...html.matchAll(/<rect[^>]* height="([^"]+)"/g)].map((m) => Number(m[1]));
+    assert.ok(heights.length > 3);
+    for (const height of heights) close(height, heights[0]);
+    assert.match(html, /bar area represents probability mass/);
+    const bins = distributionBins(uniform, 43, direction)!;
+    // Integrating height over the outcome width preserves the exact event.
+    close(bins.bins.filter((b) => b.event).reduce((total, b) =>
+      total + (b.mass / (b.hi - b.lo + 1)) * (b.hi - b.lo + 1), 0), bins.eventMass!);
+  }
 });

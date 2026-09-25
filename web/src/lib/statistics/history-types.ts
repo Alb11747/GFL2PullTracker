@@ -5,6 +5,8 @@ import type { RewardWindow } from './probability-types.ts';
 export interface ComparisonWindow extends RewardWindow {
   budget: number;
   count: number;
+  /** All five-stars in this same window, including non-featured rewards. */
+  eliteCount: number;
   startingPity: number;
   guaranteed: boolean;
   startLabel?: string;

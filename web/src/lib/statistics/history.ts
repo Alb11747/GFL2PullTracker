@@ -73,6 +73,7 @@ export function analyzeHistory(
   const window = (pity: number, guaranteed: boolean, startLabel: string): ComparisonWindow => ({
     budget: 0,
     count: 0,
+    eliteCount: 0,
     startingPity: pity,
     guaranteed,
     startLabel
@@ -118,10 +119,14 @@ export function analyzeHistory(
     }
     if (elite) {
       elite.budget++;
-      if (isElite) elite.count++;
+      if (isElite) {
+        elite.count++;
+        elite.eliteCount++;
+      }
     }
     if (featured) {
       featured.budget++;
+      if (isElite) featured.eliteCount++;
       if (isElite && banner?.featured === true) featured.count++;
     }
     if (isElite) {

@@ -379,7 +379,7 @@
   async function runSubmission(log: (message: string) => void) {
     await until(() => document.querySelector('.archive-nav a') && !main().querySelector('[aria-busy="true"]'), 'application initialized');
     const links = [...document.querySelectorAll('.archive-nav a')];
-    assert(links[0].textContent?.trim() === 'My history' && links[1].textContent?.trim() === 'Statistics', 'Statistics immediately follows My history');
+    assert(links[0].textContent?.trim() === 'History' && links[1].textContent?.trim() === 'Statistics', 'Statistics immediately follows History');
     if (!submissionReload || !activeProfile().value) {
       await navigate('profiles');
       const profileName = `Submission fixture ${Date.now()}`;

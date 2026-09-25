@@ -288,3 +288,37 @@ test('both targeted families use the fixed loss roster outside dated catalog bou
     }
   }
 });
+
+test('each comparison window retains its own Elite denominator, excluding anchors and older gaps', () => {
+  // Reviewed against chronological synthetic event sequences in the shared fixtures.
+  const denominators = [
+    [3, 2],
+    [2, 2],
+    [1, 1],
+    [null, null],
+    [0, null],
+    [null, null],
+    [0, 0],
+    [3, 0],
+    [null, null]
+  ];
+  fixtures.cases.forEach((fixture, index) => {
+    const summary = analyzeHistory(fixture.rows as HistoryRow[]);
+    assert.deepEqual(
+      [summary.windows.elite?.eliteCount ?? null, summary.windows.featured?.eliteCount ?? null],
+      denominators[index],
+      fixture.name
+    );
+  });
+  const established = analyzeHistory(fixtureRows(0), { startingPity: 0, guaranteed: false });
+  assert.equal(established.windows.featured?.count, 2);
+  assert.equal(established.windows.featured?.eliteCount, 3);
+  const trailing = fixtureRows(0).slice(5);
+  const beforeTrailing = analyzeHistory(trailing);
+  const afterTrailing = analyzeHistory(fixtureRows(0));
+  assert.equal(afterTrailing.windows.featured!.budget - beforeTrailing.windows.featured!.budget, 5);
+  assert.equal(
+    afterTrailing.windows.featured!.eliteCount,
+    beforeTrailing.windows.featured!.eliteCount
+  );
+});

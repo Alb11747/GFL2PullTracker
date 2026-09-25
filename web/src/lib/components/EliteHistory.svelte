@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import LoadingRegion from './LoadingRegion.svelte';
+  import HistorySummary from './HistorySummary.svelte';
+  import type { PersonalStatisticsResponse } from '$lib/statistics/history-types';
   import { recruitmentName } from '$lib/recruitment';
   import portraits from '$lib/portraits.json';
   import type { ProfileOverview } from '$lib/reward-query';
@@ -20,11 +22,55 @@
     limit: number,
     options?: { consumer: string; preview: boolean }
   ) => Promise<ProfileOverview>;
+  export let querySummary:
+    | ((profileId: string, typeId: number | null) => Promise<PersonalStatisticsResponse>)
+    | undefined = undefined;
   export let revision: string | number = 0;
   export let profileId = '';
   export let loading = false;
   export let error = '';
 
+  let statistics: PersonalStatisticsResponse | null = null;
+  let statisticsError = '';
+  let statisticsPending = false;
+  let statisticsRequest = 0;
+  $: void loadStatistics(
+    mounted && !loading,
+    querySummary,
+    profileId,
+    revision,
+    selectedType,
+    retry
+  );
+  async function loadStatistics(
+    ready: boolean,
+    fetch: typeof querySummary,
+    profile: string,
+    _revision: string | number,
+    type: number | null,
+    _retry: number
+  ) {
+    const id = ++statisticsRequest;
+    statistics = null;
+    statisticsError = '';
+    statisticsPending = false;
+    if (!ready || !fetch || !profile) return;
+    statisticsPending = true;
+    try {
+      const result = await fetch(profile, type);
+      if (mounted && id === statisticsRequest) statistics = result;
+    } catch (cause) {
+      if (mounted && id === statisticsRequest)
+        statisticsError =
+          cause instanceof Error ? cause.message : 'Could not load recruitment summary.';
+    } finally {
+      if (mounted && id === statisticsRequest) statisticsPending = false;
+    }
+  }
+  const outcomeLabel = (outcome: string | undefined) =>
+    ({ win: 'Win', loss: 'Loss', guaranteed: 'Guaranteed', unknown: 'Unknown' })[
+      outcome ?? 'unknown'
+    ] ?? '';
   let selectedType: number | null = null;
   let selectedId: number | null = null;
   const windowLimit = 200;
@@ -288,6 +334,29 @@
   <!-- The empty probe shares the card grid's width and tracks. It exists before
        the first query, so the initial request already has the two-row limit. -->
   <div class="preview-measure" aria-hidden="true" use:measureRows></div>
+  <div class="overview-toolbar">
+    <h1 id="overview-title">Recruitment ledger</h1>
+    {#if types.length}<label class="recruitment-select"
+        >Recruitment
+        <select
+          value={selectedType !== null && types.includes(selectedType)
+            ? selectedType
+            : lastSelectedType}
+          on:change={(event) => (selectedType = Number(event.currentTarget.value))}
+        >
+          {#each types as type}<option value={type}>{recruitmentName(type)}</option>{/each}
+        </select>
+      </label>{/if}
+  </div>
+  <slot name="archive" />
+  <HistorySummary
+    summary={statistics?.summary ?? null}
+    {overview}
+    pending={statisticsPending || loading || summaryStale}
+    error={statisticsError || failure}
+  />
+  {#if statisticsError}<button on:click={() => retry++}>Retry recruitment summary</button>{/if}
+
   {#if failure}
     <p class="state error" role="alert">{failure}</p>
     <button on:click={() => retry++}>Retry recruitment history</button>
@@ -298,48 +367,6 @@
         Import pull history to see your rewards and rarity breakdown.
       </p>{/if}
   {:else}
-    <div class="overview-toolbar">
-      <label class="recruitment-select"
-        >Recruitment
-        <select
-          value={selectedType !== null && types.includes(selectedType)
-            ? selectedType
-            : lastSelectedType}
-          on:change={(event) => (selectedType = Number(event.currentTarget.value))}
-        >
-          {#each types as type}<option value={type}>{recruitmentName(type)}</option>{/each}
-        </select>
-      </label>
-      {#if overview}<div class="current-pity" role="status" aria-atomic="true">
-          <dl>
-            <dt>Current pity</dt>
-            <dd>
-              {overview.currentPity.toLocaleString()}{#if overview.currentUncertain}<sup
-                  title={uncertainty}
-                  aria-label=" uncertain">?</sup
-                >{/if}{' '}<span
-                >{overview.currentUncertain
-                  ? 'saved pulls in this interval'
-                  : !overview.lastElite
-                    ? overview.currentPity === 1
-                      ? 'pull before your first 5★'
-                      : 'pulls before your first 5★'
-                    : overview.currentPity === 1
-                      ? 'pull since last 5★'
-                      : 'pulls since last 5★'}</span
-              >
-            </dd>
-          </dl>
-          <p>
-            {#if overview.currentUncertain}Count uncertain · history may be incomplete.
-            {:else if overview.lastElite}Last 5★: {overview.lastElite.name} · {date(
-                overview.lastElite.timestamp,
-                true
-              )}
-            {:else}No 5★ recorded in this recruitment yet.{/if}
-          </p>
-        </div>{/if}
-    </div>
     <section class="elite-history" aria-label={historyTitle}>
       <div class="section-heading">
         <h2 bind:this={historyHeading} tabindex="-1">
@@ -347,7 +374,7 @@
           {#if overview}<span>{overview.total.toLocaleString()} rewards</span>{/if}
         </h2>
         <div class="history-tools">
-          <span class="sort-order">Newest first</span>
+          {#if overview?.total}<span class="sort-order">Newest first</span>{/if}
           <fieldset class="rarity-controls">
             <legend>Show rarities</legend>
             {#each availableRarities as rarity}
@@ -369,44 +396,65 @@
         </div>
       </div>
       <LoadingRegion {busy} message="Loading rewards…">
-        <div class="portrait-grid">
+        <ul class="portrait-grid" aria-label="Rewards">
           {#each shown as row, index (row.id)}
-            <button
-              class="pull"
-              disabled={busy || Boolean(failure)}
-              class:selected={selectedId === row.id}
-              aria-haspopup="dialog"
-              aria-label={`Details for ${row.name}, ${rewardRarities.find((rarity) => rarity.key === rewardRarity(row.rarity))?.label}, 5★ pity ${row.pity}${row.pity_uncertain ? ', uncertain' : ''}, ${date(row.timestamp, true)}`}
-              on:click={() => openReward(row.id)}
-            >
-              <span class="portrait">
-                {#if imageMap[row.item_id] && !failedImages.has(row.item_id)}
-                  <img
-                    src={imageMap[row.item_id]}
-                    alt=""
-                    width="80"
-                    height="80"
-                    loading={index < previewLimit ? 'eager' : 'lazy'}
-                    on:error={() => imageFailed(row.item_id)}
-                  />
-                {:else}<span class="missing">No image</span>{/if}
-                <span class="pity"
-                  >{row.pity}{#if row.pity_uncertain}<sup
-                      title={uncertainty}
-                      aria-label=" uncertain">?</sup
-                    >{/if}</span
-                >
-              </span>
-              <span class="pull-rarity"
-                >{rewardRarities.find((rarity) => rarity.key === rewardRarity(row.rarity))
-                  ?.label}</span
+            {#if row.gap_before}<li class="gap-marker">
+                Gap in recorded history near this reward. Pity or guarantee may be uncertain.
+              </li>{/if}
+            <li>
+              <button
+                class="pull"
+                disabled={busy || Boolean(failure)}
+                class:selected={selectedId === row.id}
+                aria-haspopup="dialog"
+                aria-label={`Details for ${row.name}, ${rewardRarities.find((rarity) => rarity.key === rewardRarity(row.rarity))?.label}, 5★ pity ${row.pity}${row.pity_uncertain ? ', uncertain' : ''}, ${outcomeLabel(row.banner_result?.outcome)}, ${date(row.timestamp, true)}`}
+                on:click={() => openReward(row.id)}
               >
-              <span class="pull-name" title={row.name}>{row.name}</span><span class="pull-date"
-                >{date(row.timestamp)}</span
-              >
-            </button>
+                <span class="pull-name">{row.name}</span>
+                <span class="portrait">
+                  {#if imageMap[row.item_id] && !failedImages.has(row.item_id)}
+                    <img
+                      src={imageMap[row.item_id]}
+                      alt=""
+                      width="80"
+                      height="80"
+                      loading={index < previewLimit ? 'eager' : 'lazy'}
+                      on:error={() => imageFailed(row.item_id)}
+                    />
+                  {:else}<span class="missing">No image</span>{/if}
+                  <span class="pity"
+                    >{row.pity}{#if row.pity_uncertain}<sup
+                        title={uncertainty}
+                        aria-label=" uncertain">?</sup
+                      >{/if}</span
+                  >
+                </span>
+                <span class="reward-meta">
+                  <span class="pull-rarity"
+                    >{rewardRarity(row.rarity) === 'Elite'
+                      ? '5★'
+                      : rewardRarity(row.rarity) === 'Standard'
+                        ? '4★'
+                        : rewardRarity(row.rarity) === 'Retired'
+                          ? '3★'
+                          : '?'}</span
+                  >
+                  {#if row.rarity === 'Elite' && row.banner_result?.outcome !== 'not_applicable'}
+                    <span
+                      class="result"
+                      class:win={row.banner_result?.outcome === 'win'}
+                      class:muted={row.banner_result?.outcome === 'guaranteed' ||
+                        !row.banner_result ||
+                        row.banner_result.outcome === 'unknown'}
+                      >{outcomeLabel(row.banner_result?.outcome)}</span
+                    >
+                  {/if}
+                </span>
+                <span class="pull-date">{date(row.timestamp)}</span>
+              </button>
+            </li>
           {/each}
-        </div>
+        </ul>
       </LoadingRegion>
       {#if overview?.total}
         <div
@@ -582,7 +630,7 @@
 <style>
   .elite-overview {
     position: relative;
-    margin-block: 24px;
+    margin-block: 0 24px;
     min-width: 0;
   }
   /* Hidden content keeps its dimensions and is excluded from focus and the
@@ -590,7 +638,7 @@
   .stale :is(.section-heading h2, .portrait-grid, .history-pagination, .empty) {
     visibility: hidden;
   }
-  .summary-stale :is(.current-pity, .metrics, .rarity-breakdown) {
+  .summary-stale :is(.metrics, .rarity-breakdown) {
     visibility: hidden;
   }
   .overview-toolbar {
@@ -598,33 +646,8 @@
     align-items: end;
     justify-content: space-between;
     gap: 24px;
-    margin-bottom: 20px;
-  }
-  .current-pity {
-    max-width: 34rem;
-  }
-  .current-pity dl {
-    margin: 0;
-  }
-  .current-pity dd {
-    color: var(--accent-text);
-    font-size: 2.5rem;
-    font-weight: 600;
-    line-height: 1.2;
-  }
-  .current-pity dd span {
-    display: inline-block;
-    margin-left: 10px;
-    color: var(--ink);
-    font-size: 1rem;
-    font-weight: 400;
-  }
-  .current-pity p {
-    margin: 4px 0 0;
-    color: var(--muted);
-    font-size: 0.9rem;
-    line-height: 1.4;
-    overflow-wrap: anywhere;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--ink);
   }
   .recruitment-select {
     display: grid;
@@ -693,6 +716,38 @@
     color: var(--muted);
     font-size: 0.9rem;
   }
+  .portrait-grid {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .portrait-grid li {
+    min-width: 0;
+  }
+  .gap-marker {
+    grid-column: 1 / -1;
+    padding: 10px 0;
+    border-block: 1px dashed var(--line);
+    color: var(--muted);
+    font-size: 0.875rem;
+  }
+  .reward-meta {
+    grid-row: 2;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+  .result {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+  .result.win {
+    color: var(--accent-text);
+  }
+  .result.muted {
+    color: var(--muted);
+  }
   .portrait-grid,
   .preview-measure {
     display: grid;
@@ -707,8 +762,9 @@
     pointer-events: none;
   }
   .pull {
-    display: flex;
-    flex-direction: column;
+    width: 100%;
+    display: grid;
+    grid-template-rows: 80px auto auto auto;
     align-items: start;
     justify-content: start;
     gap: 4px;
@@ -723,6 +779,7 @@
     background: transparent;
   }
   .portrait {
+    grid-row: 1;
     position: relative;
     display: block;
     width: 80px;
@@ -771,11 +828,14 @@
     width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    grid-row: 3;
     font-size: 0.9rem;
     line-height: 1.25;
   }
   .pull-date {
+    grid-row: 4;
     color: var(--muted);
     font-size: 0.85rem;
   }
@@ -1031,6 +1091,12 @@
     color: var(--danger);
   }
   @media (max-width: 700px) {
+    .pull {
+      grid-template-rows: 64px auto auto auto;
+    }
+    .reward-meta {
+      gap: 5px;
+    }
     .overview-toolbar {
       align-items: stretch;
       flex-direction: column;

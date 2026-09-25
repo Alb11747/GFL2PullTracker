@@ -4,6 +4,13 @@
   import { createRewardQuery, type ProfileOverview } from '../../src/lib/reward-query';
 
   export let rows: Pull[];
+  export let summaryQuery:
+    | undefined
+    | ((
+        profile: string,
+        type: number | null
+      ) => Promise<import('../../src/lib/statistics/history-types').PersonalStatisticsResponse>) =
+    undefined;
   let profileId = 'synthetic-profile-a';
   let revision = 0;
   let deferred = false;
@@ -49,4 +56,4 @@
   }
 </script>
 
-<EliteHistory {query} {revision} {profileId} />
+<EliteHistory {query} {revision} {profileId} querySummary={summaryQuery} />

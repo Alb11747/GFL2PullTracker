@@ -1,7 +1,7 @@
 # Personal statistics and real comparisons
 
 Statistics has two views: Your statistics (default) and the existing community
-ledger. My history retains its reward browsing interface. Personal summaries and
+ledger. History retains its reward browsing, rarity filters, pagination, and pull log. Personal summaries and
 probability distributions run in browser workers; the page sends only comparison
 aggregates to the read-only public comparison API. See PRIVACY.md for the data flow.
 
@@ -16,6 +16,25 @@ Rate-up wins count classifiable non-guaranteed attempts; guaranteed and unknown
 outcomes remain separately reported. The shared classifier uses dated featured mappings first and the fixed standard
 Elite loss roster for supported targeted banners without a mapping. Provider and
 standard-item rate-up exceptions remain scoped (BANNER_OUTCOMES.md).
+
+## History summary
+
+History places the recruitment selector beside the ledger title and shows archive
+metadata explicitly across all recruitments. Its compact summary uses real local
+history: current pity, five-star luck, and rate-up win luck. The large values show the percentage of model outcomes strictly below the observed result;
+ties are excluded. These are model percentiles, not rankings of players. Five-star
+luck uses the latest continuous known-start Elite window including trailing pity.
+Rate-up luck uses classifiable non-guaranteed attempts. Small samples are labeled.
+Bottom bars show the raw five-star pull rate and win rate, with counts as supporting facts. The raw rate uses
+all recorded pulls and therefore may have broader coverage than the model window.
+Coverage and guaranteed/unknown exclusions are explicit. Missing history, unsupported
+recruitments, and calculation failures do not receive invented percentiles.
+Calculations run in a cancellable browser worker and never upload personal records.
+Reward tiles retain their detail dialogs and show classifier outcomes for five-stars;
+unknown outcomes remain unknown. Missing history is marked without inventing results.
+Local-server mode uses the existing complete-recruitment classified overview when
+no browser summary query is available, with that broader scope labeled explicitly.
+No additional server comparison request or personal-record upload is made by History.
 
 ## Model and planning
 
