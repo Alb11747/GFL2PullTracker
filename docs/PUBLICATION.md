@@ -46,6 +46,26 @@ For a first publication, run GitHub CI in a private staging repository before
 making it public. Publishing source does not deploy the application or establish
 that its runtime release gates have passed.
 
+## Update the existing public repository
+
+The public project is [GFL2PullTracker](https://github.com/Alb11747/GFL2PullTracker).
+Record the local and remote main commit IDs before preparing a release. Keep
+milestone mappings and verified recovery bundles outside the public repository.
+
+Run the documented checks and review the final diff before committing. Prepare
+an isolated publication copy, scan its complete history, and verify its tree and
+metadata. For ordinary updates, preserve published ancestry and push only main.
+Never mirror local refs or use an all-branches push.
+
+Recheck the remote immediately before publishing. If it advanced, reconcile its
+changes first. Rewriting shared history requires explicit authorization and an
+explicit force-with-lease against the recorded remote main commit ID.
+
+Verify the resulting public commit ID and its GitHub Validate workflow, including
+tests, dependency audits, secret scanning, container builds, and health checks.
+Resolve task-related failures in focused follow-up commits and report any checks
+that could not run. Deployment and authenticated runtime tests are separate work.
+
 MIT covers this project's original code. Preserve `THIRD_PARTY_NOTICES.md`, the
 font license, and game-data provenance. Game names and other third-party content
 do not acquire an MIT license through inclusion here.

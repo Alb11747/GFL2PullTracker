@@ -7,10 +7,14 @@ Use Python 3.11 or later, uv, and Node.js 24. Install the locked dependencies wi
 Keep synthetic fixtures free of real credentials and player histories. Preserve
 occurrence multiplicity, account identity boundaries, source ordering, coverage
 gaps, and the distinction between uploaded and server-fetched history. The
-prerelease browser archive, backups, and Drive revisions use one strict unversioned
-schema. Do not add legacy readers or migrations for discarded prerelease formats.
-Before the first public release, establish a versioned baseline and tested
-migrations as required by the [release checklist](docs/PUBLICATION.md#first-public-release-checklist).
+supported archive baseline is version 1 for portable state, gzip backups, and
+Drive revision metadata. Stable browser and Drive storage use separate namespaces
+that preserve discarded prerelease archives without migrating them. Do not add
+legacy readers for those formats. Future supported schema changes require explicit,
+tested migrations from version 1, integrity checks, atomic failure, recovery copies,
+and a documented rollback boundary. See the
+[format and rollback contract](docs/GOOGLE_DRIVE.md#stable-archive-version-1) and
+[release checklist](docs/PUBLICATION.md#first-public-release-checklist).
 Collector and Exilium import versions are independent and remain validated.
 
 Do not add production captures to issues or test fixtures. Reproduce problems
