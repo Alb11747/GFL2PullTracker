@@ -14,6 +14,11 @@ the following describes the access and consent rules enforced when a verified
 provider is added. Local import, downloads, Drive, and explicit relay import can
 be used independently of that gate.
 
+The [NA verification findings](NA_VERIFICATION.md) document why a successful
+capture import currently cannot establish a verified account identity. A stable
+provider-issued account ID is an acceptable future fallback when the game UID
+is unavailable, once its credential binding is established.
+
 Capture imports show one combined choice: **Contribute to community statistics /
 Save server backup**. It defaults on when available; explicit opt-out is remembered
 on this device and stops future submissions without deleting previously saved
